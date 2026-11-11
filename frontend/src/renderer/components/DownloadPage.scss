@@ -1,0 +1,565 @@
+/* 创意工坊下载页 —— PCL 风格：与其它页面共用主题变量，暗色模式自动跟随 */
+
+.dl-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+  padding-bottom: 12px;
+
+  .page-header {
+    margin-bottom: 0;
+    padding-bottom: 12px;
+    flex-shrink: 0;
+  }
+}
+
+.dl-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.dl-card__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* ---------- 输入区 ---------- */
+.dl-input {
+  padding: 12px 14px;
+  flex-shrink: 0;
+
+  &__head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+
+  &__hint {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  &__body {
+    display: flex;
+    gap: 10px;
+    align-items: stretch;
+  }
+}
+
+.dl-textarea {
+  flex: 1;
+  min-height: 66px;
+  max-height: 132px;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+
+  &::placeholder {
+    color: var(--text-muted);
+    opacity: 0.75;
+  }
+
+  &:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--glow-accent);
+  }
+}
+
+/* ---------- 按钮 ---------- */
+.dl-btn {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-family: var(--font-family);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  &--primary {
+    background: var(--accent);
+    color: var(--on-accent);
+    font-weight: 600;
+
+    &:hover:not(:disabled) {
+      background: var(--accent-hover);
+    }
+  }
+
+  &--lg {
+    padding: 9px 26px;
+    font-size: 14px;
+  }
+
+  &--ghost {
+    background: transparent;
+    border-color: var(--border-color);
+    color: var(--text-secondary);
+
+    &:hover:not(:disabled) {
+      color: var(--accent-text);
+      border-color: var(--accent);
+      background: var(--sidebar-hover-bg);
+    }
+  }
+
+  &--danger {
+    background: #ef4444;
+    color: #fff;
+    font-weight: 600;
+    padding: 9px 26px;
+    font-size: 14px;
+
+    &:hover {
+      background: #dc2626;
+    }
+  }
+}
+
+/* ---------- 队列 ---------- */
+.dl-queue {
+  flex: 1;
+  min-height: 160px;
+
+  &__head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+  }
+
+  &__count {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  &__actions {
+    margin-left: auto;
+    display: flex;
+    gap: 8px;
+  }
+
+  &__body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px;
+    min-height: 0;
+  }
+}
+
+.dl-empty {
+  height: 100%;
+  min-height: 140px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--text-muted);
+
+  svg {
+    width: 40px;
+    height: 40px;
+    opacity: 0.5;
+    margin-bottom: 2px;
+  }
+
+  h3 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
+  p {
+    font-size: 12px;
+  }
+}
+
+.dl-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+
+  &:hover {
+    background: var(--sidebar-hover-bg);
+  }
+
+  &--selected {
+    background: var(--sidebar-active-bg);
+  }
+
+  &__thumb {
+    width: 88px;
+    height: 50px;
+    flex-shrink: 0;
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+  }
+
+  &__thumb-empty {
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, var(--sidebar-hover-bg), transparent);
+  }
+
+  &__info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 11.5px;
+    color: var(--text-muted);
+    margin-top: 2px;
+    overflow: hidden;
+  }
+
+  &__id {
+    font-family: var(--font-mono);
+  }
+
+  &__error {
+    color: #ef4444;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__state {
+    flex-shrink: 0;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 999px;
+    color: var(--text-secondary);
+    background: var(--sidebar-hover-bg);
+    text-align: center;
+    min-width: 74px;
+
+    &--running {
+      color: var(--accent-text);
+      background: var(--sidebar-active-bg);
+    }
+
+    &--done {
+      color: #16a34a;
+      background: rgba(22, 163, 74, 0.12);
+    }
+
+    &--skip {
+      color: var(--text-secondary);
+    }
+
+    &--fail {
+      color: #ef4444;
+      background: rgba(239, 68, 68, 0.12);
+    }
+
+    &--cancel {
+      color: #f59e0b;
+      background: rgba(245, 158, 11, 0.12);
+    }
+  }
+
+  &__seg {
+    display: block;
+    font-size: 10.5px;
+    font-weight: 400;
+    opacity: 0.75;
+    margin-top: 1px;
+  }
+}
+
+.dl-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--sidebar-hover-bg);
+  overflow: hidden;
+  margin-top: 6px;
+
+  &__bar {
+    position: relative;
+    height: 100%;
+    width: 0;
+    border-radius: 2px;
+    background: var(--accent);
+    overflow: hidden;
+    // 进度回调本来就不均匀：时长拉到 0.45s 并换成柔和缓动，跳动会像被「推」过去
+    transition: width 0.45s var(--ease-soft);
+
+    // 下载中：一道浅色扫光不停划过，用来表达「还在动」而不只是数字变了
+    &::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(
+        100deg,
+        transparent 20%,
+        rgba(255, 255, 255, 0.45) 50%,
+        transparent 80%
+      );
+      transform: translateX(-100%);
+      animation: dlBarSheen 1.5s linear infinite;
+      pointer-events: none;
+    }
+
+    &--done {
+      background: #22c55e;
+    }
+
+    &--skip {
+      background: var(--text-muted);
+    }
+
+    &--fail {
+      background: #ef4444;
+    }
+
+    &--cancel {
+      background: #f59e0b;
+    }
+
+    // 结束后扫光没有意义，直接收掉（否则一条绿条一直在闪，像没完成）
+    &--done::after,
+    &--skip::after,
+    &--fail::after,
+    &--cancel::after {
+      display: none;
+    }
+  }
+}
+
+@keyframes dlBarSheen {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* ---------- 日志 ---------- */
+.dl-log {
+  flex-shrink: 0;
+  max-height: 150px;
+
+  &__head {
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  &__body {
+    padding: 8px 14px;
+    overflow-y: auto;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.65;
+    color: var(--text-secondary);
+    max-height: 112px;
+  }
+
+  &__empty {
+    color: var(--text-muted);
+  }
+
+  &__line {
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+}
+
+/* ---------- 底部操作栏 ---------- */
+.dl-footer {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  // 窗口变窄时让「线程/重下」和「开始下载」换行到下一排，
+  // 而不是互相挤压 / 溢出到浮动 HUD 底下
+  flex-wrap: wrap;
+  row-gap: 10px;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+
+  &__dir {
+    flex: 1 1 320px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+
+    label {
+      font-size: 11.5px;
+      color: var(--text-muted);
+    }
+  }
+
+  &__dir-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    min-width: 0;
+  }
+
+  &__opts {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    padding-bottom: 2px;
+
+    label {
+      font-size: 11.5px;
+      color: var(--text-muted);
+    }
+  }
+
+  &__actions {
+    flex-shrink: 0;
+    padding-bottom: 1px;
+    // 换行后仍然靠右，主按钮位置稳定
+    margin-left: auto;
+  }
+}
+
+.dl-input-text {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 12.5px;
+  font-family: var(--font-mono);
+  outline: none;
+
+  &:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--glow-accent);
+  }
+}
+
+.dl-input-num {
+  width: 58px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 12.5px;
+  font-family: var(--font-mono);
+  outline: none;
+
+  &:focus {
+    border-color: var(--accent);
+  }
+}
+
+.dl-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+
+  input {
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+}
+
+.dl-hint {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  color: #f59e0b;
+  padding: 0 4px;
+  margin-top: -4px;
+}
+
+.dl-toast {
+  position: fixed;
+  right: 24px;
+  // 抬到底部操作栏之上：原来 bottom:28px 正好压住「开始下载」，
+  // 点完按钮弹出的提示会反过来挡住下一次点击
+  bottom: 96px;
+  z-index: 200;
+  padding: 9px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  color: #fff;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  animation: dl-toast-in 0.2s ease-out;
+  max-width: 480px;
+
+  &--ok {
+    background: #16a34a;
+  }
+
+  &--err {
+    background: #ef4444;
+  }
+}
+
+@keyframes dl-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

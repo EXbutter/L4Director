@@ -1,0 +1,280 @@
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 24px 0;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+
+  &__refresh {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.25s ease;
+    flex-shrink: 0;
+
+    svg {
+      width: 18px;
+      height: 18px;
+      transition: transform 0.4s ease;
+    }
+
+    &:hover {
+      border-color: var(--accent);
+      color: var(--accent-text);
+
+      svg {
+        transform: rotate(180deg);
+      }
+    }
+
+    &:active {
+      transform: scale(0.94);
+
+      svg {
+        transform: rotate(360deg);
+      }
+    }
+  }
+
+  &__search {
+    flex: 1;
+    position: relative;
+    display: flex;
+    align-items: center;
+
+    &-icon {
+      position: absolute;
+      left: 14px;
+      width: 18px;
+      height: 18px;
+      color: var(--text-muted);
+      pointer-events: none;
+    }
+
+    &-input {
+      width: 100%;
+      height: 40px;
+      padding: 0 40px 0 44px;
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      background: var(--bg-card);
+      color: var(--text-primary);
+      font-size: 14px;
+      font-family: var(--font-family);
+      outline: none;
+      transition: all 0.25s ease;
+
+      &::placeholder {
+        color: var(--text-muted);
+      }
+
+      &:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+      }
+    }
+
+    &-clear {
+      position: absolute;
+      right: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border: none;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s ease;
+
+      svg {
+        width: 16px;
+        height: 16px;
+      }
+
+      &:hover {
+        background: var(--bg-card-hover);
+        color: var(--text-secondary);
+      }
+    }
+  }
+
+  &__sort {
+    position: relative;
+    flex-shrink: 0;
+    &-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 40px;
+      padding: 0 14px;
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      background: var(--bg-card);
+      color: var(--text-secondary);
+      font-size: 13px;
+      font-family: var(--font-family);
+      cursor: pointer;
+      transition: all 0.25s ease;
+      white-space: nowrap;
+
+      svg {
+        width: 16px;
+        height: 16px;
+      }
+
+      &:hover {
+        border-color: var(--accent);
+        color: var(--text-primary);
+      }
+
+      &:active {
+        transform: scale(0.97);
+      }
+    }
+
+    &-arrow {
+      transition: transform 0.25s ease;
+
+      &.open {
+        transform: rotate(180deg);
+      }
+    }
+
+    &-dropdown {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      min-width: 150px;
+      background: var(--sidebar-bg);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 6px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+      z-index: 100;
+      // 从按钮下缘「长出来」：起点贴合右上角，配 0.98 缩放，比直接闪现有连续感
+      transform-origin: top right;
+      animation: toolbarDropdownIn 0.18s var(--ease-soft);
+    }
+
+    &-option {
+      display: block;
+      width: 100%;
+      padding: 8px 14px;
+      border: none;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text-secondary);
+      font-size: 13px;
+      font-family: var(--font-family);
+      text-align: left;
+      cursor: pointer;
+      transition: all 0.2s ease;
+
+      &:hover {
+        background: var(--bg-card-hover);
+        color: var(--text-primary);
+      }
+
+      &.active {
+        background: color-mix(in srgb, var(--accent) 15%, transparent);
+        color: var(--accent-text);
+        font-weight: 600;
+      }
+    }
+  }
+
+  // 视图切换（卡片 / 列表）：分段按钮，选中项为主色实心
+  &__view {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    height: 40px;
+    flex-shrink: 0;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background: var(--bg-card);
+    box-sizing: border-box;
+  }
+
+  &__view-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 32px;
+    border: none;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease,
+      transform 0.18s var(--ease-spring);
+
+    svg {
+      width: 17px;
+      height: 17px;
+      transition: transform 0.25s var(--ease-spring);
+    }
+
+    &:hover:not(.active) {
+      background: var(--bg-card-hover);
+      color: var(--text-primary);
+    }
+
+    &:active {
+      transform: scale(0.9);
+    }
+
+    &.active {
+      background: var(--accent);
+      color: var(--on-accent);
+      box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 35%, transparent);
+      // 选中那一刻图标轻轻「弹」一下，切换视图有明确反馈
+      animation: viewSegPop 0.28s var(--ease-spring);
+
+      svg {
+        transform: scale(1.06);
+      }
+    }
+  }
+}
+
+@keyframes toolbarDropdownIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes viewSegPop {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+

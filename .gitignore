@@ -1,0 +1,63 @@
+# ---------- 依赖 ----------
+node_modules/
+frontend/node_modules/
+.venv/
+venv/
+env/
+
+# ---------- 便携运行时（约 43MB，不进仓库）----------
+# 构建时由 setup_embedded_python.py 生成，用户侧自备 Python 即可
+backend/embedded_python/
+backend/get-pip.py
+
+# ---------- 构建产物 ----------
+frontend/dist/
+frontend/release/
+dist/
+release/
+build/
+*.tsbuildinfo
+*.asar
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---------- 日志与调试残留 ----------
+*.log
+logs/
+backend_output.log
+*_output.log
+vpk_debug*.txt
+
+# ---------- 备份与临时文件 ----------
+*.bak
+*.tmp
+*.temp
+*.orig
+*.rej
+_archive/
+
+# ---------- 编辑器 / 系统 ----------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- 本地配置与密钥 ----------
+.env
+.env.*
+!.env.example
+*.local
+config.local.*
+
+# ---------- 工作区工具目录（含个人上下文，不公开）----------
+.workbuddy/

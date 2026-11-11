@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      CSP 说明：后端端口不能写死。8288 被其它程序占用时，主进程会把后端切到备用端口，
+      此时写死 8288 会让缩略图（img-src）与所有接口请求（connect-src）被浏览器直接拦掉。
+      用 `http://127.0.0.1:*` 覆盖任意本地端口。
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http://127.0.0.1:*; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*;" />
+    <title>L4Director</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/renderer/index.tsx"></script>
+  </body>
+</html>
