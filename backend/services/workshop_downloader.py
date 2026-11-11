@@ -26,7 +26,7 @@ import time
 import urllib.parse
 import urllib.request
 from collections import deque
-from typing import Callable, Optional
+from typing import Optional
 
 APPID = 550                     # Left 4 Dead 2
 SEG = 1 << 20                   # 每段 1MB

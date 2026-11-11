@@ -24,19 +24,17 @@ from pathlib import Path
 from typing import Optional
 import io
 import base64
-import shutil
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, FileResponse, HTMLResponse, StreamingResponse
-from services.mod_scanner import ModScanner, ModInfo, _CACHE_DIR, get_last_scan_perf
+from fastapi.responses import Response, FileResponse, StreamingResponse
+from services.mod_scanner import ModScanner, _CACHE_DIR, get_last_scan_perf
 from services.data_store import (
-    get_packs, save_packs, add_pack, delete_pack, rename_pack,
+    get_packs, add_pack, delete_pack, rename_pack,
     add_mod_to_pack, remove_mod_from_pack,
     add_mods_to_pack, remove_mods_from_pack,
     get_mod_display_name, set_mod_display_name,
-    get_mod_meta, set_mod_meta, ModMeta,
-    get_scan_manifest, save_scan_manifest, ScanManifest,
+    get_scan_manifest,
     get_pending_game_reapply, set_pending_game_reapply,
     get_prefs_dirty, set_prefs_dirty,
 )
@@ -522,7 +520,6 @@ def launch_game():
 @app.get("/api/logs/export")
 def export_logs():
     """导出日志和系统信息为 ZIP 文件，方便用户向开发者提交 bug"""
-    import tempfile
     import zipfile
     import platform
     import json
@@ -672,7 +669,6 @@ def get_workshop_thumbnail(filename: str):
 @app.post("/api/packs/export")
 def export_pack(data: dict):
     """导出整合包为 ZIP 文件"""
-    import tempfile
     import zipfile
     import json
     
