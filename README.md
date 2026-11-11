@@ -78,7 +78,7 @@ L4Director 用逐字节指纹比对来解决这三件事。
 **安装**
 
 ```powershell
-git clone <your-repo-url> "L4D2 Manager"
+git clone https://github.com/EXbutter/L4Director.git "L4D2 Manager"
 cd "L4D2 Manager"
 
 # 后端依赖
