@@ -1,0 +1,290 @@
+// === Modal / Dialog Theme ===
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: modalFadeIn 0.2s ease;
+}
+
+@keyframes modalFadeIn {
+  from {
+    opacity: 0;
+    backdrop-filter: blur(0px);
+    -webkit-backdrop-filter: blur(0px);
+  }
+  to {
+    opacity: 1;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+}
+
+[data-theme='dark'] .modal-overlay {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+[data-theme='light'] .modal-overlay {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.modal-content {
+  background: var(--bg-card-solid, var(--bg-secondary));
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 24px;
+  width: 400px;
+  max-width: 90vw;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 1px var(--glass-border);
+  animation: modalSlideIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.modal-content h3 {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.modal-input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: var(--font-family);
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  margin-bottom: 16px;
+}
+
+.modal-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.15);
+}
+
+.modal-input::placeholder {
+  color: var(--text-muted);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.modal-btn {
+  padding: 8px 20px;
+  border: none;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: var(--font-family);
+}
+
+.modal-btn:hover {
+  transform: translateY(-1px);
+}
+
+.modal-btn:active {
+  transform: translateY(0);
+}
+
+.modal-btn-cancel {
+  background: var(--bg-card-hover);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+}
+
+.modal-btn-cancel:hover {
+  background: var(--border-color);
+  color: var(--text-primary);
+}
+
+.modal-btn-primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  border: 1px solid transparent;
+}
+
+.modal-btn-primary:hover {
+  background: var(--accent-hover);
+  box-shadow: 0 4px 12px rgba(var(--accent-rgb), 0.3);
+}
+
+.modal-btn-danger {
+  background: var(--danger, #ef4444);
+  color: var(--text-on-danger, #ffffff);
+  border: 1px solid transparent;
+}
+
+.modal-btn-danger:hover {
+  background: var(--danger-hover, #dc2626);
+  box-shadow: 0 4px 12px var(--danger-shadow, rgba(239, 68, 68, 0.3));
+}
+
+.modal-delete-text {
+  color: var(--text-secondary);
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+.modal-delete-text strong {
+  color: var(--text-primary);
+}
+
+/* 宽版弹窗（整合包「添加 Mod」列表） */
+.modal-content--wide {
+  max-width: 560px;
+  width: 90vw;
+}
+
+.add-mods-list {
+  max-height: 340px;
+  overflow-y: auto;
+  margin: 4px 0 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-card);
+}
+
+.add-mods-empty {
+  padding: 28px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.add-mods-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-color);
+  transition: background-color 0.15s ease;
+
+  &:last-child {
+    border-bottom: none;
+  }
+
+  &:hover {
+    background: var(--bg-card-hover);
+  }
+
+  &--checked {
+    background: var(--accent-gradient-subtle);
+  }
+
+  input[type='checkbox'] {
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+    cursor: pointer;
+    accent-color: var(--accent);
+  }
+
+  &__name {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__tag {
+    flex-shrink: 0;
+    font-size: 12px;
+    padding: 2px 7px;
+    border-radius: 6px;
+    color: var(--text-muted);
+    background: var(--bg-card-hover);
+    border: 1px solid var(--border-color);
+  }
+}
+
+/* 整合包「启用/禁用全部」执行中：视觉弱化，但**仍然可点击**（点击会排队，不会丢操作） */
+.pack-detail-toggle--busy {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* 游戏内启停改动的「是否同步」询问弹窗 */
+.addonlist-sync-list {
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 4px 0 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-card);
+}
+
+.addonlist-sync-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color);
+
+  &:last-child {
+    border-bottom: none;
+  }
+
+  &__name {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__state {
+    flex-shrink: 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+
+    strong {
+      color: var(--accent-text);
+      font-weight: 700;
+    }
+  }
+}
+
+.addonlist-sync-more {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.addonlist-sync-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}

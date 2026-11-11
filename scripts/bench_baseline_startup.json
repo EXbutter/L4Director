@@ -1,0 +1,93 @@
+{
+  "tool": "scripts/bench-startup.mjs",
+  "generated_at": "2026-09-24T10:36:44.605Z",
+  "mode": "packaged",
+  "shell_only": true,
+  "runs": 1,
+  "app_version": "1.0.0",
+  "stats": {
+    "app-ready": {
+      "min": 197,
+      "median": 197,
+      "mean": 197,
+      "p95": 197,
+      "max": 197,
+      "samples": 1
+    },
+    "window-created": {
+      "min": 223,
+      "median": 223,
+      "mean": 223,
+      "p95": 223,
+      "max": 223,
+      "samples": 1
+    },
+    "backend-spawned": {
+      "min": 254,
+      "median": 254,
+      "mean": 254,
+      "p95": 254,
+      "max": 254,
+      "samples": 1
+    },
+    "window-shown": {
+      "min": 534,
+      "median": 534,
+      "mean": 534,
+      "p95": 534,
+      "max": 534,
+      "samples": 1
+    },
+    "renderer-loaded": {
+      "min": 486,
+      "median": 486,
+      "mean": 486,
+      "p95": 486,
+      "max": 486,
+      "samples": 1
+    },
+    "renderer-ready": {
+      "min": 532,
+      "median": 532,
+      "mean": 532,
+      "p95": 532,
+      "max": 532,
+      "samples": 1
+    },
+    "first-mod": {
+      "min": 1116,
+      "median": 1116,
+      "mean": 1116,
+      "p95": 1116,
+      "max": 1116,
+      "samples": 1
+    }
+  },
+  "raw": [
+    {
+      "milestones_ms": {
+        "app-ready": 197,
+        "window-created": 223,
+        "backend-spawned": 254,
+        "renderer-loaded": 486,
+        "window-shown": 534
+      },
+      "renderer": {
+        "renderer-ready": {
+          "since_process_start_ms": 532,
+          "renderer_elapsed_ms": 198,
+          "renderer_nav_start_ms": 334,
+          "elapsed": 198,
+          "dom_ready": true
+        },
+        "first-mod": {
+          "since_process_start_ms": 1116,
+          "renderer_elapsed_ms": 782,
+          "renderer_nav_start_ms": 334,
+          "elapsed": 782,
+          "renderer_first_mod_ms": 99
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,212 @@
+.content-area {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 20px;
+  overflow-y: scroll;
+  overflow-x: hidden;
+}
+
+.page-header {
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.page-header h1 {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.page-header p {
+  font-size: 14px;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.page-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.content-section {
+  background: var(--bg-card);
+  border-radius: 12px;
+  padding: 20px;
+  border: 1px solid var(--border-color);
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.section-header h2 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.section-header .section-more {
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.section-header .section-more:hover {
+  color: var(--accent-text);
+}
+
+.section-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+  align-items: stretch;
+}
+
+.empty-card {
+  background: var(--bg-card-hover);
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px dashed var(--border-color);
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.empty-card svg {
+  width: 32px;
+  height: 32px;
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
+.section-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-color), transparent);
+  margin: 0 -20px;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 16px;
+  opacity: 0.6;
+}
+
+.empty-state svg {
+  width: 64px;
+  height: 64px;
+  color: var(--text-muted);
+}
+
+.empty-state h3 {
+  font-size: 16px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.empty-state p {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.loading-spinner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+// === 页面区块错峰入场 ===
+// 只靠整页位移还是有点「一块板子滑进来」，这里让标题、工具栏、分区依次浮现：
+// 相邻元素错开 45ms，整页在 0.5s 内收拢，翻页时能看出内容的层次。
+// 只在初次挂载时触发（页面容器按 currentPage 重新挂载），
+// 所以输入搜索框、切换筛选都不会让整页再抖一次。
+//
+// 方向跟整页统一成「从左往右」：整页从侧边栏一侧滑进来，区块再各自从更左一点的位置补一段，
+// 两者的位移分量叠在一起，看上去是同一股从左边推进来的力，而不是「左边一推 + 下方一冒」。
+@keyframes sectionRise {
+  from {
+    opacity: 0;
+    transform: translate3d(-20px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.content-area > .page-header,
+.content-area > .page-content > .content-section,
+.content-area > .content-section,
+.content-area > .toolbar,
+.content-area > .mod-categories {
+  animation: sectionRise 0.4s var(--ease-soft) backwards;
+}
+
+.content-area > .toolbar {
+  animation-delay: 0ms;
+}
+
+.content-area > .mod-categories {
+  animation-delay: 45ms;
+}
+
+.content-area > .page-header {
+  animation-delay: 45ms;
+}
+
+.content-area > .page-content > .content-section,
+.content-area > .content-section {
+  animation-delay: 90ms;
+
+  &:nth-child(2) {
+    animation-delay: 135ms;
+  }
+
+  &:nth-child(3) {
+    animation-delay: 180ms;
+  }
+
+  &:nth-child(n + 4) {
+    animation-delay: 225ms;
+  }
+}
+
+// 空状态 / 加载态：柔和地淡入，避免「一片空白突然蹦出一行字」
+.empty-state,
+.my-mods-status,
+.loading-spinner {
+  animation: sectionRise 0.45s var(--ease-soft) backwards;
+}
+
+// 缩略图淡入：图片解码完成才出场，滚动时不会「啪啪」硬跳
+@keyframes thumbIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.thumb-img {
+  animation: thumbIn 0.32s ease-out both;
+}

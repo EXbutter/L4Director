@@ -1,0 +1,233 @@
+// === 主题变量（PCL 启动器风格：单一主色 + 白/浅蓝扁平设计）===
+// 主色支持「设置 → 主题色卡」自定义：运行时只覆盖 --accent / --accent-rgb
+// （以及标题栏底色/文字色），下面这些深浅色阶、边框、光晕、画布渐变全部由
+// color-mix() 从 --accent 推导，换色后整套皮肤自动跟随，不用逐处改样式。
+:root {
+  // 背景：极淡的主色底（PCL 内容区是淡天蓝底，换色卡后跟着主色走）
+  --bg-primary: color-mix(in srgb, var(--accent) 5%, #f3f5f8);
+  --bg-primary-solid: color-mix(in srgb, var(--accent) 2%, #fafbfc);
+  --bg-secondary: #ffffff;
+  --bg-card: rgba(255, 255, 255, 0.92);
+  --bg-card-hover: rgba(255, 255, 255, 1);
+  --text-primary: #1f2329;
+  --text-secondary: #5f6b7a;
+  --text-muted: #8a97a6;
+  // PCL 主色：亮蓝（可被主题色卡覆盖）
+  --accent: #1e88e5;
+  --accent-rgb: 30, 136, 229;
+  // 主色的「文字形态」：作为文字/图标时的主色。
+  // 与 --accent（填充色）分开，是为了让暗色模式既能保留色卡原色做大面积上色，
+  // 又能把文字提亮到读得清 —— 两者对明度的要求是相反的。
+  --accent-text: var(--accent);
+  --accent-secondary: color-mix(in srgb, var(--accent) 78%, #ffffff);
+  --accent-tertiary: color-mix(in srgb, var(--accent) 78%, #000000);
+  --accent-hover: color-mix(in srgb, var(--accent) 84%, #000000);
+  --accent-gradient: linear-gradient(135deg, var(--accent), var(--accent-secondary));
+  --accent-gradient-subtle: linear-gradient(
+    135deg,
+    rgba(var(--accent-rgb), 0.08),
+    rgba(var(--accent-rgb), 0.06)
+  );
+  // 主色底上的文字色：浅色主色时由 JS 改成深色，保证对比度
+  --on-accent: #ffffff;
+  --border-color: rgba(var(--accent-rgb), 0.16);
+  --sidebar-bg: #ffffff;
+  --sidebar-active-bg: rgba(var(--accent-rgb), 0.12);
+  --sidebar-active-text: var(--accent);
+  --sidebar-hover-bg: rgba(var(--accent-rgb), 0.08);
+  --titlebar-height: 44px;
+  --sidebar-width: 200px;
+  // 界面字体：PCL 是清晰的无衬线体（微软雅黑风格）
+  --font-family: 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  // 等宽字体
+  --font-mono: 'Cascadia Code', 'Cascadia Mono', Consolas, 'Microsoft YaHei UI', monospace;
+  --glass-bg: rgba(255, 255, 255, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.6);
+  --glass-shadow: rgba(var(--accent-rgb), 0.10);
+  --glow-accent: rgba(var(--accent-rgb), 0.12);
+  --glow-pink: rgba(var(--accent-rgb), 0.08);
+  --glow-teal: rgba(var(--accent-rgb), 0.08);
+  // 标题栏专用：PCL 顶部是主色底 + 白字
+  --titlebar-bg: var(--accent);
+  --titlebar-fg: #ffffff;
+  // === 动效基调 ===
+  // 全站统一三档缓动 + 三档时长，避免各处零散的 0.2s/0.25s/0.3s 混用导致节奏不一致。
+  // --ease-soft：快速起步、长尾巴，适合位移/展开（比 ease 更有「跟手」感）
+  // --ease-spring：轻微过冲，只用在「被点中了」这种需要反馈的地方
+  --ease-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast: 140ms;
+  --dur-base: 220ms;
+  --dur-slow: 340ms;
+  // 主内容区画布：主色极淡的渐变 + 两处氛围光。
+  // 注意：这是「主题变量」，暗色模式下必须给出对应版本，
+  // 否则写死的浅色会让暗色模式的内容区整片发白。
+  --app-bg-gradient:
+    radial-gradient(ellipse 900px 620px at 88% 2%, rgba(var(--accent-rgb), 0.06), transparent 70%),
+    radial-gradient(ellipse 760px 520px at 2% 100%, rgba(var(--accent-rgb), 0.05), transparent 70%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 9%, #ffffff) 0%,
+      color-mix(in srgb, var(--accent) 3%, #f7fbff) 60%,
+      #ffffff 100%
+    );
+}
+
+[data-theme='dark'] {
+  // 暗色模式同样跟随主色：所有深色表面都由「主色 + 中性极深色」混出来。
+  // 说明：这些底色早先是写死的深蓝（#0d1b2a / #0a1520 / rgba(28,48,68,…)），
+  // 结果换色卡后只有按钮变红、主内容区还是深蓝 —— 现在统一从 --accent 推导，
+  // 换任何主色（红/绿/紫）整套深色表面都会跟着换色相。
+  // 中性基色取「几乎无彩」的深色，混入比例控制明暗层级：越亮的表面混得越多。
+  --bg-primary: color-mix(in srgb, var(--accent) 13%, #070a0d);
+  --bg-primary-solid: color-mix(in srgb, var(--accent) 13%, #070a0d);
+  --bg-secondary: color-mix(in srgb, var(--accent) 16%, #0d1218);
+  // 卡片底色略微提亮：画布变深后，卡片需要比画布高出一档才有层次
+  --bg-card: color-mix(in srgb, var(--accent) 20%, rgba(19, 26, 34, 0.92));
+  --bg-card-hover: color-mix(in srgb, var(--accent) 26%, rgba(26, 34, 44, 0.95));
+  --text-primary: #eaf2fa;
+  --text-secondary: #aebdcc;
+  --text-muted: #7f93a6;
+  --accent: #42a5f5;
+  --accent-rgb: 66, 165, 245;
+  // 暗色下填充色保持色卡原色（见 accentFill），文字色则必须提亮才读得清
+  --accent-text: color-mix(in srgb, var(--accent) 55%, #ffffff);
+  --accent-secondary: color-mix(in srgb, var(--accent) 88%, #ffffff);
+  --accent-tertiary: color-mix(in srgb, var(--accent) 82%, #ffffff);
+  --accent-hover: color-mix(in srgb, var(--accent) 86%, #ffffff);
+  --accent-gradient: linear-gradient(135deg, var(--accent), var(--accent-secondary));
+  --accent-gradient-subtle: linear-gradient(
+    135deg,
+    rgba(var(--accent-rgb), 0.10),
+    rgba(var(--accent-rgb), 0.06)
+  );
+  --on-accent: #ffffff;
+  --border-color: rgba(var(--accent-rgb), 0.18);
+  --sidebar-bg: color-mix(in srgb, var(--accent) 13%, #070a0d);
+  --sidebar-active-bg: rgba(var(--accent-rgb), 0.16);
+  --sidebar-active-text: var(--accent-text);
+  --sidebar-hover-bg: rgba(var(--accent-rgb), 0.10);
+  --glass-bg: color-mix(in srgb, rgba(var(--accent-rgb), 0.6) 14%, rgba(8, 11, 15, 0.6));
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-shadow: rgba(var(--accent-rgb), 0.08);
+  --glow-accent: rgba(var(--accent-rgb), 0.14);
+  --glow-pink: rgba(var(--accent-rgb), 0.08);
+  --glow-teal: rgba(var(--accent-rgb), 0.08);
+  --titlebar-bg: color-mix(in srgb, var(--accent) 65%, #080b0f);
+  --titlebar-fg: #ffffff;
+  // 暗色版内容区画布：主色压暗的深色渐变 + 极淡的氛围光。
+  // 三个 stop 都从中性极深色混主色，色相跟随色卡（早期后两个 stop 写死深蓝，
+  // 导致红色主题下画布仍是深蓝）。
+  --app-bg-gradient:
+    radial-gradient(ellipse 900px 620px at 88% 2%, rgba(var(--accent-rgb), 0.12), transparent 70%),
+    radial-gradient(ellipse 760px 520px at 2% 100%, rgba(var(--accent-rgb), 0.09), transparent 70%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 16%, #0a0e13) 0%,
+      color-mix(in srgb, var(--accent) 12%, #080b0f) 55%,
+      color-mix(in srgb, var(--accent) 8%, #070a0d) 100%
+    );
+}
+
+// === 全局重置 ===
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+// 全局过渡：只做「便宜」的颜色类过渡，且不涵盖伪元素。
+// 说明：之前这里是 `*, *::before, *::after { transition: background-color/background/border-color/color/box-shadow 0.4s }`，
+// 切换日间/夜间主题时会同时触发上千个元素的过渡，其中 `background` 简写还会带动渐变/背景图重绘，
+// 再叠加每个毛玻璃元素的 backdrop-filter 逐帧重算，表现为明显卡顿。
+// 现在：去掉 background 简写与 box-shadow，时长降到 0.25s，并把发光光斑（::before/::after）排除在外。
+* {
+  transition:
+    background-color 0.25s ease,
+    border-color 0.25s ease,
+    color 0.25s ease;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-family);
+  color: var(--text-primary);
+  background: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+// 主题切换「关闭过渡」模式（设置 → 调试 可切换）：切换瞬间禁用所有过渡，
+// 让主题一次性重绘到位，避免上千个元素同时过渡 + 毛玻璃逐帧重算造成的卡顿。
+.theme-switching,
+.theme-switching *,
+.theme-switching *::before,
+.theme-switching *::after {
+  transition: none !important;
+}
+
+// 主题切换交叉淡入层：盖的是「旧主题画面的快照」（不是纯色！纯色会造成白闪/黑闪），
+// 只有这一个元素参与动画（GPU 合成），避免「上千个元素同时重绘」的数秒掉帧
+// （实测最低帧：逐元素过渡 45fps → 本方案 190fps+）。
+// 注意：必须放在 .theme-switching 之后并带 !important，否则会被上面的 transition:none 覆盖。
+.theme-fade-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  pointer-events: none;
+  opacity: 1;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  transition: opacity 0.3s ease !important;
+}
+
+// === 滚动条样式 ===
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.3);
+  border-radius: 3px;
+  
+  &:hover {
+    background: rgba(128, 128, 128, 0.5);
+  }
+}
+
+// Workshop spinner
+.workshop-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+// === 可访问性：尊重系统「减少动态效果」 ===
+// Windows 的「动画效果」开关关掉后，这里把所有入场/位移/呼吸动画压到一帧完成，
+// 只保留状态切换（否则界面会变成「点了没反应」）。
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,0 +1,39 @@
+# 默认：文本文件统一 LF 入库
+* text=auto eol=lf
+
+# 源码与文档
+*.py    text eol=lf
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.js    text eol=lf
+*.scss  text eol=lf
+*.css   text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.html  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+
+# Windows 脚本保持 CRLF，避免 cmd.exe / PowerShell 解析异常
+*.ps1   text eol=crlf
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+*.vbs   text eol=crlf
+
+# 二进制
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.bmp   binary
+*.ogg   binary
+*.wav   binary
+*.mp3   binary
+*.vpk   binary
+*.vtf   binary
+*.vmt   binary
+*.dll   binary
+*.pyd   binary
+*.exe   binary
+*.zip   binary

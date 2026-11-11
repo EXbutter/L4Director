@@ -1,0 +1,156 @@
+.titlebar {
+  display: flex;
+  align-items: center;
+  height: var(--titlebar-height);
+  // PCL 顶部：亮蓝底
+  background: var(--titlebar-bg);
+  position: relative;
+  z-index: 100;
+  flex-shrink: 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+
+  &-drag {
+    flex: 1;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    padding-left: 16px;
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+
+  &-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--titlebar-fg);
+    letter-spacing: 0.3px;
+  }
+
+  // 预发布标记：蓝色顶栏上的半透明白底小胶囊
+  &-beta {
+    padding: 1px 6px;
+    border-radius: 5px;
+    background: color-mix(in srgb, var(--titlebar-fg) 18%, transparent);
+    border: 1px solid color-mix(in srgb, var(--titlebar-fg) 34%, transparent);
+    color: var(--titlebar-fg);
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    line-height: 1.5;
+    text-transform: uppercase;
+    user-select: none;
+  }
+
+  &-icon {
+    width: 20px;
+    height: 20px;
+    color: var(--titlebar-fg);
+  }
+
+  &-actions {
+    display: flex;
+    height: 100%;
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+
+  &-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 46px;
+    height: 100%;
+    border: none;
+    background: transparent;
+    color: var(--titlebar-fg);
+    cursor: pointer;
+    transition: all 0.15s;
+    outline: none;
+    opacity: 0.9;
+
+    svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    &:hover {
+      background: color-mix(in srgb, var(--titlebar-fg) 16%, transparent);
+      color: var(--titlebar-fg);
+      opacity: 1;
+    }
+
+    &:active {
+      background: color-mix(in srgb, var(--titlebar-fg) 26%, transparent);
+      transform: scale(0.95);
+    }
+  }
+
+  &-theme {
+    width: 42px;
+    margin-right: 4px;
+
+    // 日/夜图标：悬停时转一点角度并放大，像被「拧」了一下
+    svg {
+      transition: transform 0.4s var(--ease-spring);
+    }
+
+    &:hover svg {
+      transform: rotate(-18deg) scale(1.08);
+    }
+  }
+
+  // 实时 FPS 指示器（设置 → 调试 中开启）
+  &-fps {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    height: 22px;
+    padding: 0 8px;
+    margin-right: 8px;
+    border-radius: 6px;
+    background: var(--bg-card-hover);
+    border: 1px solid var(--border-color);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+    user-select: none;
+    cursor: default;
+
+    &__dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    &__value {
+      min-width: 18px;
+      text-align: right;
+      transition: color 0.2s ease;
+    }
+
+    &__unit {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      letter-spacing: 0.4px;
+    }
+  }
+
+  &-close {
+    &:hover {
+      background: #e81123 !important;
+      color: white !important;
+      opacity: 1 !important;
+    }
+
+    &:active {
+      background: #c4101f !important;
+    }
+  }
+}

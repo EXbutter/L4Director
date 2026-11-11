@@ -1,0 +1,206 @@
+{
+  "tool": "backend/bench_scan.py",
+  "generated_at": "2026-09-24T03:07:16",
+  "machine": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "cpu_count": 20,
+    "python": "3.14.0"
+  },
+  "params": {
+    "counts": [
+      50,
+      200,
+      500,
+      1000
+    ],
+    "phases": [
+      "cold",
+      "warm-mem",
+      "warm-disk",
+      "stream-cold"
+    ],
+    "entries_per_vpk": 12,
+    "file_kb": 1,
+    "disabled_ratio": 0.1,
+    "seed": 20260924
+  },
+  "results": [
+    {
+      "mods": 50,
+      "library_size_mb": 0.46,
+      "phases": {
+        "cold": {
+          "label": "cold",
+          "elapsed_ms": 77.3,
+          "working_set_delta_mb": 0.9,
+          "peak_working_set_mb": 31.2,
+          "mods": 50,
+          "conflicts": 21,
+          "note": "进程内+磁盘缓存全空",
+          "throughput_mods_per_s": 647.0
+        },
+        "warm-mem": {
+          "label": "warm-mem",
+          "elapsed_ms": 1.8,
+          "working_set_delta_mb": 0.0,
+          "peak_working_set_mb": 31.2,
+          "mods": 50,
+          "note": "同进程再次扫描（缓存命中）",
+          "throughput_mods_per_s": 28165.8
+        },
+        "warm-disk": {
+          "label": "warm-disk",
+          "elapsed_ms": 33.2,
+          "working_set_delta_mb": 0.1,
+          "peak_working_set_mb": 31.2,
+          "mods": 50,
+          "note": "重启软件后（磁盘缓存命中）",
+          "throughput_mods_per_s": 1505.3
+        },
+        "stream-cold": {
+          "label": "stream-cold",
+          "elapsed_ms": 83.3,
+          "working_set_delta_mb": 0.1,
+          "peak_working_set_mb": 31.6,
+          "mods": 50,
+          "first_mod_ms": 9.8,
+          "note": "流式接口：首个 Mod 出现时间 / 全部完成时间",
+          "throughput_mods_per_s": 600.5
+        }
+      }
+    },
+    {
+      "mods": 200,
+      "library_size_mb": 1.82,
+      "phases": {
+        "cold": {
+          "label": "cold",
+          "elapsed_ms": 315.1,
+          "working_set_delta_mb": 0.7,
+          "peak_working_set_mb": 32.5,
+          "mods": 200,
+          "conflicts": 86,
+          "note": "进程内+磁盘缓存全空",
+          "throughput_mods_per_s": 634.6
+        },
+        "warm-mem": {
+          "label": "warm-mem",
+          "elapsed_ms": 5.5,
+          "working_set_delta_mb": 0.0,
+          "peak_working_set_mb": 32.5,
+          "mods": 200,
+          "note": "同进程再次扫描（缓存命中）",
+          "throughput_mods_per_s": 36201.7
+        },
+        "warm-disk": {
+          "label": "warm-disk",
+          "elapsed_ms": 154.6,
+          "working_set_delta_mb": 0.3,
+          "peak_working_set_mb": 32.5,
+          "mods": 200,
+          "note": "重启软件后（磁盘缓存命中）",
+          "throughput_mods_per_s": 1293.6
+        },
+        "stream-cold": {
+          "label": "stream-cold",
+          "elapsed_ms": 321.2,
+          "working_set_delta_mb": 0.1,
+          "peak_working_set_mb": 33.1,
+          "mods": 200,
+          "first_mod_ms": 12.1,
+          "note": "流式接口：首个 Mod 出现时间 / 全部完成时间",
+          "throughput_mods_per_s": 622.6
+        }
+      }
+    },
+    {
+      "mods": 500,
+      "library_size_mb": 4.57,
+      "phases": {
+        "cold": {
+          "label": "cold",
+          "elapsed_ms": 659.9,
+          "working_set_delta_mb": 2.4,
+          "peak_working_set_mb": 35.9,
+          "mods": 500,
+          "conflicts": 216,
+          "note": "进程内+磁盘缓存全空",
+          "throughput_mods_per_s": 757.7
+        },
+        "warm-mem": {
+          "label": "warm-mem",
+          "elapsed_ms": 13.3,
+          "working_set_delta_mb": 0.0,
+          "peak_working_set_mb": 35.9,
+          "mods": 500,
+          "note": "同进程再次扫描（缓存命中）",
+          "throughput_mods_per_s": 37650.0
+        },
+        "warm-disk": {
+          "label": "warm-disk",
+          "elapsed_ms": 319.2,
+          "working_set_delta_mb": 0.7,
+          "peak_working_set_mb": 36.3,
+          "mods": 500,
+          "note": "重启软件后（磁盘缓存命中）",
+          "throughput_mods_per_s": 1566.5
+        },
+        "stream-cold": {
+          "label": "stream-cold",
+          "elapsed_ms": 636.1,
+          "working_set_delta_mb": -0.1,
+          "peak_working_set_mb": 36.3,
+          "mods": 500,
+          "first_mod_ms": 20.2,
+          "note": "流式接口：首个 Mod 出现时间 / 全部完成时间",
+          "throughput_mods_per_s": 786.0
+        }
+      }
+    },
+    {
+      "mods": 1000,
+      "library_size_mb": 9.14,
+      "phases": {
+        "cold": {
+          "label": "cold",
+          "elapsed_ms": 1361.5,
+          "working_set_delta_mb": 3.8,
+          "peak_working_set_mb": 43.4,
+          "mods": 1000,
+          "conflicts": 428,
+          "note": "进程内+磁盘缓存全空",
+          "throughput_mods_per_s": 734.5
+        },
+        "warm-mem": {
+          "label": "warm-mem",
+          "elapsed_ms": 27.9,
+          "working_set_delta_mb": 0.2,
+          "peak_working_set_mb": 43.4,
+          "mods": 1000,
+          "note": "同进程再次扫描（缓存命中）",
+          "throughput_mods_per_s": 35899.4
+        },
+        "warm-disk": {
+          "label": "warm-disk",
+          "elapsed_ms": 727.8,
+          "working_set_delta_mb": 1.4,
+          "peak_working_set_mb": 43.9,
+          "mods": 1000,
+          "note": "重启软件后（磁盘缓存命中）",
+          "throughput_mods_per_s": 1374.1
+        },
+        "stream-cold": {
+          "label": "stream-cold",
+          "elapsed_ms": 1338.0,
+          "working_set_delta_mb": 1.1,
+          "peak_working_set_mb": 44.1,
+          "mods": 1000,
+          "first_mod_ms": 35.6,
+          "note": "流式接口：首个 Mod 出现时间 / 全部完成时间",
+          "throughput_mods_per_s": 747.4
+        }
+      }
+    }
+  ]
+}

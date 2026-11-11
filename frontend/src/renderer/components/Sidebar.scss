@@ -1,0 +1,606 @@
+.sidebar {
+  width: 200px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 0;
+  gap: 4px;
+  flex-shrink: 0;
+  background: var(--sidebar-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-right: 1px solid var(--border-color);
+
+  &-nav {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 0 8px;
+    position: relative;
+  }
+
+  &-indicator {
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    width: calc(100% - 16px);
+    border-radius: 8px;
+    // PCL 选中项：浅蓝底（不再是渐变）
+    background: var(--sidebar-active-bg);
+    box-shadow: none;
+    z-index: 0;
+    // 选中块「滑过去」而不是「瞬移」，但收尾要干净：
+    // 用 --ease-standard（无过冲），不要 --ease-spring —— 那个控制点 1.56 会在末段
+    // 越过目标再退回来，落定（含窗口缩放、字体加载导致的高度微调）时看着像果冻一样抖一下。
+    transition: transform 0.3s var(--ease-standard),
+                height 0.3s var(--ease-standard),
+                background-color 0.25s ease;
+    pointer-events: none;
+  }
+
+  &-nav-items {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  &-divider {
+    height: 1px;
+    background: var(--border-color);
+    margin: 6px 12px;
+    opacity: 0.5;
+  }
+
+  &-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 10px 16px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 14px;
+    font-family: var(--font-family);
+    cursor: pointer;
+    transition: all 0.25s ease;
+    text-align: left;
+    position: relative;
+    overflow: hidden;
+
+    &:hover {
+      background: var(--sidebar-hover-bg);
+      color: var(--text-primary);
+      transform: translateX(2px);
+
+      // 图标跟着「探一下头」：位移只 1px、放大 8%，够看出被指到了但不会跳
+      .sidebar-icon {
+        transform: translateX(1px) scale(1.08);
+        color: var(--accent-text);
+      }
+
+      .sidebar-badge {
+        transform: scale(1.08);
+      }
+    }
+
+    &.active {
+      background: transparent;
+      color: var(--sidebar-active-text);
+      font-weight: 600;
+      box-shadow: none;
+
+      .sidebar-icon {
+        transform: scale(1.04);
+      }
+
+      .sidebar-badge {
+        transform: none;
+      }
+    }
+
+    &::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%) scaleY(0);
+      width: 3px;
+      height: 60%;
+      border-radius: 0 3px 3px 0;
+      // PCL 左侧蓝色竖条
+      background: var(--accent);
+      transition: transform 0.25s ease;
+    }
+
+    &:hover::after {
+      transform: translateY(-50%) scaleY(1);
+    }
+
+    // 选中项：始终显示左侧蓝色竖条（PCL 激活项标志）
+    &.active::after {
+      display: block;
+      transform: translateY(-50%) scaleY(1);
+      background: var(--accent);
+    }
+  }
+
+  &-item--launch {
+    padding: 14px 16px !important;
+    border-radius: 12px !important;
+    background: var(--accent) !important;
+    color: var(--on-accent) !important;
+    font-size: 15px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.3px !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2) !important;
+    margin-bottom: 4px;
+    // 只过渡「点击反馈」相关的属性：transform 走短时长才跟手
+    transition: transform 0.08s ease, background 0.25s ease, box-shadow 0.25s ease !important;
+
+    &:hover {
+      background: var(--accent-hover) !important;
+      transform: none !important;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25) !important;
+    }
+
+    &:active {
+      transform: scale(0.98) !important;
+    }
+
+    // 图标/文字要盖在水波纹与扫光之上
+    > .sidebar-icon,
+    > .sidebar-label {
+      position: relative;
+      z-index: 1;
+    }
+
+    // 图标槽固定为 22×22：三态（播放图标 / 旋转圈 / 均衡条）尺寸一致，
+    // 按钮高度不会在状态切换时跳变（否则下方导航项会跟着位移）
+    > .sidebar-icon {
+      width: 22px;
+      height: 22px;
+    }
+
+    .sidebar-icon svg {
+      width: 22px;
+      height: 22px;
+    }
+
+    // .sidebar-item::after 是导航项的左侧竖条，启动按钮不需要
+    &::after {
+      display: none !important;
+    }
+
+    /* 按下态：mousedown 立即生效（不等 :active 的判定），给出「按到了」的触感 */
+    &--pressed {
+      transform: scale(0.97) !important;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28),
+                  inset 0 2px 6px rgba(0, 0, 0, 0.18) !important;
+    }
+
+    /* 正在启动：蓝色底 + 呼吸光环 + 扫光 + 底部不确定进度条 */
+    &--launching {
+      cursor: progress;
+      background: var(--accent) !important;
+      animation: sidebar-launch-glow 1.5s ease-in-out infinite;
+
+      // 注意：必须显式覆盖 :hover（它的优先级是 (0,2,0)，比本类高）
+      &:hover {
+        background: var(--accent) !important;
+        transform: none !important;
+      }
+
+      &::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        background: linear-gradient(
+          100deg,
+          transparent 25%,
+          rgba(255, 255, 255, 0.32) 50%,
+          transparent 75%
+        );
+        transform: translateX(-100%);
+        animation: sidebar-launch-shimmer 1.5s ease-in-out infinite;
+        pointer-events: none;
+      }
+    }
+
+    /* 游戏中：绿色底 + 脉动呼吸 + 律动均衡条 */
+    &--running {
+      background: linear-gradient(135deg, #22c55e, #16a34a) !important;
+      box-shadow: 0 4px 16px rgba(34, 197, 94, 0.35) !important;
+      animation: sidebar-launch-running 2.6s ease-in-out infinite;
+
+      &:hover {
+        background: linear-gradient(135deg, #22c55e, #16a34a) !important;
+        transform: none !important;
+        box-shadow: 0 6px 22px rgba(34, 197, 94, 0.45) !important;
+      }
+    }
+  }
+
+  &-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    // 悬停时图标轻微放大/位移，用回弹缓动收尾
+    transition: transform 0.3s var(--ease-spring), color 0.2s ease;
+
+    svg {
+      width: 20px;
+      height: 20px;
+      stroke-width: 1.5;
+    }
+  }
+
+  &-label {
+    font-weight: 500;
+    letter-spacing: 0.1px;
+  }
+
+  &-badge {
+    margin-left: auto;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-size: 12px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 10px;
+    min-width: 20px;
+    text-align: center;
+    box-shadow: none;
+    transition: transform 0.3s var(--ease-spring);
+  }
+
+  &-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 8px 0;
+    margin-bottom: 8px;
+
+    &-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    &.connected {
+      color: var(--accent-tertiary);
+
+      .sidebar-status-dot {
+        background: var(--accent-tertiary);
+        box-shadow: 0 0 8px var(--glow-teal);
+      }
+    }
+
+    &.disconnected {
+      color: #f87171;
+
+      .sidebar-status-dot {
+        background: #f87171;
+        box-shadow: 0 0 8px rgba(248, 113, 113, 0.5);
+      }
+    }
+  }
+
+  /* ===== 启动游戏按钮：点击反馈 / 正在启动 / 游戏中 ===== */
+
+  // 点击水波纹（由 JS 动态插入，坐标相对于按钮左上角）
+  &-launch-ripple {
+    position: absolute;
+    z-index: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.45);
+    transform: translate(-50%, -50%) scale(0);
+    opacity: 0.85;
+    pointer-events: none;
+    animation: sidebar-launch-ripple 0.62s ease-out forwards;
+  }
+
+  // 「正在启动」的旋转圈
+  &-launch-spinner {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 2.5px solid rgba(255, 255, 255, 0.35);
+    border-top-color: #fff;
+    border-right-color: rgba(255, 255, 255, 0.85);
+    animation: sidebar-launch-spin 0.7s linear infinite;
+  }
+
+  // 「游戏中」的律动均衡条（容器高度与图标槽一致，避免按钮高度跳变）
+  &-launch-eq {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 3px;
+    width: 22px;
+    height: 22px;
+
+    i {
+      width: 4px;
+      height: 6px;
+      border-radius: 2px;
+      background: #fff;
+      animation: sidebar-launch-eq 0.9s ease-in-out infinite;
+    }
+
+    i:nth-child(1) {
+      animation-delay: -0.15s;
+    }
+
+    i:nth-child(2) {
+      animation-delay: 0.25s;
+    }
+
+    i:nth-child(3) {
+      animation-delay: 0.55s;
+    }
+  }
+
+  // 「正在启动」底部的不确定进度条
+  &-launch-progress {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    z-index: 1;
+    width: 100%;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.22);
+    overflow: hidden;
+
+    &::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -45%;
+      width: 45%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, #fff, transparent);
+      animation: sidebar-launch-progress 1.1s ease-in-out infinite;
+    }
+  }
+
+  // 「游戏中」的已运行时长
+  &-launch-timer {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: -2px 0 6px;
+    padding: 0 4px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    color: var(--accent-tertiary);
+
+    &__dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: var(--accent-tertiary);
+      box-shadow: 0 0 8px var(--glow-teal);
+      animation: sidebar-launch-dot 1.6s ease-in-out infinite;
+    }
+  }
+
+  &-footer {
+    padding: 12px 16px 8px;
+    border-top: 1px solid var(--border-color);
+    margin-top: auto;
+  }
+
+  &-version {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+    letter-spacing: 0.4px;
+    font-weight: 500;
+    user-select: none;
+
+    &__num {
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      letter-spacing: 0.2px;
+
+      // 预发布版本只显示渠道标记：橙色描边小胶囊，和正式版一眼区分
+      &--beta {
+        font-family: inherit;
+        padding: 1px 6px;
+        border-radius: 6px;
+        border: 1px solid rgba(245, 158, 11, 0.55);
+        background: rgba(245, 158, 11, 0.14);
+        color: #b45309;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.6px;
+        line-height: 1.4;
+      }
+    }
+  }
+
+  [data-theme='dark'] & {
+    // 暗色下橙色要提亮，否则在深底上糊成一团
+    .sidebar-version__num--beta {
+      border-color: rgba(251, 191, 36, 0.45);
+      background: rgba(251, 191, 36, 0.16);
+      color: #fbbf24;
+    }
+  }
+
+  /* Steam login section */
+  &-steam {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    margin-bottom: 8px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    user-select: none;
+    min-height: 44px;
+
+    &:hover {
+      background: var(--sidebar-hover-bg);
+    }
+
+    &--logged {
+      cursor: pointer;
+    }
+
+    &--loading {
+      opacity: 0.6;
+      cursor: wait;
+    }
+
+    &__avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      object-fit: cover;
+      overflow: hidden;
+
+      &--default {
+        background: var(--bg-card-hover);
+        color: var(--text-muted);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid var(--border-color);
+
+        svg {
+          width: 20px;
+          height: 20px;
+        }
+      }
+    }
+
+    &__name {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-primary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      line-height: 1.2;
+    }
+  }
+}
+
+[data-theme='light'] .sidebar {
+  &-item {
+    &.active {
+      box-shadow: none;
+    }
+  }
+}
+
+/* ===== 启动游戏按钮的动画关键帧 ===== */
+
+// 点击水波纹：从点击点向外扩散并淡出
+@keyframes sidebar-launch-ripple {
+  from {
+    transform: translate(-50%, -50%) scale(0);
+    opacity: 0.85;
+  }
+  to {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0;
+  }
+}
+
+// 「正在启动」的旋转圈
+@keyframes sidebar-launch-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+// 「正在启动」向外扩散的呼吸光环
+@keyframes sidebar-launch-glow {
+  0%,
+  100% {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2), 0 0 0 0 rgba(var(--accent-rgb), 0.45);
+  }
+  50% {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2), 0 0 0 7px rgba(var(--accent-rgb), 0);
+  }
+}
+
+// 「正在启动」从左向右的扫光
+@keyframes sidebar-launch-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  60%,
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+// 「正在启动」底部不确定进度条
+@keyframes sidebar-launch-progress {
+  0% {
+    left: -45%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+
+// 「游戏中」的律动均衡条
+@keyframes sidebar-launch-eq {
+  0%,
+  100% {
+    height: 6px;
+    opacity: 0.65;
+  }
+  50% {
+    height: 20px;
+    opacity: 1;
+  }
+}
+
+// 「游戏中」按钮的呼吸脉动
+@keyframes sidebar-launch-running {
+  0%,
+  100% {
+    box-shadow: 0 4px 16px rgba(34, 197, 94, 0.35), 0 0 0 0 rgba(34, 197, 94, 0.45);
+  }
+  50% {
+    box-shadow: 0 4px 18px rgba(34, 197, 94, 0.5), 0 0 0 6px rgba(34, 197, 94, 0);
+  }
+}
+
+// 「已运行」计时前的脉动小圆点
+@keyframes sidebar-launch-dot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.8);
+  }
+}
+

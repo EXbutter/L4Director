@@ -1,0 +1,2076 @@
+/* ===== Status / Loading ===== */
+.my-mods-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 80px 24px;
+  color: var(--text-muted);
+  font-size: 14px;
+
+  svg {
+    width: 48px;
+    height: 48px;
+    opacity: 0.4;
+  }
+
+  &__spinner {
+    width: 28px;
+    height: 28px;
+    border: 3px solid var(--border-color);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: modSpin 0.7s linear infinite;
+  }
+}
+
+@keyframes modSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* ===== 流式扫描进度条 ===== */
+.my-mods-scanning-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 16px 24px 0;
+  padding: 10px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-card, rgba(255, 255, 255, 0.03));
+
+  &__label {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  &__track {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--border-color);
+    overflow: hidden;
+  }
+
+  &__fill {
+    height: 100%;
+    border-radius: 3px;
+    background: var(--accent);
+    transition: width 0.2s ease;
+    min-width: 2px;
+  }
+}
+
+/* ===== Category Tabs (全部/自定义Mod/创意工坊Mod) ===== */
+.mod-categories {
+  display: flex;
+  gap: 8px;
+  padding: 16px 24px 0;
+
+  &__tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--bg-primary-solid);
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    font-family: var(--font-family);
+    cursor: pointer;
+    transition: all 0.25s ease;
+
+    &:hover {
+      border-color: var(--accent-secondary);
+      background: var(--bg-card-hover);
+      color: var(--text-primary);
+    }
+
+    // 按下时缩一点：即使切换很快也能看到「我点到了」
+    &:active {
+      transform: scale(0.96);
+    }
+
+    &.active {
+      border-color: var(--accent-secondary);
+      color: var(--accent-secondary);
+      font-weight: 600;
+      background: color-mix(in srgb, var(--accent-secondary) 10%, var(--bg-primary-solid));
+      animation: chipPop 0.26s var(--ease-spring);
+      // 选中态加一层极轻的主色投影，与未选中的扁平底区分开
+      box-shadow: 0 2px 10px color-mix(in srgb, var(--accent-secondary) 22%, transparent);
+    }
+  }
+
+  &__count {
+    font-size: 12px;
+    background: var(--bg-card-hover);
+    padding: 1px 7px;
+    border-radius: 8px;
+    min-width: 18px;
+    text-align: center;
+
+    .active & {
+      background: color-mix(in srgb, var(--accent-secondary) 20%, transparent);
+      color: var(--accent-secondary);
+    }
+  }
+}
+
+/* ===== Mod Cards Grid ===== */
+.my-mods-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+  padding: 16px 0 32px;
+  flex: 1;
+  align-content: start;
+}
+
+/* ===== 列表模式：单列紧凑行 =====
+   复用同一份 DOM（缩略图 + 信息块），只把卡片从「纵向卡片」掰成「横向一行」，
+   因此右键菜单、选中、冲突提示等交互完全不用改。 */
+.my-mods-grid--list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0 32px;
+
+  .mod-card {
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    height: 76px;
+    // 列表模式行高是 76px，必须同步 contain-intrinsic-size，
+    // 否则视口外的行会按卡片的 310px 估算高度，滚动条长度和实际内容对不上
+    contain-intrinsic-size: auto 76px;
+    // 行内空间小，底部那抹渐隐会压住第二排文字，列表里只留左侧色条
+    background-image: none;
+    // 左侧留出状态色条的位置
+    padding: 0 14px 0 10px;
+    border-radius: 10px;
+    // 列表模式的入场：整行从左侧滑入 + 淡入，按行号自上而下错峰，
+    // 看起来像一列行被「从侧边栏那边」一推一推地送进来。
+    // 行高固定 76px、一屏 7 行左右，步长取 38ms（每行相差约 1/8 个动画时长），
+    // 错峰到第 12 行封顶（≈456ms），再往下的行不会各自挂一串越来越长的延迟。
+    // fill 用 backwards：动画结束后 transform 交还给 :hover，行不会永久留着一个合成层。
+    --row-delay: calc(min(var(--card-i, 0), 12) * 38ms);
+    animation: listRowIn 0.32s var(--ease-soft) var(--row-delay) backwards;
+
+    // 状态色条：从卡片底部横条改成左侧竖条（PCL 列表的选中指示器风格）
+    &::after {
+      top: 0;
+      bottom: 0;
+      left: 0;
+      right: auto;
+      width: 3px;
+      height: auto;
+    }
+
+    // 列表行不做上浮位移，只做轻微阴影，避免整列抖动
+    &--enabled:hover,
+    &--disabled:hover {
+      transform: none;
+    }
+
+    &--enabled:hover {
+      box-shadow: 0 2px 12px rgba(34, 197, 94, 0.22);
+    }
+
+    &--disabled:hover {
+      box-shadow: 0 2px 12px rgba(239, 68, 68, 0.22);
+    }
+
+    // 列表行整行通栏，按下时只做很轻的收缩（不位移），
+    // 否则一行往下塌 3px 会带着相邻行一起抖。写在 hover 之后，
+    // 靠源码顺序压过上面那条 `transform: none`，按下反馈才不会被吃掉。
+    &:active {
+      transform: scale(0.995);
+    }
+
+    &--selected {
+      transform: none;
+
+      &:hover {
+        transform: none;
+      }
+
+      // 勾选角标挪到缩略图左下角，避开同样在左上角的冲突角标
+      &::before {
+        top: auto;
+        bottom: 8px;
+        left: 10px;
+        width: 20px;
+        height: 20px;
+        line-height: 20px;
+        font-size: 12px;
+      }
+    }
+  }
+
+  .mod-card__preview-container {
+    width: 104px;
+    height: 58px;
+    flex: 0 0 auto;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .mod-card__preview svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  .mod-card__info {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    align-content: center;
+    gap: 2px 10px;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .mod-card__info-header {
+    flex: 1 1 100%;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .mod-card__name {
+    display: block;
+    -webkit-line-clamp: 1;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+  }
+
+  .mod-card__status {
+    flex: 0 0 auto;
+  }
+
+  .mod-card__author,
+  .mod-card__description,
+  .mod-card__meta {
+    font-size: 11.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  // 列表行的第二排只放「作者 / 大小 / 标签」这类短信息；
+  // 描述长度不可控，留着会把整行挤成两排再被裁掉，所以列表模式下不显示
+  .mod-card__description {
+    display: none;
+  }
+
+  .mod-card__author {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .mod-card__meta {
+    flex: 0 0 auto;
+  }
+
+  .mod-card__tags {
+    margin-top: 0;
+    flex: 0 1 auto;
+    flex-wrap: nowrap;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  // 冲突角标：从卡片右上角移到缩略图左上角，避免压住「已启用 / 已禁用」标签
+  .mod-card__conflict-icon {
+    top: 8px;
+    right: auto;
+    left: 10px;
+    width: 20px;
+    height: 20px;
+
+    svg {
+      width: 12px;
+      height: 12px;
+    }
+  }
+}
+
+/* ===== Single Mod Card ===== */
+@keyframes cardFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* 列表行入场：整行从左侧推出来（与切页的「从侧边栏往右推进」同一方向），
+   配合 TSX 里的行号错峰，自上而下依次出现。
+   刻意不做缩放：行是通栏的，缩放会让左右边缘参差不齐，看着像在抖。 */
+@keyframes listRowIn {
+  from {
+    opacity: 0;
+    transform: translate3d(-28px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.mod-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  // 只过渡真正会变的几个属性。写 `all` 会让主题切换、布局微调时每张卡片
+  // 都去启动一堆无关过渡（50 多张卡片同时挂过渡 = 切页白掉帧）。
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1),
+              box-shadow 0.25s ease,
+              background-color 0.25s ease,
+              border-color 0.25s ease;
+  user-select: none;
+  box-sizing: border-box;
+  // 入场「错峰」：--card-i 是卡片在列表里的序号（TSX 里写成行内变量），
+  // 每张比前一张晚 24ms，最多错开 16 张 —— 一次铺满屏幕时像水波一样依次浮现，
+  // 又不会因为列表很长而让最后一张等上好几秒。
+  --card-delay: calc(var(--card-i, 0) * 24ms);
+  // 填充模式用 backwards 而不是 both：动画结束后要让位给 :hover 的 transform，
+  // 否则 hover 上浮会被动画的最终帧（transform: translateY(0)）永久压住。
+  //
+  // 「入场淡入 + 启用/禁用的一次轻鼓包」必须都写在这条基类 animation 里。
+  // 以前鼓包写在 `--enabled` / `--disabled` 上，于是点一下卡片（类名切换）
+  // 浏览器就认为 animation 值变了 → 整条动画从头重放：先淡入、再鼓包，
+  // 看起来就是「点击动画被拆成了两段」。放在这里值恒定，状态切换不会重启动画。
+  animation:
+    cardFadeIn 0.3s var(--ease-spring) var(--card-delay) backwards,
+    modCardPop 0.36s var(--ease-spring) calc(var(--card-delay) + 60ms) backwards;
+
+  // 视口之外的卡片不做入场动画：它们本来就看不见，却会让浏览器给几十张卡片
+// 各建一个合成层并逐帧推进动画，切页时的掉帧大半来自这里。
+// 24 张 ≈ 三行（1440 宽下每行 4 张）/ 列表下约 1800px，足够覆盖首屏 + 一次滚动的余量。
+// 用 @at-root 提到顶层：这段规则原本嵌在 .mod-card 里，编译成后代选择器后永远匹配不到，
+// 等于一直没生效（列表模式下 58 行会同时启动动画）。
+@at-root .my-mods-grid > .mod-card:nth-child(n + 25) {
+  animation: none;
+}
+
+  width: 100%;
+  height: 310px;
+  overflow: hidden;
+  min-width: 0;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 310px;
+
+  // 底部状态条。以前这里是「3px 色条 + box-shadow 12px 同色光晕」，
+  // 而 box-shadow 每张卡都要单独做一次高斯模糊：58 张卡一起滚动时，
+  // 仅这一项就能把帧率从 200 拉到 150 以下。光晕改用卡片自身的
+  // background-image 渐变实现（见下面 --enabled / --conflict / --disabled），
+  // 栅格化只是填色，没有模糊。
+  &::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: transparent;
+    transition: background 0.25s ease;
+    pointer-events: none;
+  }
+
+  &--enabled::after {
+    background: #22c55e;
+  }
+
+  &--enabled {
+    // 底部一抹同色渐隐，替代原来的 box-shadow 光晕（每张卡少一次高斯模糊）
+    background-image: linear-gradient(to top, rgba(34, 197, 94, 0.14), rgba(34, 197, 94, 0) 26%);
+  }
+
+  &--enabled:hover {
+    // 「上浮量」用变量记录下来，按下态直接复用它 —— 见下面的 :active
+    --card-lift: -3px;
+    transform: translateY(var(--card-lift));
+    box-shadow: 0 4px 20px rgba(34, 197, 94, 0.5), 0 8px 24px rgba(0, 0, 0, 0.15);
+  }
+
+  &--conflict {
+    background-image: linear-gradient(to top, rgba(249, 115, 22, 0.14), rgba(249, 115, 22, 0) 26%);
+  }
+
+  &--conflict::after {
+    background: #f97316;
+  }
+
+  &--disabled::after {
+    background: #ef4444;
+  }
+
+  &--disabled {
+    background-image: linear-gradient(to top, rgba(239, 68, 68, 0.14), rgba(239, 68, 68, 0) 26%);
+  }
+
+  &--disabled:hover {
+    box-shadow: 0 4px 20px rgba(239, 68, 68, 0.5), 0 8px 24px rgba(0, 0, 0, 0.15);
+  }
+
+  // 按下反馈。必须写在所有 :hover 规则之后：同特指度下由源码顺序决定，
+  // 放前面会被 `.mod-card--enabled:hover` 的 transform 整个盖掉（以前就是这样，
+  // 按下时既没有缩放，点击后动画还会重放一次鼓包 —— 两种运动叠在一起成了两段）。
+  // 位移沿用 hover 的 --card-lift，按下时不会先「掉」回原位再缩；
+  // 过渡单独收短并换成不过冲的曲线，松手回弹的果冻感留给默认那条 transition。
+  &:active {
+    transform: translateY(var(--card-lift, 0px)) scale(0.97);
+    transition:
+      transform 110ms var(--ease-standard),
+      box-shadow 0.25s ease,
+      background-color 0.25s ease,
+      border-color 0.25s ease;
+  }
+
+  /* Selected state for batch selection */
+  &--selected {
+    outline: 3px solid var(--accent);
+    outline-offset: -3px;
+    box-shadow: 0 0 0 1px var(--accent), 0 0 24px rgba(var(--accent-rgb), 0.35);
+    transform: translateY(-2px);
+    background: color-mix(in srgb, var(--accent) 8%, var(--bg-card));
+
+    &::before {
+      content: '✓';
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      width: 28px;
+      height: 28px;
+      background: var(--accent);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 14px;
+      font-weight: 700;
+      z-index: 10;
+      box-shadow: 0 2px 8px rgba(var(--accent-rgb), 0.5);
+      line-height: 28px;
+      text-align: center;
+    }
+
+    &:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 0 0 1px var(--accent), 0 8px 32px rgba(var(--accent-rgb), 0.4);
+    }
+
+    // 选中态本身已经上浮 2px，按下时同步保住这个位移，别让它先弹回原位
+    &:active {
+      transform: translateY(-4px) scale(0.97);
+    }
+  }
+}
+
+/* Preview container wrapper (for IntersectionObserver) */
+.mod-card__preview-container {
+  height: 130px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+/* Preview area - fixed height to keep cards uniform */
+.mod-card__preview {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-card-hover);
+  color: var(--text-muted);
+  overflow: hidden;
+  transition: filter 0.3s ease;
+  flex-shrink: 0;
+
+  svg {
+    width: 40px;
+    height: 40px;
+    opacity: 0.5;
+  }
+
+  &--image {
+    padding: 0;
+    background: var(--bg-card-hover);
+  }
+}
+
+.mod-card__thumbnail {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  // 悬停时轻微推近：卡片本身已经上浮，缩略图再「呼吸」一下，静止和悬停的差别更明确。
+  // 位移交给卡片、缩放交给图片，两者互不抢 transform，动画就不会打架。
+  transform: scale(1);
+  transition: transform 0.55s var(--ease-soft), filter 0.3s ease;
+  will-change: transform;
+}
+
+.mod-card:hover .mod-card__thumbnail {
+  transform: scale(1.045);
+}
+
+.mod-card__info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px 14px;
+  flex: 1;
+  min-height: 0;
+}
+
+.mod-card__info-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mod-card__name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+  flex: 1;
+  min-width: 0;
+}
+
+.mod-card__author {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mod-card__meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mod-card__description {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+  opacity: 0.7;
+}
+
+.mod-card__status {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-weight: 600;
+
+  &--enabled {
+    background: rgba(34, 197, 94, 0.15);
+    color: #22c55e;
+  }
+
+  &--conflict {
+    background: rgba(249, 115, 22, 0.15);
+    color: #f97316;
+    border-color: #f97316;
+  }
+
+  &--disabled {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+  }
+}
+
+/* ===== 列表模式的启停开关 =====
+   取代原来的「已启用 / 已禁用 / 冲突」文字标签。
+   位置 + 颜色同时表意：滑块靠右=开、靠左=关；轨道绿=正常、橙=有冲突、红=已禁用。
+   冲突不是第三种状态，而是「开着但有问题」，所以滑块位置与开启一致，只换颜色。 */
+.mod-switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 23px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  // 默认（关闭）是红色：不依赖文字，扫一眼这列红色就能看出哪些 Mod 没生效
+  background: #ef4444;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.22);
+  transition: background-color 0.25s ease, box-shadow 0.25s ease;
+
+  &__knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 19px;
+    height: 19px;
+    border-radius: 50%;
+    background: #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.32);
+    // 与侧边栏滑块同一套缓动：单调逼近、不过冲，拨动时不会「弹一下」
+    transition: transform 0.26s var(--ease-standard);
+  }
+
+  // 悬停给一圈同色柔光；三个状态的规则各自独立，避免被后面那条通配 hover 覆盖
+  &:hover {
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.22), 0 0 0 3px rgba(239, 68, 68, 0.2);
+  }
+
+  &--on {
+    background: #22c55e;
+
+    &:hover {
+      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.22), 0 0 0 3px rgba(34, 197, 94, 0.22);
+    }
+  }
+
+  &--conflict {
+    background: #f97316;
+
+    &:hover {
+      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.22), 0 0 0 3px rgba(249, 115, 22, 0.24);
+    }
+  }
+
+  // 开启（含冲突）时滑块推到右侧：42 - 19 - 2*2 = 19px
+  &--on &__knob,
+  &--conflict &__knob {
+    transform: translateX(19px);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--accent-text);
+    outline-offset: 2px;
+  }
+}
+
+.mod-card--workshop {
+  --card-badge: var(--accent);
+}
+
+.mod-card--custom {
+  --card-badge: var(--accent-secondary);
+}
+.mod-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.mod-card__tag {
+  font-size: 12px;
+  padding: 2px 8px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent-text);
+  border-radius: 6px;
+}
+
+.mod-card__tag--more {
+  background: var(--bg-card-hover);
+  color: var(--text-muted);
+}
+
+.mod-card__conflict-icon {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  background: #f97316;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  box-shadow: 0 2px 6px rgba(249, 115, 22, 0.5);
+  cursor: pointer;
+  transition: transform 0.2s ease;
+
+  &:hover {
+    transform: scale(1.15);
+  }
+}
+
+.mod-card__remove {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mod-card:hover .mod-card__remove {
+  opacity: 1;
+}
+
+.mod-card__remove:hover {
+  background: rgba(239, 68, 68, 0.8);
+}
+
+.mod-card__remove--conflict {
+  top: 42px;
+}
+
+/* Context Menu */
+.context-menu {
+  position: fixed;
+  background: var(--bg-primary-solid);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  min-width: 180px;
+  z-index: 10000;
+  animation: menuPopup 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  overflow: visible;
+}
+
+@keyframes menuPopup {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.context-menu__header {
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.context-menu__item {
+  display: block;
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font-family);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.context-menu__item:hover {
+  background: var(--bg-card-hover);
+}
+
+.context-menu__empty {
+  padding: 12px 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* Submenu styles */
+.context-menu__submenu-trigger {
+  position: relative;
+}
+
+.context-menu__item--submenu-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: default;
+  
+  &:hover {
+    background: var(--bg-card-hover);
+  }
+}
+
+.context-menu__submenu-arrow {
+  flex-shrink: 0;
+  opacity: 0.5;
+  margin-left: 16px;
+}
+
+/* Submenu rendered as absolute child of context-menu (for perfect alignment) */
+.context-menu__submenu-wrapper {
+  position: absolute;
+  top: 0;
+  z-index: 10001;
+}
+
+/* 分类标签子菜单：说明行 + 勾选行 */
+.context-menu__submenu-hint {
+  padding: 6px 12px 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 4px;
+}
+
+.context-menu__item--checkable {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.context-menu__check {
+  width: 12px;
+  flex-shrink: 0;
+  color: var(--accent-text);
+  font-weight: 700;
+}
+
+.context-menu__item--checked {
+  color: var(--accent-text);
+}
+
+/* Submenu content (the actual box) */
+.context-menu__submenu-box {
+  min-width: 160px;
+  // 子菜单可能很长（「分类标签」有说明 + 11 个分类 + 恢复项）：
+  // 限高 + 内部滚动，保证卡片在窗口底部时也能滚到所有选项（不会伸出窗口点不到）
+  max-height: min(64vh, 440px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--bg-primary-solid);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  padding: 4px;
+  animation: submenuIn 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  .context-menu__item {
+    border-radius: 6px;
+    white-space: nowrap;
+    padding: 8px 14px;
+  }
+
+  .context-menu__empty {
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+}
+
+.context-menu__submenu-divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: 4px 0;
+}
+
+@keyframes submenuIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Modal */
+@keyframes modalOverlayIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modalContentIn {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1001;
+  animation: modalOverlayIn 0.18s ease;
+}
+
+.modal-content {
+  background: var(--bg-primary-solid);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 24px;
+  width: 360px;
+  max-width: 90vw;
+  // 弹窗入口放慢到 0.26s 并带轻微过冲：0.15s 太快，看得出「闪」但看不出「弹」
+  animation: modalContentIn 0.26s var(--ease-spring);
+}
+
+.modal-content h3 {
+  margin: 0 0 16px;
+  font-size: 18px;
+  color: var(--text-primary);
+}
+
+.modal-input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: var(--font-family);
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.modal-input:focus {
+  border-color: var(--accent);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.modal-btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 10px;
+  font-size: 14px;
+  font-family: var(--font-family);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.modal-btn-cancel {
+  background: var(--bg-card-hover);
+  color: var(--text-secondary);
+}
+
+.modal-btn-cancel:hover {
+  background: var(--border-color);
+}
+
+.modal-btn-primary {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.modal-btn-primary:hover {
+  background: var(--accent-hover);
+}
+
+
+/* Packs Header */
+.packs-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px;
+}
+
+.packs-title {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-primary);
+}
+
+.packs-create-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 14px;
+  font-family: var(--font-family);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.packs-create-btn:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+}
+
+.packs-create-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Pack Detail */
+.pack-detail {
+  padding: 0 24px 24px;
+}
+
+.pack-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 0;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.pack-detail-back {
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 10px;
+  background: var(--bg-card-hover);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pack-detail-back:hover {
+  background: var(--border-color);
+  color: var(--text-primary);
+}
+
+.pack-detail-info {
+  flex: 1;
+}
+
+.pack-detail-info h3 {
+  margin: 0 0 4px;
+  font-size: 18px;
+  color: var(--text-primary);
+}
+
+.pack-detail-info span {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.pack-detail-action {
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  &--export {
+    background: var(--bg-card-hover);
+    color: var(--text-secondary);
+    &:hover {
+      background: var(--border-color);
+      color: var(--accent-text);
+    }
+  }
+}
+
+/* Sliding toggle switch for enable/disable all */
+.pack-detail-toggle {
+  position: relative;
+  cursor: pointer;
+  user-select: none;
+
+  &__track {
+    position: relative;
+    width: 100px;
+    height: 32px;
+    border-radius: 16px;
+    background: var(--bg-card-hover);
+    border: 1px solid var(--border-color);
+    overflow: hidden;
+    transition: background 0.3s ease;
+  }
+
+  &__label {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 12px;
+    font-weight: 600;
+    z-index: 1;
+    transition: color 0.3s ease;
+    pointer-events: none;
+
+    &--on {
+      left: 12px;
+      color: var(--text-muted);
+    }
+
+    &--off {
+      right: 12px;
+      color: var(--text-muted);
+    }
+  }
+
+  &__thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 46px;
+    height: 26px;
+    border-radius: 13px;
+    background: var(--bg-card);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2;
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.3s ease;
+
+    svg {
+      width: 14px;
+      height: 14px;
+      transition: all 0.3s ease;
+    }
+  }
+
+  &--on {
+    .pack-detail-toggle__track {
+      background: rgba(34, 197, 94, 0.15);
+      border-color: rgba(34, 197, 94, 0.3);
+    }
+    .pack-detail-toggle__label--on {
+      color: #22c55e;
+    }
+    .pack-detail-toggle__thumb {
+      transform: translateX(0);
+      svg {
+        color: #22c55e;
+      }
+    }
+  }
+
+  &--off {
+    .pack-detail-toggle__track {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: rgba(239, 68, 68, 0.3);
+    }
+    .pack-detail-toggle__label--off {
+      color: #ef4444;
+    }
+    .pack-detail-toggle__thumb {
+      transform: translateX(48px);
+      svg {
+        color: #ef4444;
+      }
+    }
+  }
+
+  &:hover &__thumb {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  }
+}
+
+/* Danger item in context menu */
+.context-menu__item--danger {
+  color: #ef4444;
+  &:hover {
+    background: rgba(239, 68, 68, 0.1);
+  }
+}
+
+.context-menu__divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: 4px 0;
+}
+
+/* Pack detail: in-pack mod filters (search + status tabs) */
+.pack-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 0 0 14px;
+
+  &__search {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: 1 1 220px;
+    max-width: 320px;
+  }
+
+  &__search-icon {
+    position: absolute;
+    left: 10px;
+    width: 14px;
+    height: 14px;
+    color: var(--text-muted);
+    pointer-events: none;
+  }
+
+  &__input {
+    width: 100%;
+    height: 34px;
+    padding: 0 32px 0 32px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: var(--font-family);
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+
+    &::placeholder {
+      color: var(--text-muted);
+    }
+
+    &:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+    }
+  }
+
+  &__clear {
+    position: absolute;
+    right: 6px;
+    width: 20px;
+    height: 20px;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+
+    svg {
+      width: 12px;
+      height: 12px;
+    }
+
+    &:hover {
+      background: var(--bg-card-hover);
+      color: var(--text-primary);
+    }
+  }
+
+  &__tabs {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-left: auto;
+  }
+
+  &__tab {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    font-family: var(--font-family);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: all 0.2s ease;
+
+    &:hover {
+      border-color: var(--accent);
+      background: var(--bg-card-hover);
+      color: var(--text-primary);
+    }
+
+    &:active {
+      transform: scale(0.96);
+    }
+
+    &.active {
+      background: color-mix(in srgb, var(--accent) 12%, var(--bg-card));
+      border-color: var(--accent);
+      color: var(--accent-text);
+      font-weight: 600;
+      animation: chipPop 0.26s var(--ease-spring);
+    }
+
+    &--enabled {
+      &.active {
+        background: rgba(34, 197, 94, 0.12);
+        border-color: #22c55e;
+        color: #22c55e;
+      }
+
+      &:hover:not(.active) {
+        border-color: #22c55e;
+        color: #22c55e;
+      }
+    }
+
+    &--disabled {
+      &.active {
+        background: rgba(239, 68, 68, 0.12);
+        border-color: #ef4444;
+        color: #ef4444;
+      }
+
+      &:hover:not(.active) {
+        border-color: #ef4444;
+        color: #ef4444;
+      }
+    }
+
+    &--conflict {
+      &.active {
+        background: rgba(249, 115, 22, 0.12);
+        border-color: #f97316;
+        color: #f97316;
+      }
+
+      &:hover:not(.active) {
+        border-color: #f97316;
+        color: #f97316;
+      }
+    }
+  }
+
+  &__count {
+    min-width: 16px;
+    padding: 0 5px;
+    border-radius: 5px;
+    background: var(--bg-card-hover);
+    font-size: 11px;
+    font-weight: 600;
+    text-align: center;
+    color: inherit;
+  }
+}
+
+/* Pack card */
+.pack-card {
+  border-bottom-color: var(--accent);
+}
+
+/* 整合包卡片比 Mod 卡片多一行（创建时间 + 成员标签），
+   固定 310px 会把标签裁掉，卡片视图改成按内容自适应高度 */
+.my-mods-grid:not(.my-mods-grid--list) .pack-card {
+  height: auto;
+  min-height: 310px;
+}
+
+/* 整合包在列表模式下：用左侧强调色竖条代替启用状态色条 */
+.my-mods-grid--list .pack-card {
+  // 整合包这一行是「名称 / 数量+时间 / 成员标签」三行，比 Mod 行更高一点才不挤
+  height: 88px;
+  // 列表里不靠底边框区分，交给左侧竖条
+  border-bottom-color: var(--border-color);
+
+  &::after {
+    top: 0;
+    bottom: 0;
+    left: 0;
+    right: auto;
+    width: 3px;
+    height: auto;
+    background: var(--accent);
+    box-shadow: none;
+  }
+}
+
+/* 详情页列表行右侧要留出「移出整合包」按钮的位置，否则会压住状态标签 */
+.pack-detail-grid.my-mods-grid--list .mod-card {
+  padding-right: 48px;
+}
+
+.pack-detail-grid.my-mods-grid--list .mod-card .mod-card__remove {
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+}
+
+.pack-detail-grid.my-mods-grid--list .mod-card .mod-card__remove--conflict {
+  top: 50%;
+}
+
+
+/* ===== VPK Content Type Categories ===== */
+.vpk-categories {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 24px 4px;
+
+  &__left {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    flex: 1;
+  }
+
+  &__right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  &__divider {
+    display: inline-block;
+    width: 1px;
+    height: 20px;
+    background: var(--border-color);
+    margin: 0 4px;
+    flex-shrink: 0;
+  }
+
+  &__tab {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    font-family: var(--font-family);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+
+    &:hover {
+      border-color: var(--accent);
+      background: var(--bg-card-hover);
+      color: var(--text-primary);
+    }
+
+    &:active {
+      transform: scale(0.96);
+    }
+
+    &.active {
+      background: color-mix(in srgb, var(--accent) 12%, var(--bg-card));
+      border-color: var(--accent);
+      color: var(--accent-text);
+      font-weight: 600;
+      animation: chipPop 0.26s var(--ease-spring);
+    }
+
+    &--enabled {
+      &.active {
+        background: rgba(34, 197, 94, 0.12);
+        border-color: #22c55e;
+        color: #22c55e;
+      }
+      &:hover:not(.active) {
+        border-color: #22c55e;
+        color: #22c55e;
+      }
+    }
+
+    &--disabled {
+      &.active {
+        background: rgba(239, 68, 68, 0.12);
+        border-color: #ef4444;
+        color: #ef4444;
+      }
+      &:hover:not(.active) {
+        border-color: #ef4444;
+        color: #ef4444;
+      }
+    }
+
+    &--conflict {
+      &.active {
+        background: rgba(249, 115, 22, 0.12);
+        border-color: #f97316;
+        color: #f97316;
+      }
+      &:hover:not(.active) {
+        border-color: #f97316;
+        color: #f97316;
+      }
+    }
+
+    &--no-conflict {
+      &.active {
+        background: rgba(34, 197, 94, 0.08);
+        border-color: #22c55e;
+        color: #22c55e;
+      }
+      &:hover:not(.active) {
+        border-color: #22c55e;
+        color: #22c55e;
+      }
+    }
+  }
+
+  &__count {
+    font-size: 12px;
+    background: var(--bg-card-hover);
+    padding: 1px 7px;
+    border-radius: 6px;
+    min-width: 18px;
+    text-align: center;
+
+    .active & {
+      background: color-mix(in srgb, var(--accent) 25%, transparent);
+      color: var(--accent-text);
+    }
+
+    .vpk-categories__tab--enabled.active & {
+      background: rgba(34, 197, 94, 0.2);
+      color: #22c55e;
+    }
+
+    .vpk-categories__tab--disabled.active & {
+      background: rgba(239, 68, 68, 0.2);
+      color: #ef4444;
+    }
+
+    .vpk-categories__tab--conflict.active & {
+      background: rgba(249, 115, 22, 0.2);
+      color: #f97316;
+    }
+
+    .vpk-categories__tab--no-conflict.active & {
+      background: rgba(34, 197, 94, 0.2);
+      color: #22c55e;
+    }
+  }
+}
+/* ===== End VPK Content Type Categories ===== */
+
+/* ===== Animations ===== */
+// 筛选胶囊/分类页签被选中时的一下轻弹：幅度只有 6%，目的是给「切换生效了」一个反馈
+@keyframes chipPop {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.06);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+// 只动 transform：早先这里还做了 box-shadow 的 0 → 20px 光晕，
+// box-shadow 是纯绘制属性，一屏 50 多张卡片同时插值 = 每帧重绘 50 多个大模糊，
+// 切页时帧率会从 200 掉到 90 左右。光晕交给 ::after 的静态投影去表达。
+// 入场时那一下很轻的「鼓包」。启用/禁用用的是同一份关键帧，所以合并成一条：
+// 只有一条关键帧 + 一处 animation 声明，点击切换状态时不会因 animation 值变化而重放。
+@keyframes modCardPop {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.03);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+/* ===== End Animations ===== */
+
+/* ===== Conflict Tooltip (hover beside icon) ===== */
+.conflict-tooltip {
+  position: fixed;
+  z-index: 10001;
+  min-width: 160px;
+  max-width: 280px;
+  background: var(--bg-primary-solid);
+  border: 1px solid rgba(249, 115, 22, 0.3);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  padding: 8px 0;
+  animation: tooltipIn 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+  pointer-events: none;
+
+  &__header {
+    padding: 4px 12px 6px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #f97316;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  &__list {
+    display: flex;
+    flex-direction: column;
+    padding: 4px 0;
+  }
+
+  &__item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    font-size: 12px;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__dot {
+    flex-shrink: 0;
+    font-size: 12px;
+  }
+
+  &__footer {
+    padding: 6px 12px 2px;
+    font-size: 12px;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border-color);
+    text-align: center;
+  }
+}
+
+@keyframes tooltipIn {
+  from {
+    opacity: 0;
+    transform: translateX(-4px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes tooltipInRight {
+  from {
+    opacity: 0;
+    transform: translateX(4px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.conflict-tooltip--left {
+  animation: tooltipInRight 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ===== Conflict Detail Dialog ===== */
+.conflict-dialog {
+  background: var(--bg-primary-solid);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 24px;
+  width: 500px;
+  max-width: 92vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  // 弹窗入口放慢到 0.26s 并带轻微过冲：0.15s 太快，看得出「闪」但看不出「弹」
+  animation: modalContentIn 0.26s var(--ease-spring);
+  box-shadow: 0 16px 64px rgba(0, 0, 0, 0.5);
+
+  &__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+
+    h3 {
+      margin: 0;
+      font-size: 18px;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+
+      &::before {
+        content: '⚠️';
+        font-size: 16px;
+      }
+    }
+  }
+
+  &__close {
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 8px;
+    background: var(--bg-card-hover);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+
+    &:hover {
+      background: var(--border-color);
+      color: var(--text-primary);
+    }
+  }
+
+  &__subheader {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-color);
+
+    strong {
+      color: var(--text-primary);
+    }
+  }
+
+  &__grid {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 1;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+
+  &__footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-color);
+  }
+
+  &__hint {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  // 地图包的额外说明条：解释「地图为什么会和武器皮冲突」
+  &__note {
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+  }
+
+  &__empty {
+    padding: 24px 0;
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
+  // 提示级重叠：默认折叠，避免把「不影响使用」的东西塞到用户眼前
+  &__hints {
+    margin-top: 12px;
+    border-top: 1px dashed var(--border-color);
+    padding-top: 10px;
+
+    summary {
+      cursor: pointer;
+      font-size: 12px;
+      color: var(--text-secondary);
+      user-select: none;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+
+      &::-webkit-details-marker {
+        display: none;
+      }
+
+      &::before {
+        content: '';
+        width: 0;
+        height: 0;
+        border-left: 5px solid currentColor;
+        border-top: 4px solid transparent;
+        border-bottom: 4px solid transparent;
+        transition: transform 0.18s var(--ease-standard);
+      }
+
+      &:hover {
+        color: var(--text-primary);
+      }
+    }
+
+    &[open] summary::before {
+      transform: rotate(90deg);
+    }
+  }
+
+  &__hints-sub {
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  &__hint-list {
+    margin-top: 8px;
+    max-height: 180px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+}
+
+/* 提示级重叠的一行 */
+.conflict-hint-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+
+  &:hover {
+    background: var(--bg-card-hover);
+  }
+
+  &__name {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text-primary);
+  }
+
+  &__files {
+    color: var(--text-muted);
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+}
+
+/* Conflict mini-card inside dialog */
+.conflict-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+
+  &:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--accent);
+    transform: translateX(2px);
+  }
+
+  &:active {
+    transform: scale(0.98);
+  }
+
+  &--enabled {
+    border-left: 3px solid #22c55e;
+  }
+
+  &--disabled {
+    border-left: 3px solid #ef4444;
+  }
+
+  &__thumb {
+    width: 48px;
+    height: 48px;
+    border-radius: 8px;
+    overflow: hidden;
+    flex-shrink: 0;
+    background: var(--bg-card-hover);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+
+    svg {
+      width: 24px;
+      height: 24px;
+      opacity: 0.6;
+    }
+  }
+
+  &__img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  &__info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  &__name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  // 冲突级别徽章：颜色对应严重度，硬冲突最扎眼，素材共用最弱
+  &__sev {
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1;
+    padding: 3px 6px;
+    border-radius: 5px;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+
+    &--hard {
+      color: #ef4444;
+      background: color-mix(in srgb, #ef4444 16%, transparent);
+    }
+
+    &--script {
+      color: #f97316;
+      background: color-mix(in srgb, #f97316 16%, transparent);
+    }
+
+    &--copy {
+      color: #3b82f6;
+      background: color-mix(in srgb, #3b82f6 16%, transparent);
+    }
+
+    &--entry {
+      color: #8b5cf6;
+      background: color-mix(in srgb, #8b5cf6 14%, transparent);
+    }
+
+    &--soft {
+      color: var(--text-muted);
+      background: var(--bg-card-hover);
+    }
+  }
+
+  &__files {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  &__status {
+    font-size: 12px;
+    font-weight: 500;
+
+    &--enabled {
+      color: #22c55e;
+    }
+
+    &--disabled {
+      color: #ef4444;
+    }
+  }
+
+  &__toggle {
+    flex-shrink: 0;
+  }
+}
+
+/* Toggle switch for conflict cards */
+.conflict-toggle {
+  width: 36px;
+  height: 20px;
+  border-radius: 10px;
+  padding: 2px;
+  transition: all 0.25s ease;
+  position: relative;
+
+  &--on {
+    background: rgba(34, 197, 94, 0.3);
+    border: 1px solid rgba(34, 197, 94, 0.4);
+  }
+
+  &--off {
+    background: rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+  }
+
+  &__thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--bg-card);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+
+    .conflict-toggle--on & {
+      transform: translateX(16px);
+      background: #22c55e;
+    }
+
+    .conflict-toggle--off & {
+      transform: translateX(0);
+      background: #ef4444;
+    }
+  }
+}

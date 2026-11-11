@@ -1,0 +1,556 @@
+.settings-group {
+  padding: 4px 0;
+}
+
+.settings-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-bottom: 16px;
+
+  code {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--accent-text);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: var(--font-mono);
+  }
+}
+
+.settings-desc-stats {
+  display: block;
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+
+  strong {
+    color: var(--accent-text);
+    font-weight: 700;
+  }
+}
+
+.settings-path-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.settings-path-input {
+  flex: 1;
+  height: 42px;
+  padding: 0 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font-family);
+  outline: none;
+  transition: all 0.25s ease;
+
+  &::placeholder {
+    color: var(--text-muted);
+  }
+
+  &:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+  }
+}
+
+.settings-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+/* 「关于」里的版本行 */
+.settings-version-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+
+  &__label {
+    color: var(--text-muted);
+  }
+
+  &__code {
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    color: var(--accent-text);
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    font-weight: 600;
+
+    // 预发布版本只显示渠道标记：橙色胶囊
+    &--beta {
+      border: 1px solid rgba(245, 158, 11, 0.55);
+      background: rgba(245, 158, 11, 0.14);
+      color: #b45309;
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.6px;
+    }
+  }
+}
+
+[data-theme='dark'] .settings-version-row__code--beta {
+  border-color: rgba(251, 191, 36, 0.45);
+  background: rgba(251, 191, 36, 0.16);
+  color: #fbbf24;
+}
+
+.settings-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 18px;
+  border: none;
+  border-radius: 10px;
+  font-size: 13px;
+  font-family: var(--font-family);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  white-space: nowrap;
+
+  svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  // 按下即缩：按钮在「按下 → 抬起」之间有一格物理位移，点击感更实
+  &:active:not(:disabled) {
+    transform: scale(0.96);
+  }
+
+  &--primary {
+    background: var(--accent);
+    color: var(--on-accent);
+
+    &:hover {
+      background: var(--accent-hover);
+      box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 35%, transparent);
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    &.loading {
+      opacity: 0.7;
+    }
+  }
+
+  &--secondary {
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+
+    &:hover {
+      border-color: var(--accent);
+      color: var(--accent-text);
+    }
+  }
+
+  &--ghost {
+    background: transparent;
+    color: var(--text-secondary);
+
+    &:hover {
+      background: var(--bg-card-hover);
+      color: var(--text-primary);
+    }
+  }
+}
+
+.settings-current {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+
+  &-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 500;
+    flex-shrink: 0;
+  }
+
+  &-path {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    word-break: break-all;
+  }
+}
+
+// ============ Background Settings ============
+
+.bg-preview {
+  width: 100%;
+  height: 160px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  position: relative;
+
+  &__layer {
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
+
+  &__image {
+    width: 100%;
+    height: 100%;
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    transition: filter 0.3s ease;
+  }
+
+  &__dim {
+    position: absolute;
+    inset: 0;
+    background: #000;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+
+  &__placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    background: var(--bg-card);
+    color: var(--text-muted);
+
+    svg {
+      width: 40px;
+      height: 40px;
+      opacity: 0.4;
+    }
+
+    span {
+      font-size: 13px;
+      font-weight: 500;
+    }
+  }
+}
+
+// Slider group
+.bg-slider-group {
+  margin-top: 18px;
+
+  & + & {
+    margin-top: 22px;
+  }
+
+  // 不可用状态（例如未选择背景图时的「界面透明度」）
+  &--disabled {
+    opacity: 0.5;
+  }
+}
+
+.bg-slider-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.bg-slider-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.bg-slider-value {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-text);
+  font-family: var(--font-mono);
+  min-width: 36px;
+  text-align: right;
+}
+
+.bg-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border-color);
+  outline: none;
+  cursor: pointer;
+  transition: background 0.2s ease;
+
+  &::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--accent-gradient);
+    cursor: pointer;
+    box-shadow: 0 2px 8px var(--glow-accent);
+    transition: transform 0.2s ease;
+
+    &:hover {
+      transform: scale(1.15);
+    }
+  }
+
+  &::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--accent-gradient);
+    cursor: pointer;
+    border: none;
+    box-shadow: 0 2px 8px var(--glow-accent);
+  }
+}
+
+.bg-slider-marks {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+// Danger ghost button for remove
+.settings-btn--ghost.danger {
+  color: #ef4444;
+
+  &:hover {
+    background: rgba(239, 68, 68, 0.08);
+    color: #dc2626;
+  }
+}
+
+// ============ 界面缩放（字号大小）============
+
+.settings-scale-group {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.settings-scale-btn {
+  min-width: 52px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font-family);
+  cursor: pointer;
+  transition: all 0.2s ease;
+
+  &:hover {
+    border-color: var(--accent);
+    color: var(--accent-text);
+  }
+
+  &:active {
+    transform: scale(0.95);
+  }
+
+  &.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #ffffff;
+    box-shadow: 0 2px 8px var(--glow-accent);
+    animation: settingsScalePop 0.26s var(--ease-spring);
+  }
+}
+
+// 选中档位时的小弹动（与筛选胶囊同节奏）
+@keyframes settingsScalePop {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.07);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+// ============ GPU 硬件加速 Toggle ============
+
+.settings-toggle-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  gap: 16px;
+}
+
+.settings-toggle-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.settings-toggle-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.settings-toggle-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.settings-toggle-switch {
+  position: relative;
+  width: 48px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 13px;
+  border: none;
+  cursor: pointer;
+  background: var(--border-color);
+  transition: background 0.25s ease;
+  padding: 0;
+  outline: none;
+
+  &.active {
+    background: var(--accent);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}
+
+.settings-toggle-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  // 回弹缓动：滑块到位时会「贴」一下，不是硬停
+  transition: transform 0.32s var(--ease-spring);
+  transform-origin: left center;
+
+  .active & {
+    transform: translateX(22px);
+  }
+
+  // 按住时横向拉伸，像被手指压住的实体开关
+  .settings-toggle-switch:active & {
+    transform: translateX(0) scaleX(1.16);
+  }
+
+  .settings-toggle-switch.active:active & {
+    transform: translateX(22px) scaleX(1.16);
+  }
+}
+
+.settings-gpu-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 15%, transparent);
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+
+  svg {
+    flex-shrink: 0;
+    color: var(--accent-text);
+  }
+
+  strong {
+    color: var(--text-primary);
+    font-weight: 700;
+  }
+}
+
+// ============ 主题色卡 ============
+.settings-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 4px 0 2px;
+  align-items: center;
+}
+
+.settings-swatch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  // 色卡只剩三档，比原来稍有分量感地铺开，免得右半边一大片空白
+  padding: 8px 18px 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-family: var(--font-family);
+  cursor: pointer;
+  transition: all 0.18s ease;
+
+  &__dot {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--swatch);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--swatch) 20%, transparent);
+    flex-shrink: 0;
+  }
+
+  &:hover {
+    border-color: color-mix(in srgb, var(--swatch) 55%, var(--border-color));
+    color: var(--text-primary);
+    transform: translateY(-1px);
+  }
+
+  &.active {
+    border-color: var(--swatch);
+    background: color-mix(in srgb, var(--swatch) 12%, var(--bg-card));
+    color: var(--text-primary);
+    font-weight: 600;
+
+    .settings-swatch__dot {
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--swatch) 26%, transparent);
+    }
+  }
+}
