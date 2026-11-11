@@ -35,16 +35,14 @@ _ALERT_SEVERITIES = (SEVERITY_HARD, SEVERITY_SCRIPT)
 
 # Use unified data store instead of scattered file I/O
 from .data_store import (
-    get_mod_meta, set_mod_meta, ModMeta,
     get_mod_category, set_mod_category,
     get_mod_tags_override, set_mod_tags_override,
-    get_mod_enabled, set_mod_enabled, get_all_mod_enabled, set_mods_enabled_bulk,
+    set_mod_enabled, set_mods_enabled_bulk,
     get_all_mod_metas,
-    get_mod_display_name, set_mod_display_name,
     get_scan_manifest, save_scan_manifest, ScanManifest,
-    get_addons_path, set_addons_path, get_setting, set_setting,
+    get_addons_path,
     get_addonlist_state, set_addonlist_state,
-    get_prefs_dirty, set_prefs_dirty,
+    set_prefs_dirty,
     remove_mod_from_all_packs,
 )
 
