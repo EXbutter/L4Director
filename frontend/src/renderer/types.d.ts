@@ -46,6 +46,8 @@ interface Window {
       covers: number;
       /** 内容相同（改过名的同一个 Mod），已跳过 */
       duplicates: string[];
+      /** 每个被跳过的重复项对应哪份已安装副本（用来区分是跟工坊还是外部 Mod 重复） */
+      duplicateSources?: { file: string; target: string; workshop: boolean }[];
       /** 同名但内容不同，未覆盖 */
       conflicts: string[];
       /** addons 里原本就存在的重复组（每组两个文件名） */
