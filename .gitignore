@@ -12,6 +12,8 @@ backend/get-pip.py
 
 # ---------- 构建产物 ----------
 frontend/dist/
+# 预裁剪的 Electron 发行版（硬链接，随 node_modules 重建）
+frontend/.cache/
 frontend/release/
 frontend/release*/
 dist/
