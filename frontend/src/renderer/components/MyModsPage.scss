@@ -701,6 +701,14 @@
   color: var(--text-muted);
 }
 
+// 细分标签：虚框、无色块 —— 一眼能和「大类标签」区分开
+.mod-card__tag--fine {
+  background: transparent;
+  border: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
 .mod-card__conflict-icon {
   position: absolute;
   top: 8px;
@@ -863,9 +871,45 @@
   color: var(--accent-text);
 }
 
+/* 大类行：左边点「加/去标签」，右边小箭头进入细分标签层级 */
+.context-menu__row {
+  display: flex;
+  align-items: stretch;
+
+  .context-menu__item {
+    flex: 1;
+    min-width: 0;
+    border-radius: 6px 0 0 6px;
+  }
+}
+
+.context-menu__drill {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 0 6px 6px 0;
+  transition: all 0.15s ease;
+
+  &:hover {
+    color: var(--accent-text);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+}
+
+.context-menu__back {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
 /* Submenu content (the actual box) */
 .context-menu__submenu-box {
-  min-width: 160px;
+  min-width: 176px;
   // 子菜单可能很长（「分类标签」有说明 + 11 个分类 + 恢复项）：
   // 限高 + 内部滚动，保证卡片在窗口底部时也能滚到所有选项（不会伸出窗口点不到）
   max-height: min(64vh, 440px);
@@ -1588,6 +1632,86 @@
   }
 }
 /* ===== End VPK Content Type Categories ===== */
+
+/* ===== 二级细分标签（大类下的一层） ===== */
+.vpk-subtags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  // 缩进对齐上面那排大类，视觉上构成「大类 → 细分」的层级
+  padding: 2px 24px 4px 34px;
+  animation: subtagsIn 0.2s ease;
+
+  &__label {
+    font-size: 11px;
+    color: var(--text-muted);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    margin-right: 2px;
+  }
+
+  &__tab {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-family: var(--font-family);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.18s ease;
+
+    &:hover {
+      border-color: var(--accent);
+      color: var(--text-primary);
+    }
+
+    &.active {
+      background: color-mix(in srgb, var(--accent) 14%, var(--bg-card));
+      border-color: var(--accent);
+      color: var(--accent-text);
+      font-weight: 600;
+      animation: chipPop 0.26s var(--ease-spring);
+    }
+
+    // 这一类一个都没有：留着位置（点了知道是空的），但别抢注意力
+    &--empty {
+      opacity: 0.45;
+    }
+  }
+
+  &__count {
+    font-size: 11px;
+    color: var(--text-muted);
+    background: var(--bg-card-hover);
+    padding: 0 6px;
+    border-radius: 6px;
+    min-width: 16px;
+    text-align: center;
+
+    .vpk-subtags__tab.active & {
+      background: color-mix(in srgb, var(--accent) 25%, transparent);
+      color: var(--accent-text);
+    }
+  }
+}
+
+@keyframes subtagsIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+/* ===== End 二级细分标签 ===== */
 
 /* ===== Animations ===== */
 // 筛选胶囊/分类页签被选中时的一下轻弹：幅度只有 6%，目的是给「切换生效了」一个反馈

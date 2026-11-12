@@ -175,6 +175,44 @@ const VPK_CATEGORIES = [
 
 export type VpkCategory = typeof VPK_CATEGORIES[number];
 
+/**
+ * 二级细分标签（与后端 tagger.FINE_TAGS 保持一致）。
+ * 大类是「面上」的分类，细分是「具体改了谁」：
+ * 武器 → 步枪/霰弹枪/…，生还者 → 佐伊/尼克/…，被感染者 → 坦克/女巫/…。
+ * 只有大类成立时后端才会给出细分标签，前端只负责展示与筛选。
+ */
+const FINE_TAGS: Record<string, string[]> = {
+  生还者: ['比尔', '弗朗西斯', '路易斯', '佐伊', '教练', '埃利斯', '尼克', '罗谢尔'],
+  被感染者: ['普通感染者', '特殊感染者', '布玛', '冲锋者', '猎人', '骑师', '吸烟者', '喷吐者', '坦克', '女巫'],
+  武器: ['步枪', '冲锋枪', '霰弹枪', '狙击枪', '手枪', '近战武器', 'M60', '榴弹发射器', '投掷物'],
+  物品: ['医疗包', '止痛药', '肾上腺素', '除颤器'],
+};
+
+/** 细分标签 → 它挂在哪个大类下面 */
+const FINE_PARENT: Record<string, string> = Object.entries(FINE_TAGS).reduce(
+  (acc, [parent, children]) => {
+    for (const child of children) acc[child] = parent;
+    return acc;
+  },
+  {} as Record<string, string>
+);
+
+const isFineTag = (tag: string) => tag in FINE_PARENT;
+export { isFineTag };
+
+/** 来源类标签（不是内容分类），排在卡片标签的最后 */
+const isSourceTag = (tag: string) => tag === '外部 Mod' || tag === '创意工坊 Mod' || tag.startsWith('ID: ');
+
+/**
+ * 卡片上标签的展示顺序：内容分类（大类 → 细分）在前，来源（外部/工坊/ID）在后。
+ * 否则「外部 Mod」永远占掉第一个坑位，细分标签天天被 +n 挡住 —— 等于白加。
+ */
+export function orderCardTags(tags: string[]): string[] {
+  return [...tags.filter((t) => !isSourceTag(t)), ...tags.filter(isSourceTag)];
+}
+const isPickableTag = (tag: string) =>
+  (VPK_CATEGORIES as readonly string[]).includes(tag) || isFineTag(tag);
+
 export function MyModsPage() {
   const { mods, packs, fetchMods, refreshAll, loading, scanning, scanProgress, toggleMod, addModToPack, addModsToPack, setContextMenu, contextMenu, deleteMod, deleteConfirmMod, setDeleteConfirmMod, confirmDeleteMod, renameModDisplayName, getModDisplayName, setModCategory, setModTags } = useStore();
   const [search, setSearch] = useState('');
@@ -203,6 +241,9 @@ export function MyModsPage() {
   // 重复安装详情弹窗（用路径标识，同名文件可能有两份）
   const [dupDialogPath, setDupDialogPath] = useState<string | null>(null);
   const [vpkCategory, setVpkCategory] = useState<string | null>(null);
+  // 二级细分筛选：只在大类有子类时出现（选中「武器」才显示 步枪/霰弹枪…）
+  const [fineTag, setFineTag] = useState<string | null>(null);
+  const fineOptions = vpkCategory ? FINE_TAGS[vpkCategory] || [] : [];
   const [renameModName, setRenameModName] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const contextMenuRef = useRef<HTMLDivElement>(null);
@@ -211,6 +252,8 @@ export function MyModsPage() {
   const batchCategoryTriggerRef = useRef<HTMLDivElement>(null);
   const batchPackTriggerRef = useRef<HTMLDivElement>(null);
   const [activeSubmenu, setActiveSubmenu] = useState<'category' | 'pack' | 'batch-category' | 'batch-pack' | null>(null);
+  // 分类子菜单的当前层级：null = 大类，非空 = 该大类下的细分标签
+  const [catParent, setCatParent] = useState<string | null>(null);
   const [submenuPos, setSubmenuPos] = useState<{ x: number; y: number; onLeft?: boolean } | null>(null);
   const [batchSubmenuOnLeft, setBatchSubmenuOnLeft] = useState(false);
   const [batchCategoryOffset, setBatchCategoryOffset] = useState(0);
@@ -254,8 +297,14 @@ export function MyModsPage() {
     if (!contextMenu) {
       setActiveSubmenu(null);
       setSubmenuPos(null);
+      setCatParent(null);
     }
   }, [contextMenu]);
+
+  // 切到别的子菜单时，分类子菜单回到大类层（下次打开不会停在上次的子级）
+  useEffect(() => {
+    if (activeSubmenu !== 'category') setCatParent(null);
+  }, [activeSubmenu]);
 
   const counts = useMemo(() => ({
     custom: mods.filter((m) => !m.is_workshop).length,
@@ -270,7 +319,23 @@ export function MyModsPage() {
     return counts;
   }, [mods]);
 
-  const combinedCategoryKey = useMemo(() => `${category}-${vpkCategory || 'all'}-${enabledFilter}-${conflictFilter}-${dupFilter ? 'dup' : 'all'}`, [category, vpkCategory, enabledFilter, conflictFilter, dupFilter]);
+  // 细分标签计数：口径跟着「当前大类」走，点进去才知道每一类有几个
+  const fineTagCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    if (!vpkCategory) return counts;
+    for (const tag of FINE_TAGS[vpkCategory] || []) {
+      counts[tag] = mods.filter((m) => m.tags.includes(vpkCategory) && m.tags.includes(tag)).length;
+    }
+    return counts;
+  }, [mods, vpkCategory]);
+
+  // 切大类/清空筛选时，二级筛选必须跟着复位，否则会留下一个不存在的组合
+  useEffect(() => {
+    if (!fineTag) return;
+    if (!vpkCategory || !(FINE_TAGS[vpkCategory] || []).includes(fineTag)) setFineTag(null);
+  }, [vpkCategory, fineTag]);
+
+  const combinedCategoryKey = useMemo(() => `${category}-${vpkCategory || 'all'}-${fineTag || 'all'}-${enabledFilter}-${conflictFilter}-${dupFilter ? 'dup' : 'all'}`, [category, vpkCategory, fineTag, enabledFilter, conflictFilter, dupFilter]);
 
   const enabledCounts = useMemo(() => ({
     enabled: mods.filter((m) => m.enabled).length,
@@ -288,6 +353,7 @@ export function MyModsPage() {
 
     if (vpkCategory) {
       list = list.filter((m) => m.tags.includes(vpkCategory));
+      if (fineTag) list = list.filter((m) => m.tags.includes(fineTag));
     }
 
     if (enabledFilter === 'enabled') {
@@ -337,7 +403,7 @@ export function MyModsPage() {
     }
 
     return list;
-  }, [search, sortBy, mods, category, vpkCategory, enabledFilter, conflictFilter, dupFilter]);
+  }, [search, sortBy, mods, category, vpkCategory, fineTag, enabledFilter, conflictFilter, dupFilter]);
 
   const handleCardClick = (e: React.MouseEvent, mod: ModData) => {
     const modName = mod.name;
@@ -581,7 +647,34 @@ export function MyModsPage() {
         </div>
       </div>
 
-      {/* 首次/刷新扫描进度条（已有部分数据时显示，仍在逐个加载） */}
+      {/* 二级细分筛选：选中「武器 / 生还者 / 被感染者 / 物品」时才展开 */}
+      {fineOptions.length > 0 && (
+        <div className="vpk-subtags">
+          <span className="vpk-subtags__label">{vpkCategory}细分</span>
+          <button
+            className={`vpk-subtags__tab ${!fineTag ? 'active' : ''}`}
+            onClick={() => setFineTag(null)}
+          >
+            全部
+          </button>
+          {fineOptions.map((tag) => {
+            const n = fineTagCounts[tag] || 0;
+            return (
+              <button
+                key={tag}
+                className={`vpk-subtags__tab ${fineTag === tag ? 'active' : ''} ${n === 0 ? 'vpk-subtags__tab--empty' : ''}`}
+                onClick={() => setFineTag(fineTag === tag ? null : tag)}
+                // 没有这类 Mod 时仍然可以点（会得到空列表），但用淡色提示一下
+                title={n === 0 ? `没有标记为「${tag}」的${vpkCategory} Mod` : `${n} 个`}
+              >
+                {tag}
+                {n > 0 && <span className="vpk-subtags__count">{n}</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {scanning && scanProgress && scanProgress.total ? (
         <div className="my-mods-scanning-bar">
           <span className="my-mods-scanning-bar__label">
@@ -683,7 +776,7 @@ export function MyModsPage() {
                     {viewMode === 'list' && addedLabel ? ` · ${addedLabel}` : ''}
                   </span>
                   {((mod.duplicates?.length ?? 0) > 0 || (mod.tags && mod.tags.length > 0)) && (
-                    <div className="mod-card__tags">
+                    <div className="mod-card__tags" title={mod.tags?.join(' / ')}>
                       {(mod.duplicates?.length ?? 0) > 0 && (() => {
                         const twin = mod.duplicates![0];
                         const src = twin.is_workshop
@@ -709,11 +802,21 @@ export function MyModsPage() {
                           </button>
                         );
                       })()}
-                      {mod.tags && mod.tags.slice(0, 3).map((tag, idx) => (
-                        <span key={idx} className="mod-card__tag">{tag}</span>
+                      {mod.tags && orderCardTags(mod.tags).slice(0, 4).map((tag, idx) => (
+                        <span
+                          key={idx}
+                          className={`mod-card__tag${isFineTag(tag) ? ' mod-card__tag--fine' : ''}`}
+                        >
+                          {tag}
+                        </span>
                       ))}
-                      {mod.tags && mod.tags.length > 3 && (
-                        <span className="mod-card__tag mod-card__tag--more">+{mod.tags.length - 3}</span>
+                      {mod.tags && mod.tags.length > 4 && (
+                        <span
+                          className="mod-card__tag mod-card__tag--more"
+                          title={orderCardTags(mod.tags).slice(4).join(' / ')}
+                        >
+                          +{mod.tags.length - 4}
+                        </span>
                       )}
                     </div>
                   )}
@@ -875,10 +978,11 @@ export function MyModsPage() {
                         key={cat}
                         className="context-menu__item"
                         onClick={() => {
-                          // 批量「加上」：基于每个 Mod 自己当前的分类型标签追加（不动它其余的标签）
+                          // 批量「加上」：基于每个 Mod 自己当前的分类标签追加（不动它其余的标签）
+                          // 这里要连细分标签一起保留，否则批量加大类会把细分冲掉
                           selectedMods.forEach((modName) => {
                             const cur = (mods.find((m) => m.name === modName)?.tags || []).filter(
-                              (t) => (VPK_CATEGORIES as readonly string[]).includes(t)
+                              isPickableTag
                             );
                             if (!cur.includes(cat)) void setModTags(modName, [...cur, cat]);
                           });
@@ -975,19 +1079,32 @@ export function MyModsPage() {
                 </div>
               </div>
 
-              {/* Submenu: 分类标签（多标签）——点一下加上、再点一下去掉 */}
+              {/* Submenu: 分类标签（大类 → 细分两级）——点一下加上、再点一下去掉 */}
               {activeSubmenu === 'category' && (() => {
                 const target = mods.find((m) => m.name === contextMenu.modName);
-                const currentCategories = (target?.tags || []).filter((t) =>
-                  (VPK_CATEGORIES as readonly string[]).includes(t)
-                );
+                // 大类与细分都算「可编辑标签」：只 filter 大类的话，点一次细分标签就会
+                // 把之前手动加过的细分标签全冲掉
+                const currentTags = (target?.tags || []).filter(isPickableTag);
                 const isManual = !!target?.tags_manual;
-                const toggle = (cat: string) => {
-                  const next = currentCategories.includes(cat)
-                    ? currentCategories.filter((c) => c !== cat)
-                    : [...currentCategories, cat];
+                const apply = (next: string[]) => {
                   void setModTags(contextMenu.modName, next);
                   setContextMenu(null);
+                };
+                const toggle = (cat: string) => {
+                  if (currentTags.includes(cat)) {
+                    // 去掉大类时连它的细分一起清掉，否则会留下「有坦克、没有被感染者」的孤儿标签
+                    apply(currentTags.filter((t) => t !== cat && FINE_PARENT[t] !== cat));
+                  } else {
+                    apply([...currentTags, cat]);
+                  }
+                };
+                const toggleFine = (parent: string, fine: string) => {
+                  if (currentTags.includes(fine)) {
+                    apply(currentTags.filter((t) => t !== fine));
+                  } else {
+                    // 加细分时自动补上大类：只留「坦克」不留「被感染者」，它会被大类筛选挡在外面
+                    apply(currentTags.includes(parent) ? [...currentTags, fine] : [...currentTags, parent, fine]);
+                  }
                 };
                 return (
                   <div className="context-menu__submenu-wrapper" style={{ left: submenuOnLeft ? 'auto' : 'calc(100% - 1px)', right: submenuOnLeft ? 'calc(100% - 1px)' : 'auto', top: categoryOffset }}>
@@ -997,34 +1114,77 @@ export function MyModsPage() {
                       onMouseEnter={() => keepSubmenu()}
                       onMouseLeave={() => closeSubmenuDelayed()}
                     >
-                      <div className="context-menu__submenu-hint">
-                        {isManual ? '手动标签（点一下加 / 再点一下去）' : '自动检测（改动后转为手动）'}
-                      </div>
-                      {isManual && (
-                        <button
-                          className="context-menu__item"
-                          onClick={() => {
-                            void setModTags(contextMenu.modName, null);
-                            setContextMenu(null);
-                          }}
-                        >
-                          ↺ 恢复自动检测
-                        </button>
-                      )}
-                      <div className="context-menu__submenu-divider" />
-                      {VPK_CATEGORIES.map((cat) => {
-                        const on = currentCategories.includes(cat);
-                        return (
+                      {catParent === null ? (
+                        <>
+                          <div className="context-menu__submenu-hint">
+                            {isManual ? '手动标签（点一下加 / 再点一下去）' : '自动检测（改动后转为手动）'}
+                          </div>
+                          {isManual && (
+                            <button
+                              className="context-menu__item"
+                              onClick={() => {
+                                void setModTags(contextMenu.modName, null);
+                                setContextMenu(null);
+                              }}
+                            >
+                              ↺ 恢复自动检测
+                            </button>
+                          )}
+                          <div className="context-menu__submenu-divider" />
+                          {VPK_CATEGORIES.map((cat) => {
+                            const on = currentTags.includes(cat);
+                            const children = FINE_TAGS[cat];
+                            return (
+                              <div key={cat} className="context-menu__row">
+                                <button
+                                  className={`context-menu__item context-menu__item--checkable${on ? ' context-menu__item--checked' : ''}`}
+                                  onClick={() => toggle(cat)}
+                                >
+                                  <span className="context-menu__check">{on ? '✓' : ''}</span>
+                                  <span>{cat}</span>
+                                </button>
+                                {children && (
+                                  <button
+                                    className="context-menu__drill"
+                                    title={`查看「${cat}」的细分标签`}
+                                    onClick={() => setCatParent(cat)}
+                                  >
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12">
+                                      <path d="M9 6l6 6-6 6" />
+                                    </svg>
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </>
+                      ) : (
+                        <>
                           <button
-                            key={cat}
-                            className={`context-menu__item context-menu__item--checkable${on ? ' context-menu__item--checked' : ''}`}
-                            onClick={() => toggle(cat)}
+                            className="context-menu__item context-menu__back"
+                            onClick={() => setCatParent(null)}
                           >
-                            <span className="context-menu__check">{on ? '✓' : ''}</span>
-                            <span>{cat}</span>
+                            ‹ 返回大类
                           </button>
-                        );
-                      })}
+                          <div className="context-menu__submenu-hint">
+                            {catParent} · 细分标签
+                          </div>
+                          <div className="context-menu__submenu-divider" />
+                          {(FINE_TAGS[catParent] || []).map((fine) => {
+                            const on = currentTags.includes(fine);
+                            return (
+                              <button
+                                key={fine}
+                                className={`context-menu__item context-menu__item--checkable${on ? ' context-menu__item--checked' : ''}`}
+                                onClick={() => toggleFine(catParent, fine)}
+                              >
+                                <span className="context-menu__check">{on ? '✓' : ''}</span>
+                                <span>{fine}</span>
+                              </button>
+                            );
+                          })}
+                        </>
+                      )}
                     </div>
                   </div>
                 );
