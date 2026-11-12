@@ -61,60 +61,280 @@
   }
 }
 
-/* ===== Category Tabs (全部/自定义Mod/创意工坊Mod) ===== */
-.mod-categories {
+/* ===== 筛选面板：来源 / 类型 / 状态·问题 / 细分 =====
+   四条维度各占一行，行首固定宽度的说明标签把「这一行是什么」写清楚；
+   同行的选项放在同一个 chips 容器里各自折行，不会出现「类型折到第二行、
+   状态标签卡在中间」那种错位。 */
+.filter-panel {
   display: flex;
-  gap: 8px;
-  padding: 16px 24px 0;
+  flex-direction: column;
+  gap: 0;
+  margin: 12px 0 6px;
+  padding: 10px 14px 11px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-card);
 
-  &__tab {
+  &__row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 6px 8px;
+    min-height: 28px;
+    padding: 3px 0;
+  }
+
+  // 来源那一行：左边是主维度分段控件，右边是结果统计 / 清除
+  &__row--source {
+    justify-content: space-between;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 4px;
+  }
+
+  // 细分是「类型」的下钻，用虚线分隔 + 左缩进表达层级
+  &__row--sub {
+    margin-top: 2px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border-color);
+  }
+
+  &__label {
+    flex: none;
+    width: 30px;
+    // 行内各项 top 对齐（一行类型折成两行时标签不会浮在两行中间），
+    // 标签自身再用 line-height 对齐第一行 chip 的文字中心线
+    line-height: 26px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    white-space: nowrap;
+    user-select: none;
+
+    &--inline {
+      width: auto;
+      margin-left: 2px;
+    }
+  }
+
+  &__row--sub &__label {
+    line-height: 22px;
+  }
+
+  &__chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px;
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  &__vsep {
+    flex: none;
+    width: 1px;
+    height: 15px;
+    margin: 5.5px 4px 0;
+    background: var(--border-color);
+  }
+
+  &__summary {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 8px 16px;
+    gap: 10px;
+    margin-left: auto;
+    align-self: center;
+  }
+
+  &__result {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+
+    strong {
+      color: var(--accent-text);
+      font-weight: 700;
+    }
+  }
+
+  &__clear {
+    height: 24px;
+    padding: 0 10px;
     border: 1px solid var(--border-color);
-    border-radius: 10px;
-    background: var(--bg-primary-solid);
+    border-radius: 6px;
+    background: transparent;
     color: var(--text-secondary);
-    font-size: 13px;
-    font-weight: 500;
+    font-size: 11.5px;
     font-family: var(--font-family);
     cursor: pointer;
-    transition: all 0.25s ease;
+    transition: color var(--dur-fast) ease, border-color var(--dur-fast) ease;
 
     &:hover {
-      border-color: var(--accent-secondary);
+      color: #ef4444;
+      border-color: color-mix(in srgb, #ef4444 55%, transparent);
+    }
+  }
+}
+
+/* 主维度：来源（全部 / 自定义 / 创意工坊）——分段控件，选中项实心，与下面的
+   浅色可多选 chip 区分开：一个「切页面」，一个是「加条件」 */
+.filter-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-color);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+
+  &__item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    padding: 0 12px;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    font-weight: 500;
+    font-family: var(--font-family);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease;
+
+    &:hover:not(.active) {
       background: var(--bg-card-hover);
       color: var(--text-primary);
     }
 
-    // 按下时缩一点：即使切换很快也能看到「我点到了」
-    &:active {
-      transform: scale(0.96);
-    }
-
     &.active {
-      border-color: var(--accent-secondary);
-      color: var(--accent-secondary);
+      background: var(--accent);
+      color: var(--on-accent);
       font-weight: 600;
-      background: color-mix(in srgb, var(--accent-secondary) 10%, var(--bg-primary-solid));
-      animation: chipPop 0.26s var(--ease-spring);
-      // 选中态加一层极轻的主色投影，与未选中的扁平底区分开
-      box-shadow: 0 2px 10px color-mix(in srgb, var(--accent-secondary) 22%, transparent);
+      box-shadow: 0 1px 6px color-mix(in srgb, var(--accent) 32%, transparent);
     }
   }
 
   &__count {
-    font-size: 12px;
-    background: var(--bg-card-hover);
-    padding: 1px 7px;
-    border-radius: 8px;
-    min-width: 18px;
-    text-align: center;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    padding: 0 5px;
+    border-radius: 5px;
+    background: color-mix(in srgb, var(--text-muted) 20%, transparent);
+    color: var(--text-muted);
 
     .active & {
-      background: color-mix(in srgb, var(--accent-secondary) 20%, transparent);
-      color: var(--accent-secondary);
+      background: rgba(255, 255, 255, 0.24);
+      color: #fff;
+    }
+  }
+}
+
+/* 筛选条件 chip：默认中性（类型），带语义色的（状态/问题）用左侧小圆点标注，
+   不再用 ✅🚫⚠️🧩 这类彩色 emoji —— 四个 emoji 摆一排本身就是噪音来源 */
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 25px;
+  // 类型那一行有 11 个分类 + 计数：字号和内边距收到 11.5px / 7px，
+  // 默认窗口宽度（1080）下才能整行排完，不然「皮肤」会被挤到第二行去
+  padding: 0 7px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 500;
+  font-family: var(--font-family);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--dur-fast) ease, background-color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
+
+  &:hover {
+    border-color: color-mix(in srgb, var(--accent) 50%, var(--border-color));
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
+    color: var(--text-primary);
+  }
+
+  &:active {
+    transform: scale(0.97);
+  }
+
+  &--on {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 13%, var(--bg-card));
+    color: var(--accent-text);
+    font-weight: 600;
+  }
+
+  // 这一类一个 Mod 都没有：留在原位保持顺序稳定，但压低存在感
+  &--empty {
+    opacity: 0.4;
+  }
+
+  &--sub {
+    height: 22px;
+    padding: 0 9px;
+    border-radius: 999px;
+    font-size: 11.5px;
+  }
+
+  &__count {
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+
+    .filter-chip--on & {
+      color: inherit;
+      opacity: 0.75;
+    }
+  }
+
+  &__dot {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--chip-tone, var(--text-muted));
+    opacity: 0.5;
+    transition: opacity var(--dur-fast) ease;
+  }
+
+  // 语义色：绿=启用/正常，红=禁用，橙=需要注意（冲突、重复）
+  &--ok {
+    --chip-tone: #22c55e;
+  }
+
+  &--bad {
+    --chip-tone: #ef4444;
+  }
+
+  &--warn {
+    --chip-tone: #f97316;
+  }
+
+  &--ok,
+  &--bad,
+  &--warn {
+    &:hover {
+      border-color: color-mix(in srgb, var(--chip-tone) 55%, var(--border-color));
+      color: var(--text-primary);
+    }
+
+    &.filter-chip--on {
+      border-color: color-mix(in srgb, var(--chip-tone) 65%, transparent);
+      background: color-mix(in srgb, var(--chip-tone) 14%, transparent);
+      color: var(--chip-tone);
+
+      .filter-chip__dot {
+        opacity: 1;
+      }
     }
   }
 }
@@ -1483,235 +1703,6 @@
   top: 50%;
 }
 
-
-/* ===== VPK Content Type Categories ===== */
-.vpk-categories {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 24px 4px;
-
-  &__left {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    flex: 1;
-  }
-
-  &__right {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-shrink: 0;
-  }
-
-  &__divider {
-    display: inline-block;
-    width: 1px;
-    height: 20px;
-    background: var(--border-color);
-    margin: 0 4px;
-    flex-shrink: 0;
-  }
-
-  &__tab {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 6px 14px;
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    background: var(--bg-card);
-    color: var(--text-secondary);
-    font-size: 13px;
-    font-weight: 500;
-    font-family: var(--font-family);
-    cursor: pointer;
-    transition: all 0.2s ease;
-    white-space: nowrap;
-
-    &:hover {
-      border-color: var(--accent);
-      background: var(--bg-card-hover);
-      color: var(--text-primary);
-    }
-
-    &:active {
-      transform: scale(0.96);
-    }
-
-    &.active {
-      background: color-mix(in srgb, var(--accent) 12%, var(--bg-card));
-      border-color: var(--accent);
-      color: var(--accent-text);
-      font-weight: 600;
-      animation: chipPop 0.26s var(--ease-spring);
-    }
-
-    &--enabled {
-      &.active {
-        background: rgba(34, 197, 94, 0.12);
-        border-color: #22c55e;
-        color: #22c55e;
-      }
-      &:hover:not(.active) {
-        border-color: #22c55e;
-        color: #22c55e;
-      }
-    }
-
-    &--disabled {
-      &.active {
-        background: rgba(239, 68, 68, 0.12);
-        border-color: #ef4444;
-        color: #ef4444;
-      }
-      &:hover:not(.active) {
-        border-color: #ef4444;
-        color: #ef4444;
-      }
-    }
-
-    &--conflict {
-      &.active {
-        background: rgba(249, 115, 22, 0.12);
-        border-color: #f97316;
-        color: #f97316;
-      }
-      &:hover:not(.active) {
-        border-color: #f97316;
-        color: #f97316;
-      }
-    }
-
-    &--no-conflict {
-      &.active {
-        background: rgba(34, 197, 94, 0.08);
-        border-color: #22c55e;
-        color: #22c55e;
-      }
-      &:hover:not(.active) {
-        border-color: #22c55e;
-        color: #22c55e;
-      }
-    }
-  }
-
-  &__count {
-    font-size: 12px;
-    background: var(--bg-card-hover);
-    padding: 1px 7px;
-    border-radius: 6px;
-    min-width: 18px;
-    text-align: center;
-
-    .active & {
-      background: color-mix(in srgb, var(--accent) 25%, transparent);
-      color: var(--accent-text);
-    }
-
-    .vpk-categories__tab--enabled.active & {
-      background: rgba(34, 197, 94, 0.2);
-      color: #22c55e;
-    }
-
-    .vpk-categories__tab--disabled.active & {
-      background: rgba(239, 68, 68, 0.2);
-      color: #ef4444;
-    }
-
-    .vpk-categories__tab--conflict.active & {
-      background: rgba(249, 115, 22, 0.2);
-      color: #f97316;
-    }
-
-    .vpk-categories__tab--no-conflict.active & {
-      background: rgba(34, 197, 94, 0.2);
-      color: #22c55e;
-    }
-  }
-}
-/* ===== End VPK Content Type Categories ===== */
-
-/* ===== 二级细分标签（大类下的一层） ===== */
-.vpk-subtags {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  // 缩进对齐上面那排大类，视觉上构成「大类 → 细分」的层级
-  padding: 2px 24px 4px 34px;
-  animation: subtagsIn 0.2s ease;
-
-  &__label {
-    font-size: 11px;
-    color: var(--text-muted);
-    letter-spacing: 0.02em;
-    white-space: nowrap;
-    margin-right: 2px;
-  }
-
-  &__tab {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 3px 10px;
-    border: 1px solid var(--border-color);
-    border-radius: 999px;
-    background: transparent;
-    color: var(--text-secondary);
-    font-size: 12px;
-    font-family: var(--font-family);
-    cursor: pointer;
-    white-space: nowrap;
-    transition: all 0.18s ease;
-
-    &:hover {
-      border-color: var(--accent);
-      color: var(--text-primary);
-    }
-
-    &.active {
-      background: color-mix(in srgb, var(--accent) 14%, var(--bg-card));
-      border-color: var(--accent);
-      color: var(--accent-text);
-      font-weight: 600;
-      animation: chipPop 0.26s var(--ease-spring);
-    }
-
-    // 这一类一个都没有：留着位置（点了知道是空的），但别抢注意力
-    &--empty {
-      opacity: 0.45;
-    }
-  }
-
-  &__count {
-    font-size: 11px;
-    color: var(--text-muted);
-    background: var(--bg-card-hover);
-    padding: 0 6px;
-    border-radius: 6px;
-    min-width: 16px;
-    text-align: center;
-
-    .vpk-subtags__tab.active & {
-      background: color-mix(in srgb, var(--accent) 25%, transparent);
-      color: var(--accent-text);
-    }
-  }
-}
-
-@keyframes subtagsIn {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-/* ===== End 二级细分标签 ===== */
 
 /* ===== Animations ===== */
 // 筛选胶囊/分类页签被选中时的一下轻弹：幅度只有 6%，目的是给「切换生效了」一个反馈
