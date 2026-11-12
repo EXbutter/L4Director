@@ -57,6 +57,10 @@ class ModInfo:
     is_workshop: bool
     workshop_id: Optional[str] = None
     last_modified: Optional[str] = None
+    # 文件被放进 addons 的时间（创建时间，取不到时退回 mtime）。
+    # 「按添加时间排序」用的是这个，而不是 mtime —— 后者在外部工具
+    # 碰过文件、或游戏重写文件时会变，排出来的顺序就不是「谁先装的」了。
+    added_at: Optional[str] = None
     description: Optional[str] = None
     author: Optional[str] = None
     version: Optional[str] = None
@@ -150,6 +154,21 @@ def invalidate_sidecar_cache() -> None:
     调用这里清一次，扫描立刻就能认出新图片。
     """
     _SIDECAR_CACHE.clear()
+
+
+def file_created_ts(st: os.stat_result) -> float:
+    """文件「被放进 addons」的时间戳。
+
+    优先用创建时间：Windows 上 Python 3.12+ 提供 `st_birthtime`，
+    更早版本里 `st_ctime` 就是创建时间。Linux 的 `st_ctime` 是 inode
+    变更时间（chmod 之类都会改它），那里退回 mtime。
+    """
+    birth = getattr(st, 'st_birthtime', None)
+    if birth:
+        return float(birth)
+    if os.name == 'nt':
+        return float(st.st_ctime)
+    return float(st.st_mtime)
 
 
 def _normalize_mod_key(name: str) -> str:
@@ -2264,6 +2283,7 @@ class ModScanner:
                 size_bytes=stat.st_size, enabled=is_enabled,
                 is_workshop=is_workshop, workshop_id=workshop_id,
                 last_modified=datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                added_at=datetime.fromtimestamp(file_created_ts(stat)).isoformat(),
                 tags=tags, thumbnail_url=thumbnail_url,
                 vpk_title=metadata.get('vpk_title'),
                 author=metadata.get('author'),

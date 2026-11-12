@@ -29,6 +29,9 @@ export interface ModData {
   is_workshop: boolean;
   workshop_id: string | null;
   last_modified: string | null;
+  /** 文件被放进 addons 的时间（创建时间，取不到时等于 last_modified）。
+   *  「按添加时间排序」用它，改动文件不会改变这个值。 */
+  added_at?: string | null;
   description: string | null;
   author: string | null;
   version: string | null;
