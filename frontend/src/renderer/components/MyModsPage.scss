@@ -175,6 +175,90 @@
       border-color: color-mix(in srgb, #ef4444 55%, transparent);
     }
   }
+
+  // 「检查更新」：轻量文字按钮，平时不抢视线；有更新时旁边会出现实心的「更新全部」
+  &__check {
+    height: 24px;
+    padding: 0 8px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 11.5px;
+    font-family: var(--font-family);
+    cursor: pointer;
+    transition: color var(--dur-fast) ease, background-color var(--dur-fast) ease;
+
+    &:hover:not(:disabled) {
+      color: var(--accent-text);
+      background: color-mix(in srgb, var(--accent) 8%, transparent);
+    }
+
+    &:disabled {
+      cursor: default;
+      opacity: 0.65;
+    }
+  }
+
+  // 「更新全部 N」：这是这一屏里唯一会改动文件的操作，给主色实心按钮，明确可点
+  &__update-all {
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    padding: 0 10px;
+    border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--accent-text);
+    font-size: 11.5px;
+    font-weight: 600;
+    font-family: var(--font-family);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color var(--dur-fast) ease, border-color var(--dur-fast) ease;
+
+    &:hover {
+      background: color-mix(in srgb, var(--accent) 22%, transparent);
+      border-color: var(--accent);
+    }
+
+    &:active {
+      transform: scale(0.97);
+    }
+  }
+
+  // 更新进行中：替代「更新全部」，显示 x/y 与当前条目的百分比
+  &__updating {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 10px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    color: var(--accent-text);
+    font-size: 11.5px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+
+    // 左侧一个小转圈：说明还在跑，不是卡住了
+    &::before {
+      content: '';
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      border: 1.5px solid color-mix(in srgb, var(--accent) 30%, transparent);
+      border-top-color: var(--accent);
+      animation: filterSpin 0.8s linear infinite;
+    }
+  }
+}
+
+@keyframes filterSpin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* 主维度：来源（全部 / 自定义 / 创意工坊）——分段控件，选中项实心，与下面的
@@ -319,9 +403,15 @@
     --chip-tone: #f97316;
   }
 
+  // 信息色（蓝）：中性提示，不是问题 —— 目前只用于「有更新」
+  &--info {
+    --chip-tone: #3b82f6;
+  }
+
   &--ok,
   &--bad,
-  &--warn {
+  &--warn,
+  &--info {
     &:hover {
       border-color: color-mix(in srgb, var(--chip-tone) 55%, var(--border-color));
       color: var(--text-primary);
@@ -2244,6 +2334,44 @@
   color: var(--text-secondary);
   white-space: nowrap;
   cursor: help;
+
+  svg {
+    flex: none;
+  }
+}
+
+/* 「可更新」：工坊发了新版。用主色调而不是告警色 —— 这是件好事，
+   但需要用户点一下（重新下载覆盖），所以做成按钮而不是纯标签。 */
+.mod-card__update {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 2px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  font-family: var(--font-family);
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent-text);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) ease, border-color var(--dur-fast) ease;
+
+  &:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent) 20%, transparent);
+    border-color: var(--accent);
+  }
+
+  &:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.55;
+  }
 
   svg {
     flex: none;

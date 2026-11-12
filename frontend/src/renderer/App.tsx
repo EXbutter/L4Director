@@ -462,6 +462,16 @@ function App() {
     useStore.getState().fetchApplyState();
   }, [backendConnected]);
 
+  // 创意工坊更新：后端启动时可能已在后台自动检查（见 main.py 的 lifespan），
+  // 这里把结果读回来；检查/更新进行中时 store 会自己按需轮询。
+  // 延后执行：这是纯附加信息，不该和首屏的 Mod 列表抢请求。
+  useEffect(() => {
+    if (!backendConnected) return;
+    deferNonCritical(() => {
+      useStore.getState().fetchWorkshopUpdates();
+    }, 600);
+  }, [backendConnected]);
+
   // 上报「首屏渲染完成」时间（渲染进程侧不可再快的时间点），供加载速度基准使用
   useEffect(() => {
     const el = document.querySelector('.app');
