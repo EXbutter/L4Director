@@ -910,9 +910,9 @@
 /* Submenu content (the actual box) */
 .context-menu__submenu-box {
   min-width: 176px;
-  // 子菜单可能很长（「分类标签」有说明 + 11 个分类 + 恢复项）：
+  // 子菜单可能很长（「武器」细分就有 34 个具体型号）：
   // 限高 + 内部滚动，保证卡片在窗口底部时也能滚到所有选项（不会伸出窗口点不到）
-  max-height: min(64vh, 440px);
+  max-height: min(72vh, 560px);
   overflow-y: auto;
   overscroll-behavior: contain;
   background: var(--bg-primary-solid);

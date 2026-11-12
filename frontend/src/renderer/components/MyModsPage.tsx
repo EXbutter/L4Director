@@ -177,15 +177,27 @@ export type VpkCategory = typeof VPK_CATEGORIES[number];
 
 /**
  * 二级细分标签（与后端 tagger.FINE_TAGS 保持一致）。
- * 大类是「面上」的分类，细分是「具体改了谁」：
- * 武器 → 步枪/霰弹枪/…，生还者 → 佐伊/尼克/…，被感染者 → 坦克/女巫/…。
+ * 大类是「面上」的分类，细分是「具体改了谁」，一律用游戏里的英文原名：
+ * 武器 → AK-47 / Hunting Rifle / Katana…，生还者 → Zoey / Nick…，
+ * 被感染者 → Tank / Witch…，物品 → Medkit / Pain Pills…
  * 只有大类成立时后端才会给出细分标签，前端只负责展示与筛选。
  */
 const FINE_TAGS: Record<string, string[]> = {
-  生还者: ['比尔', '弗朗西斯', '路易斯', '佐伊', '教练', '埃利斯', '尼克', '罗谢尔'],
-  被感染者: ['普通感染者', '特殊感染者', '布玛', '冲锋者', '猎人', '骑师', '吸烟者', '喷吐者', '坦克', '女巫'],
-  武器: ['步枪', '冲锋枪', '霰弹枪', '狙击枪', '手枪', '近战武器', 'M60', '榴弹发射器', '投掷物'],
-  物品: ['医疗包', '止痛药', '肾上腺素', '除颤器'],
+  生还者: ['Zoey', 'Nick', 'Bill', 'Francis', 'Louis', 'Coach', 'Ellis', 'Rochelle'],
+  被感染者: ['Tank', 'Witch', 'Boomer', 'Smoker', 'Hunter', 'Charger', 'Jockey', 'Spitter', 'Common Infected'],
+  武器: [
+    'M16 Rifle', 'AK-47', 'Desert Rifle', 'SG552',
+    'SMG', 'Silenced SMG',
+    'Pump Shotgun', 'Chrome Shotgun', 'Auto Shotgun', 'SPAS-12',
+    'Hunting Rifle', 'Military Sniper', 'AWP', 'Scout',
+    'M60', 'Grenade Launcher',
+    'Pistol', 'Magnum',
+    'Chainsaw', 'Katana', 'Machete', 'Crowbar', 'Fire Axe', 'Shovel',
+    'Frying Pan', 'Golf Club', 'Cricket Bat', 'Baseball Bat',
+    'Electric Guitar', 'Knife', 'Tonfa', 'Pitchfork',
+    'Pipe Bomb', 'Molotov', 'Vomit Jar',
+  ],
+  物品: ['Medkit', 'Pain Pills', 'Adrenaline', 'Defibrillator'],
 };
 
 /** 细分标签 → 它挂在哪个大类下面 */
@@ -243,7 +255,6 @@ export function MyModsPage() {
   const [vpkCategory, setVpkCategory] = useState<string | null>(null);
   // 二级细分筛选：只在大类有子类时出现（选中「武器」才显示 步枪/霰弹枪…）
   const [fineTag, setFineTag] = useState<string | null>(null);
-  const fineOptions = vpkCategory ? FINE_TAGS[vpkCategory] || [] : [];
   const [renameModName, setRenameModName] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const contextMenuRef = useRef<HTMLDivElement>(null);
@@ -328,6 +339,18 @@ export function MyModsPage() {
     }
     return counts;
   }, [mods, vpkCategory]);
+
+  // 细分标签从 9 个涨到 34 个（具体到每把枪）后全列出来太吵：
+  // 只保留有 Mod 的，外加当前选中的那个，避免把筛选行撑成三行
+  const visibleFineOptions = useMemo(
+    () =>
+      vpkCategory
+        ? (FINE_TAGS[vpkCategory] || []).filter(
+            (t) => (fineTagCounts[t] || 0) > 0 || t === fineTag
+          )
+        : [],
+    [vpkCategory, fineTagCounts, fineTag]
+  );
 
   // 切大类/清空筛选时，二级筛选必须跟着复位，否则会留下一个不存在的组合
   useEffect(() => {
@@ -648,7 +671,7 @@ export function MyModsPage() {
       </div>
 
       {/* 二级细分筛选：选中「武器 / 生还者 / 被感染者 / 物品」时才展开 */}
-      {fineOptions.length > 0 && (
+      {visibleFineOptions.length > 0 && (
         <div className="vpk-subtags">
           <span className="vpk-subtags__label">{vpkCategory}细分</span>
           <button
@@ -657,15 +680,14 @@ export function MyModsPage() {
           >
             全部
           </button>
-          {fineOptions.map((tag) => {
+          {visibleFineOptions.map((tag) => {
             const n = fineTagCounts[tag] || 0;
             return (
               <button
                 key={tag}
-                className={`vpk-subtags__tab ${fineTag === tag ? 'active' : ''} ${n === 0 ? 'vpk-subtags__tab--empty' : ''}`}
+                className={`vpk-subtags__tab ${fineTag === tag ? 'active' : ''}`}
                 onClick={() => setFineTag(fineTag === tag ? null : tag)}
-                // 没有这类 Mod 时仍然可以点（会得到空列表），但用淡色提示一下
-                title={n === 0 ? `没有标记为「${tag}」的${vpkCategory} Mod` : `${n} 个`}
+                title={`${n} 个`}
               >
                 {tag}
                 {n > 0 && <span className="vpk-subtags__count">{n}</span>}

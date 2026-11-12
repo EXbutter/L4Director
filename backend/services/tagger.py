@@ -24,7 +24,7 @@ from pathlib import Path
 
 # 标签词表（顺序 = 同级时的展示优先级）
 # 规则版本：改动判定逻辑后 +1，会让 vpk 元数据磁盘缓存自动失效重算
-RULES_VERSION = 6
+RULES_VERSION = 7
 
 TAG_ORDER = [
     '战役', '被感染者', '生还者', '武器', '物品',
@@ -61,15 +61,32 @@ _INFECTED_HINTS = (
 
 # ── 二级细分标签 ─────────────────────────────────────────────────
 # 与创意工坊的标签树对齐：生还者 / 被感染者 / 武器 / 物品 往下再分一层。
-# 只在对应的大类成立时才附带（「皮肤」类 Mod 不会平白多出一个「坦克」），
-# 且细分标签永远排在大类之后 —— 卡片上先看到「武器」再看到「霰弹枪」。
+# 细分一律用**官方英文名**：工坊里的 Mod 标题、模型文件名都是英文，
+# 「步枪」这种归类词既不精确也没法跟游戏里对上（M16 / AK-47 / SG552 都是步枪，
+# 但玩家找的是具体那把），所以直接给到具体武器。
+# 只在对应的大类成立时才附带（「皮肤」类 Mod 不会平白多出一个「Tank」），
+# 且细分标签永远排在大类之后 —— 卡片上先看到「武器」再看到「AK-47」。
 FINE_TAGS: dict[str, list[str]] = {
-    '生还者': ['比尔', '弗朗西斯', '路易斯', '佐伊', '教练', '埃利斯', '尼克', '罗谢尔'],
-    '被感染者': ['普通感染者', '特殊感染者', '布玛', '冲锋者', '猎人', '骑师',
-                 '吸烟者', '喷吐者', '坦克', '女巫'],
-    '武器': ['步枪', '冲锋枪', '霰弹枪', '狙击枪', '手枪', '近战武器',
-             'M60', '榴弹发射器', '投掷物'],
-    '物品': ['医疗包', '止痛药', '肾上腺素', '除颤器'],
+    '生还者': ['Zoey', 'Nick', 'Bill', 'Francis', 'Louis', 'Coach', 'Ellis', 'Rochelle'],
+    '被感染者': ['Tank', 'Witch', 'Boomer', 'Smoker', 'Hunter', 'Charger',
+                 'Jockey', 'Spitter', 'Common Infected'],
+    '武器': [
+        # 主武器
+        'M16 Rifle', 'AK-47', 'Desert Rifle', 'SG552',
+        'SMG', 'Silenced SMG',
+        'Pump Shotgun', 'Chrome Shotgun', 'Auto Shotgun', 'SPAS-12',
+        'Hunting Rifle', 'Military Sniper', 'AWP', 'Scout',
+        'M60', 'Grenade Launcher',
+        # 手枪
+        'Pistol', 'Magnum',
+        # 近战
+        'Chainsaw', 'Katana', 'Machete', 'Crowbar', 'Fire Axe', 'Shovel',
+        'Frying Pan', 'Golf Club', 'Cricket Bat', 'Baseball Bat',
+        'Electric Guitar', 'Knife', 'Tonfa', 'Pitchfork',
+        # 投掷物
+        'Pipe Bomb', 'Molotov', 'Vomit Jar',
+    ],
+    '物品': ['Medkit', 'Pain Pills', 'Adrenaline', 'Defibrillator'],
 }
 FINE_TAG_NAMES = {t for tags in FINE_TAGS.values() for t in tags}
 # 大类 → 细分标签（反查，前端也用同一份层级）
@@ -78,49 +95,85 @@ FINE_PARENT = {t: parent for parent, tags in FINE_TAGS.items() for t in tags}
 # L4D2 的内部代号比英文名更常见：比尔是 namvet、佐伊是 teenangst、
 # 路易斯是 manager…… 工坊里的模型几乎都叫 survivor_namvet.mdl。
 _SURVIVOR_FINE = {
-    '比尔': ('bill', 'namvet'),
-    '弗朗西斯': ('francis', 'biker'),
-    '路易斯': ('louis', 'manager'),
-    '佐伊': ('zoey', 'teenangst'),
-    '教练': ('coach',),
-    '埃利斯': ('ellis', 'mechanic'),
-    '尼克': ('nick', 'gambler'),
-    '罗谢尔': ('rochelle', 'producer'),
+    'Bill': ('bill', 'namvet'),
+    'Francis': ('francis', 'biker'),
+    'Louis': ('louis', 'manager'),
+    'Zoey': ('zoey', 'teenangst'),
+    'Coach': ('coach',),
+    'Ellis': ('ellis', 'mechanic'),
+    'Nick': ('nick', 'gambler'),
+    'Rochelle': ('rochelle', 'producer'),
 }
 
 _INFECTED_FINE = {
-    '普通感染者': ('common',),
-    '布玛': ('boomer',),
-    '冲锋者': ('charger',),
-    '猎人': ('hunter',),
-    '骑师': ('jockey',),
-    '吸烟者': ('smoker',),
-    '喷吐者': ('spitter',),
-    '坦克': ('hulk', 'tank'),
-    '女巫': ('witch',),
+    'Common Infected': ('common infected', 'common'),
+    'Boomer': ('boomer',),
+    'Charger': ('charger',),
+    'Hunter': ('hunter',),
+    'Jockey': ('jockey',),
+    'Smoker': ('smoker',),
+    'Spitter': ('spitter',),
+    'Tank': ('hulk', 'tank'),
+    'Witch': ('witch',),
 }
 
 # 武器：**同一路径只认第一个命中的规则**，否则 rifle_m60 会同时被打成
-# 步枪 + M60、hunting_rifle 会同时被打成狙击枪 + 步枪。
-# 所以把更长的名字（grenade launcher / hunting rifle）排在通用词前面。
+# M16 Rifle + M60、hunting_rifle 会同时被打成 Hunting Rifle + M16 Rifle。
+# 所以把更长的名字（grenade launcher / hunting rifle / rifle desert）排在
+# 通用词（rifle / shotgun / smg）前面，命中即 break。
 _WEAPON_FINE_RULES = [
-    ('榴弹发射器', ('grenade launcher', 'grenadelauncher')),
+    ('Grenade Launcher', ('grenade launcher', 'grenadelauncher')),
     ('M60', ('m60',)),
-    ('狙击枪', ('sniper', 'hunting rifle', 'awp', 'scout', 'military')),
-    ('霰弹枪', ('shotgun', 'autoshot', 'spas', 'chrome shotgun')),
-    ('冲锋枪', ('smg', 'uzi', 'mp5', 'mac 10', 'mac10')),
-    ('近战武器', ('melee', 'katana', 'chainsaw', 'machete', 'crowbar', 'fireaxe',
-                  'shovel', 'knife', 'tonfa', 'pitchfork', 'golfclub', 'cricket bat')),
-    ('步枪', ('rifle', 'ak47', 'ak 47', 'ak12', 'sg552', 'm16', 'desert')),
-    ('手枪', ('pistol', 'magnum')),
-    ('投掷物', ('pipe bomb', 'pipebomb', 'molotov', 'vomitjar', 'bile jar', 'throwable')),
+    ('Hunting Rifle', ('hunting rifle', 'huntingrifle')),
+    ('Military Sniper', ('military sniper', 'sniper military', 'military')),
+    ('AWP', ('awp',)),
+    ('Scout', ('scout',)),
+    ('AK-47', ('ak47', 'ak 47', 'ak-47')),
+    ('SG552', ('sg552', 'sg 552')),
+    ('Desert Rifle', ('desert rifle', 'rifle desert', 'scar')),
+    ('M16 Rifle', ('m16',)),
+    ('Silenced SMG', ('silenced smg', 'smg silenced', 'mac 10', 'mac10', 'silenced')),
+    ('SMG', ('uzi',)),
+    ('Chrome Shotgun', ('chrome shotgun', 'shotgun chrome')),
+    ('SPAS-12', ('spas', 'combat shotgun')),
+    ('Auto Shotgun', ('autoshotgun', 'auto shotgun')),
+    ('Pump Shotgun', ('pumpshotgun', 'pump shotgun')),
+    ('Magnum', ('magnum', 'desert eagle')),
+    # pistola 是 L4D1 沿用下来的手枪模型名（v_pistola / v_dual_pistola）
+    ('Pistol', ('pistol', 'pistola')),
+    ('Chainsaw', ('chainsaw',)),
+    ('Katana', ('katana',)),
+    ('Machete', ('machete', 'kukri')),
+    ('Crowbar', ('crowbar',)),
+    ('Fire Axe', ('fireaxe', 'fire axe')),
+    ('Shovel', ('shovel',)),
+    ('Frying Pan', ('frying pan', 'fryingpan')),
+    ('Golf Club', ('golf club', 'golfclub')),
+    ('Cricket Bat', ('cricket bat', 'cricketbat')),
+    ('Baseball Bat', ('baseball bat', 'baseballbat', 'baseball')),
+    ('Electric Guitar', ('electric guitar', 'guitar')),
+    ('Knife', ('knife',)),
+    ('Tonfa', ('tonfa', 'nightstick')),
+    ('Pitchfork', ('pitchfork',)),
+    ('Pipe Bomb', ('pipe bomb', 'pipebomb')),
+    ('Molotov', ('molotov',)),
+    ('Vomit Jar', ('vomit jar', 'vomitjar', 'bile jar', 'bilejar')),
+]
+
+# 兜底规则：只有整个包里**一个具体型号都没认出来**时才用。
+# 否则武器包普遍带的 sound/weapons/rifle/、materials/.../shotgun/ 这类
+# 通用目录会把标签带偏 —— 一个 SPAS-12 皮肤包不该多出一个 Pump Shotgun。
+_WEAPON_FALLBACK_RULES = [
+    ('Pump Shotgun', ('shotgun',)),
+    ('M16 Rifle', ('rifle',)),
+    ('SMG', ('smg',)),
 ]
 
 _ITEM_FINE_RULES = [
-    ('除颤器', ('defib',)),
-    ('肾上腺素', ('adrenaline', 'adrenalin')),
-    ('止痛药', ('pills', 'pain pill')),
-    ('医疗包', ('medkit', 'med kit', 'firstaidkit', 'first aid kit', 'firstaid',
+    ('Defibrillator', ('defib',)),
+    ('Adrenaline', ('adrenaline', 'adrenalin')),
+    ('Pain Pills', ('pills', 'pain pill', 'painpills')),
+    ('Medkit', ('medkit', 'med kit', 'firstaidkit', 'first aid kit', 'firstaid',
                 'first aid', 'healthkit', 'health kit')),
 ]
 
@@ -352,6 +405,7 @@ def fine_tags(paths, coarse: list[str]) -> list[str]:
     survivors: Counter = Counter()
     infected: Counter = Counter()
     weapons: Counter = Counter()
+    weapon_fallback: Counter = Counter()
     items: Counter = Counter()
     want_survivor = '生还者' in fams
     want_infected = '被感染者' in fams
@@ -378,7 +432,7 @@ def fine_tags(paths, coarse: list[str]) -> list[str]:
                     if _hit(norm, toks, keys):
                         infected[tag] += 1
 
-        # ── 武器：同一条路径只归一类，避免 rifle_m60 同时被打成步枪 + M60 ──
+        # ── 武器：同一条路径只归一类，避免 rifle_m60 同时被打成两款枪 ──
         if want_weapon and not any(m in p for m in _ARM_MARK) and p.startswith(
             ('models/', 'materials/', 'sound/weapons/', 'scripts/weapons/', 'particles/')
         ):
@@ -386,6 +440,11 @@ def fine_tags(paths, coarse: list[str]) -> list[str]:
                 if _hit(norm, toks, keys):
                     weapons[tag] += 1
                     break
+            else:
+                for tag, keys in _WEAPON_FALLBACK_RULES:
+                    if _hit(norm, toks, keys):
+                        weapon_fallback[tag] += 1
+                        break
 
         # ── 道具 ──
         if want_item:
@@ -394,6 +453,8 @@ def fine_tags(paths, coarse: list[str]) -> list[str]:
                     items[tag] += 1
                     break
 
+    # 兜底规则只在整包都认不出具体型号时启用：通用目录（sound/weapons/shotgun）
+    # 不能把已经确定的型号稀释成「Pump Shotgun + 别的」
     out: list[str] = []
     for fam in fams:
         if fam == '生还者':
@@ -402,10 +463,18 @@ def fine_tags(paths, coarse: list[str]) -> list[str]:
             if len(survivors) < 4:
                 out.extend(t for t, _ in survivors.most_common(2))
         elif fam == '被感染者':
-            picked = [t for t, _ in infected.most_common(2)]
-            out.extend(picked or ['特殊感染者'])
+            # Common Infected 几乎每个带 common 音效的包都会命中，
+            # 只在没有识别出具体特殊感染者时才拿它兜底
+            picked = [t for t, _ in infected.most_common() if t != 'Common Infected'][:2]
+            if not picked and infected.get('Common Infected'):
+                picked = ['Common Infected']
+            out.extend(picked)
         elif fam == '武器':
-            out.extend(t for t, _ in weapons.most_common(3))
+            picked = weapons or weapon_fallback
+            # ≥6 种不同武器 = 武器合集（CS:GO 武器包那种），挑两个型号出来
+            # 反而以偏概全 —— 只保留「武器」大类，让用户自己点进去看。
+            if len(picked) < 6:
+                out.extend(t for t, _ in picked.most_common(2))
         elif fam == '物品':
             out.extend(t for t, _ in items.most_common(2))
     return list(dict.fromkeys(out))
