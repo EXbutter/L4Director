@@ -7,6 +7,7 @@ import { showToast } from './Toast';
 import { ThumbImage } from './ThumbImage';
 import { isCampaignMod } from '../utils/modRole';
 import { ModSwitch } from './ModSwitch';
+import { isFineTag, orderCardTags } from './MyModsPage';
 import './ContentArea.scss';
 import './MyModsPage.scss';
 
@@ -625,11 +626,21 @@ export function PacksPage() {
                       <span className="mod-card__meta">{formatSize(mod.size_bytes, mod)}</span>
                       {mod.tags && mod.tags.length > 0 && (
                         <div className="mod-card__tags">
-                          {mod.tags.slice(0, 3).map((tag, idx) => (
-                            <span key={idx} className="mod-card__tag">{tag}</span>
+                          {orderCardTags(mod.tags).slice(0, 4).map((tag, idx) => (
+                            <span
+                              key={idx}
+                              className={`mod-card__tag${isFineTag(tag) ? ' mod-card__tag--fine' : ''}`}
+                            >
+                              {tag}
+                            </span>
                           ))}
-                          {mod.tags.length > 3 && (
-                            <span className="mod-card__tag mod-card__tag--more">+{mod.tags.length - 3}</span>
+                          {mod.tags.length > 4 && (
+                            <span
+                              className="mod-card__tag mod-card__tag--more"
+                              title={orderCardTags(mod.tags).slice(4).join(' / ')}
+                            >
+                              +{mod.tags.length - 4}
+                            </span>
                           )}
                         </div>
                       )}

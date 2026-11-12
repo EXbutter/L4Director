@@ -573,6 +573,8 @@ CATEGORIES = {
 _ALL_CATEGORY_NAMES = set(CATEGORIES.keys())
 # 注：自动分类不再走 CATEGORIES 的前缀命中打分（那套会把地图判成皮肤），
 # 改由 services/tagger.py 判定；这里保留词表，用于校验手动改标签的合法性。
+# 二级细分标签（步枪/坦克/佐伊…）同样允许手动增删，所以一并放行。
+_ALL_TAG_NAMES = _ALL_CATEGORY_NAMES | tagger.FINE_TAG_NAMES
 
 
 def _get_vpk_cache_key(vpk_path: Path) -> str:
@@ -2426,7 +2428,7 @@ class ModScanner:
                 if legacy:
                     override_tags = [legacy]
             if override_tags is not None:
-                category_tags = [t for t in override_tags if t in _ALL_CATEGORY_NAMES]
+                category_tags = [t for t in override_tags if t in _ALL_TAG_NAMES]
                 tags_are_manual = True
             else:
                 category_tags = list(metadata.get('category_tags') or [])
@@ -2436,10 +2438,10 @@ class ModScanner:
                     category_tags = [metadata['category']]
                 tags_are_manual = False
 
-            # addoninfo 里作者自定义的标签（排除分类名与旧分类名，避免重复/过时）
+            # addoninfo 里作者自定义的标签（排除分类名/细分名与旧分类名，避免重复/过时）
             extra_tags = [
                 t for t in (metadata.get('tags') or [])
-                if t not in _ALL_CATEGORY_NAMES and t not in _LEGACY_CATEGORY_NAMES
+                if t not in _ALL_TAG_NAMES and t not in _LEGACY_CATEGORY_NAMES
             ]
 
             # Merge tags（不改 metadata 本身：它是缓存对象，就地修改会污染缓存）
@@ -2555,7 +2557,7 @@ class ModScanner:
         """设置 / 清除某个 Mod 的分类标签（传 None = 恢复「跟随内容自动检测」）。
 
         支持多标签：传进来的列表就是最终的标签集合（可以只留一个，也可以同时留多个）。
-        只接受合法的分类名（见 CATEGORIES），自动去重并保持传入顺序。
+        只接受合法的分类名（见 CATEGORIES 与 tagger.FINE_TAGS），自动去重并保持传入顺序。
         """
         if not self._addons_path:
             return None
@@ -2570,7 +2572,7 @@ class ModScanner:
                 set_mod_tags_override(file_path.name, None)
             else:
                 cleaned = [str(t).strip() for t in tags if str(t).strip()]
-                valid = [t for t in dict.fromkeys(cleaned) if t in _ALL_CATEGORY_NAMES]
+                valid = [t for t in dict.fromkeys(cleaned) if t in _ALL_TAG_NAMES]
                 set_mod_tags_override(file_path.name, valid)
         except Exception as e:
             print(f"[Tags] Failed to persist tags for {file_path.name}: {e}")

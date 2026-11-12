@@ -24,7 +24,7 @@ from pathlib import Path
 
 # 标签词表（顺序 = 同级时的展示优先级）
 # 规则版本：改动判定逻辑后 +1，会让 vpk 元数据磁盘缓存自动失效重算
-RULES_VERSION = 5
+RULES_VERSION = 6
 
 TAG_ORDER = [
     '战役', '被感染者', '生还者', '武器', '物品',
@@ -57,6 +57,86 @@ _INFECTED_HINTS = (
     'hulk', 'tank', 'boomer', 'smoker', 'jockey', 'charger', 'spitter', 'witch',
     'hunter', 'infected',
 )
+
+
+# ── 二级细分标签 ─────────────────────────────────────────────────
+# 与创意工坊的标签树对齐：生还者 / 被感染者 / 武器 / 物品 往下再分一层。
+# 只在对应的大类成立时才附带（「皮肤」类 Mod 不会平白多出一个「坦克」），
+# 且细分标签永远排在大类之后 —— 卡片上先看到「武器」再看到「霰弹枪」。
+FINE_TAGS: dict[str, list[str]] = {
+    '生还者': ['比尔', '弗朗西斯', '路易斯', '佐伊', '教练', '埃利斯', '尼克', '罗谢尔'],
+    '被感染者': ['普通感染者', '特殊感染者', '布玛', '冲锋者', '猎人', '骑师',
+                 '吸烟者', '喷吐者', '坦克', '女巫'],
+    '武器': ['步枪', '冲锋枪', '霰弹枪', '狙击枪', '手枪', '近战武器',
+             'M60', '榴弹发射器', '投掷物'],
+    '物品': ['医疗包', '止痛药', '肾上腺素', '除颤器'],
+}
+FINE_TAG_NAMES = {t for tags in FINE_TAGS.values() for t in tags}
+# 大类 → 细分标签（反查，前端也用同一份层级）
+FINE_PARENT = {t: parent for parent, tags in FINE_TAGS.items() for t in tags}
+
+# L4D2 的内部代号比英文名更常见：比尔是 namvet、佐伊是 teenangst、
+# 路易斯是 manager…… 工坊里的模型几乎都叫 survivor_namvet.mdl。
+_SURVIVOR_FINE = {
+    '比尔': ('bill', 'namvet'),
+    '弗朗西斯': ('francis', 'biker'),
+    '路易斯': ('louis', 'manager'),
+    '佐伊': ('zoey', 'teenangst'),
+    '教练': ('coach',),
+    '埃利斯': ('ellis', 'mechanic'),
+    '尼克': ('nick', 'gambler'),
+    '罗谢尔': ('rochelle', 'producer'),
+}
+
+_INFECTED_FINE = {
+    '普通感染者': ('common',),
+    '布玛': ('boomer',),
+    '冲锋者': ('charger',),
+    '猎人': ('hunter',),
+    '骑师': ('jockey',),
+    '吸烟者': ('smoker',),
+    '喷吐者': ('spitter',),
+    '坦克': ('hulk', 'tank'),
+    '女巫': ('witch',),
+}
+
+# 武器：**同一路径只认第一个命中的规则**，否则 rifle_m60 会同时被打成
+# 步枪 + M60、hunting_rifle 会同时被打成狙击枪 + 步枪。
+# 所以把更长的名字（grenade launcher / hunting rifle）排在通用词前面。
+_WEAPON_FINE_RULES = [
+    ('榴弹发射器', ('grenade launcher', 'grenadelauncher')),
+    ('M60', ('m60',)),
+    ('狙击枪', ('sniper', 'hunting rifle', 'awp', 'scout', 'military')),
+    ('霰弹枪', ('shotgun', 'autoshot', 'spas', 'chrome shotgun')),
+    ('冲锋枪', ('smg', 'uzi', 'mp5', 'mac 10', 'mac10')),
+    ('近战武器', ('melee', 'katana', 'chainsaw', 'machete', 'crowbar', 'fireaxe',
+                  'shovel', 'knife', 'tonfa', 'pitchfork', 'golfclub', 'cricket bat')),
+    ('步枪', ('rifle', 'ak47', 'ak 47', 'ak12', 'sg552', 'm16', 'desert')),
+    ('手枪', ('pistol', 'magnum')),
+    ('投掷物', ('pipe bomb', 'pipebomb', 'molotov', 'vomitjar', 'bile jar', 'throwable')),
+]
+
+_ITEM_FINE_RULES = [
+    ('除颤器', ('defib',)),
+    ('肾上腺素', ('adrenaline', 'adrenalin')),
+    ('止痛药', ('pills', 'pain pill')),
+    ('医疗包', ('medkit', 'med kit', 'firstaid', 'first aid', 'healthkit', 'health kit')),
+]
+
+# 生还者/被感染者只在模型与贴图里认名字：HUD 里的 s_panel_coach.vtf 也很像，
+# 但那属于界面 Mod，不该给它贴「教练」。
+_FINE_SCOPE_MODEL = ('models/', 'materials/models/')
+_FINE_SCOPE_SOUND = ('sound/player/survivor/', 'sound/survivor/', 'sound/infected/',
+                     'sound/npc/', 'sound/weapons/')
+
+
+def _norm_path(p: str) -> str:
+    """把路径拍平成「前后带空格的小写词组」，方便按整词/整词组匹配。"""
+    return ' ' + re.sub(r'[^a-z0-9]+', ' ', p).strip() + ' '
+
+
+def _hit(norm: str, tokens: set[str], keys) -> bool:
+    return any((k in tokens) if ' ' not in k else (k in norm) for k in keys)
 
 
 # ── 特征提取 ─────────────────────────────────────────────────────
@@ -251,6 +331,78 @@ def _decide(f: Counter) -> list[str]:
     return out[:3]
 
 
+def fine_tags(paths, coarse: list[str]) -> list[str]:
+    """按已命中大类推导细分标签（大类顺序 → 命中次数降序）。
+
+    只在对应大类成立时才算：一个只改贴图的「武器皮肤」不会因为包里
+    顺带一个 v_arms 就被贴上「步枪」。
+    """
+    fams = [c for c in coarse if c in FINE_TAGS]
+    if not fams:
+        return []
+
+    survivors: Counter = Counter()
+    infected: Counter = Counter()
+    weapons: Counter = Counter()
+    items: Counter = Counter()
+    want_survivor = '生还者' in fams
+    want_infected = '被感染者' in fams
+    want_weapon = '武器' in fams
+    want_item = '物品' in fams
+
+    for raw in paths:
+        p = raw.lower().replace('\\', '/')
+        if not p:
+            continue
+        ext = p.rsplit('.', 1)[-1] if '.' in p else ''
+        norm = _norm_path(p)
+        toks = set(norm.split())
+
+        # ── 角色：只在模型/贴图/音效里认，HUD 的 s_panel_coach.vtf 不算 ──
+        if (want_survivor or want_infected) and (ext in _IMG_EXT or ext == 'ani') \
+                and (p.startswith(_FINE_SCOPE_MODEL) or p.startswith(_FINE_SCOPE_SOUND)):
+            if want_survivor:
+                for tag, keys in _SURVIVOR_FINE.items():
+                    if _hit(norm, toks, keys):
+                        survivors[tag] += 1
+            if want_infected:
+                for tag, keys in _INFECTED_FINE.items():
+                    if _hit(norm, toks, keys):
+                        infected[tag] += 1
+
+        # ── 武器：同一条路径只归一类，避免 rifle_m60 同时被打成步枪 + M60 ──
+        if want_weapon and not any(m in p for m in _ARM_MARK) and p.startswith(
+            ('models/', 'materials/', 'sound/weapons/', 'scripts/weapons/', 'particles/')
+        ):
+            for tag, keys in _WEAPON_FINE_RULES:
+                if _hit(norm, toks, keys):
+                    weapons[tag] += 1
+                    break
+
+        # ── 道具 ──
+        if want_item:
+            for tag, keys in _ITEM_FINE_RULES:
+                if _hit(norm, toks, keys):
+                    items[tag] += 1
+                    break
+
+    out: list[str] = []
+    for fam in fams:
+        if fam == '生还者':
+            # ≥4 个角色 = 公用动画库或整包合集（gestures_teenangst / anim_namvet…），
+            # 给它贴具体角色反而是误导，只保留「生还者」大类
+            if len(survivors) < 4:
+                out.extend(t for t, _ in survivors.most_common(2))
+        elif fam == '被感染者':
+            picked = [t for t, _ in infected.most_common(2)]
+            out.extend(picked or ['特殊感染者'])
+        elif fam == '武器':
+            out.extend(t for t, _ in weapons.most_common(3))
+        elif fam == '物品':
+            out.extend(t for t, _ in items.most_common(2))
+    return list(dict.fromkeys(out))
+
+
 
 # 有的 Mod 一个资源文件都不带，全靠 .nut 脚本在跑（典型：爆头音效包）。
 # 这种情况只能看脚本内容 —— 调用了音效 API 就算音效 Mod。
@@ -331,7 +483,9 @@ def classify(paths=None, vpk_path: Path | None = None,
         tags = _decide(feature)
         if reader and tags == ['脚本'] and script_sounds(reader, paths):
             return ['音效', '脚本'], False
-        return tags, False
+        # 细分标签挂在大类后面：卡片上永远先看到「武器」再看到「霰弹枪」
+        fine = fine_tags(paths, tags)
+        return (tags + fine) if fine else tags, False
     if vpk_path and Path(vpk_path).exists():
         vpk_path = Path(vpk_path)
         salvaged = extract_paths(vpk_path)
