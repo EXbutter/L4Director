@@ -851,7 +851,7 @@ export function MyModsPage() {
                     {formatSize(mod.size_bytes)}
                     {viewMode === 'list' && addedLabel ? ` · ${addedLabel}` : ''}
                   </span>
-                  {((mod.duplicates?.length ?? 0) > 0 || (mod.tags && mod.tags.length > 0)) && (
+                  {((mod.duplicates?.length ?? 0) > 0 || mod.forced_enabled_in_game || (mod.tags && mod.tags.length > 0)) && (
                     <div className="mod-card__tags" title={mod.tags?.join(' / ')}>
                       {(mod.duplicates?.length ?? 0) > 0 && (() => {
                         const twin = mod.duplicates![0];
@@ -878,6 +878,23 @@ export function MyModsPage() {
                           </button>
                         );
                       })()}
+                      {mod.forced_enabled_in_game && (
+                        <span
+                          className="mod-card__unmanaged"
+                          title={
+                            '这个 VPK 里没有 addoninfo.txt，游戏不认它：\n'
+                            + '「附加内容」列表里看不到它，写进 addonlist.txt 的「禁用」\n'
+                            + '也会在游戏退出时被改回「启用」。\n'
+                            + '要真正停用它，把这个 vpk 移出 addons 目录。'
+                          }
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="11" height="11">
+                            <circle cx="12" cy="12" r="9" />
+                            <path d="M12 8v4M12 16v0" strokeLinecap="round" />
+                          </svg>
+                          游戏里关不掉
+                        </span>
+                      )}
                       {mod.tags && orderCardTags(mod.tags).slice(0, 4).map((tag, idx) => (
                         <span
                           key={idx}

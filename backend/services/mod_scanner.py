@@ -91,6 +91,11 @@ class ModInfo:
     duplicate_kind: Optional[str] = None
     # 分类标签是用户手动设置的吗（true = 手动，可通过右键「恢复自动检测」还原）
     tags_manual: bool = False
+    # 游戏是否「强制启用」这个 Mod（本地 Mod 的 VPK 里没有 addoninfo.txt）。
+    # 这类 Mod 在游戏「附加内容」列表里不出现，addonlist.txt 里的 "0" 会被游戏
+    # 在保存时改回 "1" —— 也就是说「禁用」在游戏里根本存不住。
+    # 界面据此给出提示，同步检测也据此跳过（否则每启动一次游戏就弹一次假提醒）。
+    forced_enabled_in_game: bool = False
 
 
 _VPK_COVER_NAMES = [
@@ -720,6 +725,23 @@ def _get_manifest(path: Path) -> set[str]:
     _VPK_MANIFEST_CACHE[path_str] = manifest
     _save_manifest_to_disk(cache_key, manifest)
     return manifest
+
+
+def _has_addoninfo(path: Path) -> bool:
+    """VPK 里是否带 addoninfo.txt（读不出目录树时按「有」处理，避免误判）。
+
+    这个文件决定了 L4D2 认不认这个 Mod：本地（addons 根目录）Mod 若缺它，
+    游戏的「附加内容」列表里根本不会出现，用户也就无从在游戏里关掉它。
+    游戏保存 addonlist.txt 时会无条件把这类条目写回 "1"（社区里叫「幽灵 Mod」）。
+    """
+    try:
+        manifest = _get_manifest(path)
+    except Exception:
+        return True
+    for entry in manifest:
+        if entry.rsplit('/', 1)[-1].lower() == 'addoninfo.txt':
+            return True
+    return False
 
 
 def _get_vpk_data(path: Path) -> dict:
@@ -1462,6 +1484,29 @@ class ModScanner:
             self._pref_norm_index = {}
             self._pref_cache_ts = 0.0
 
+    def _game_forces_enabled(self, file_path: Path, is_workshop: bool) -> bool:
+        """游戏会不会把这个 Mod 强制当成启用（本地 Mod 缺 addoninfo.txt）。
+
+        实测（社区亦有记载）：本地 Mod 少了 addoninfo.txt，游戏既不在「附加内容」
+        列表里列出它，也不读 addonlist.txt 里给它写的 "0" —— 每次保存都会写回 "1"。
+        所以对它来说「禁用」是没有意义的，写文件、报同步提醒都只是在制造噪音。
+        工坊 Mod 不受影响（Steam 侧有元数据），所以只对本地文件判定。
+        """
+        if is_workshop:
+            return False
+        return not _has_addoninfo(file_path)
+
+    def _forced_enabled_keys(self) -> set[str]:
+        """「游戏强制启用」的本地 Mod 文件名集合（小写，用于和 list_key 比对）。"""
+        keys: set[str] = set()
+        try:
+            for path, is_ws in self.iter_mod_files():
+                if not is_ws and not _has_addoninfo(path):
+                    keys.add(path.name.lower())
+        except Exception:
+            pass
+        return keys
+
     def prefs_in_sync_with_addonlist(self) -> bool:
         """软件里记录的启停偏好是否已经和 addonlist.txt 的实际内容一致。
 
@@ -1471,7 +1516,8 @@ class ModScanner:
         addonlist.txt 了，那个提醒是假的。启动时按文件实际内容核对一次就能熄灯。
 
         判定口径与界面保持一致（_resolve_enabled）：只比较软件里手动设置过的 mod，
-        磁盘上已经删掉的 mod 不算差异。
+        磁盘上已经删掉的 mod 不算差异。「游戏强制启用」的 Mod 也不参与比较 ——
+        文件里永远是 "1"，拿它算差异只会让「未应用」标记永远熄不掉。
         """
         try:
             prefs = self._mod_enabled_prefs()
@@ -1483,9 +1529,12 @@ class ModScanner:
                 # 免得每次启动都把提示灭掉又点不亮（真正的缺文件由扫描逻辑负责）
                 return True
             keys = self._mod_list_keys()
+            forced = self._forced_enabled_keys()
             for mod_name, enabled in prefs.items():
                 list_key = keys.get(mod_name) or keys.get(_normalize_mod_key(mod_name))
                 if not list_key:
+                    continue
+                if list_key.lower() in forced:
                     continue
                 list_key = self._resolve_list_key(addonlist, list_key)
                 if list_key not in addonlist:
@@ -1667,13 +1716,20 @@ class ModScanner:
             return 0
         keys = self._mod_list_keys()
         addonlist = self._read_addonlist()
+        # 缺 addoninfo.txt 的本地 Mod：游戏保存 addonlist.txt 时会无条件写回 "1"，
+        # 往文件里写 "0" 只会被它覆盖一遍 —— 跳过，省得文件指纹每启动一次变一次。
+        forced = self._forced_enabled_keys()
         changed = False
         applied = 0
+        skipped = 0
         for mod_name, enabled in prefs.items():
             # 偏好键可能是历史写法（mod- 前缀 / 缺扩展名 / 大小写），同样做归一化回退查找
             list_key = keys.get(mod_name) or keys.get(_normalize_mod_key(mod_name))
             # 只处理仍然存在的 mod，避免把已删除 mod 的残留条目补回文件
             if not list_key:
+                continue
+            if list_key.lower() in forced and not enabled:
+                skipped += 1
                 continue
             list_key = self._resolve_list_key(addonlist, list_key)
             applied += 1
@@ -1683,6 +1739,8 @@ class ModScanner:
         if changed:
             self._write_addonlist(addonlist)
             print(f"[Prefs] Synced {applied} mod state(s) into addonlist.txt before launch")
+        if skipped:
+            print(f"[Prefs] {skipped} local mod(s) lack addoninfo.txt — game always enables them, skipped")
         # 调用这个入口就意味着「已经按软件设置应用过一次」→ 清掉「未应用」标记
         # （界面上的「应用」按钮随之熄灭）
         try:
@@ -1735,6 +1793,11 @@ class ModScanner:
         changes: list[dict] = []
         for path, is_workshop in self.iter_mod_files():
             name = path.name
+            # 缺 addoninfo.txt 的本地 Mod：游戏「附加内容」里看不到它，保存 addonlist.txt
+            # 时会无条件写回 "1"。用户不可能在游戏里改它的启停 —— 这条「变更」永远是
+            # 假的，跳过，否则每次启动游戏都弹一次「检测到游戏内已更改」。
+            if self._game_forces_enabled(path, is_workshop):
+                continue
             canonical_key = f'workshop\\{name}' if is_workshop else name
             list_key = self._resolve_list_key(addonlist, canonical_key)
             # 条目在文件里不存在时不做任何推测（保持软件里的记录不变）
@@ -1859,6 +1922,7 @@ class ModScanner:
             raw_entries.setdefault(key, []).append(m.group(2))
 
         suspicious: list = []
+        forced_names: list = []
         total = 0
         for path, is_workshop in self.iter_mod_files():
             total += 1
@@ -1867,6 +1931,12 @@ class ModScanner:
             resolved = self._resolve_list_key(addonlist, list_key)
             in_file = resolved in addonlist
             occurrences = raw_entries.get(resolved, [])
+
+            # 缺 addoninfo.txt 的本地 Mod：游戏强制启用，界面上的「禁用」在游戏里不生效。
+            # 这是游戏行为而不是配置不一致，单独列出来，不算进 suspicious。
+            if self._game_forces_enabled(path, is_workshop):
+                forced_names.append(name)
+                continue
 
             pref = prefs.get(list_key)
             if pref is None:
@@ -1902,6 +1972,10 @@ class ModScanner:
             'pref_count': len(prefs),
             'suspicious_count': len(suspicious),
             'suspicious': suspicious,
+            # 游戏强制启用的本地 Mod（缺 addoninfo.txt）：软件里的「禁用」在游戏里不生效，
+            # 不是配置出错，单列出来供排查
+            'forced_enabled_count': len(forced_names),
+            'forced_enabled': forced_names,
             'addonlist_entries': raw_entries,
             'prefs': prefs,
         }
@@ -1939,6 +2013,8 @@ class ModScanner:
         states: dict = {}
         changed_count = 0
         file_changed = False
+        # 缺 addoninfo.txt 的本地 Mod：游戏会把它强行启用，写 "0" 只会被覆盖
+        forced = self._forced_enabled_keys() if enable is False else set()
 
         for name in mod_names:
             # 先按原名查，再退化到归一化名（兼容 `MYMOD2` / `mod-xx.vpk` 这类历史写法）
@@ -1952,6 +2028,8 @@ class ModScanner:
             # 回传给前端的「实际生效状态」：前端据此做局部更新，
             # 不必再触发一次全量流式扫描（那会让界面弹出「正在扫描 Mod」并把按钮锁住）
             result['updated'][name] = enable
+            if list_key.lower() in forced and not enable:
+                continue
             if addonlist.get(list_key) != enable:
                 addonlist[list_key] = enable
                 file_changed = True
@@ -2492,6 +2570,7 @@ class ModScanner:
                 version=metadata.get('version'),
                 category=(category_tags[0] if category_tags else None),
                 tags_manual=tags_are_manual,
+                forced_enabled_in_game=self._game_forces_enabled(file_path, is_workshop),
             )
         except Exception as e:
             print(f"[VPK] Error {file_path.name}: {e}")
@@ -2518,8 +2597,12 @@ class ModScanner:
         list_key = self._resolve_list_key(addonlist, canonical_key)
         current = self._resolve_enabled(file_path.name, canonical_key, addonlist)
         new_enabled = not current if enable is None else enable
-        addonlist[list_key] = new_enabled
-        self._write_addonlist(addonlist)
+        # 「游戏强制启用」的本地 Mod（VPK 里没有 addoninfo.txt）：游戏保存
+        # addonlist.txt 时会把条目写回 "1"，写 "0" 只是白改一遍文件。
+        # 只记在软件里，界面用标签提示「游戏里关不掉」。
+        if not (self._game_forces_enabled(file_path, is_workshop) and not new_enabled):
+            addonlist[list_key] = new_enabled
+            self._write_addonlist(addonlist)
 
         # 同名副本（addons 根 + workshop 各一份）存在时，偏好必须按 list_key 记：
         # 按文件名记的话两份共用一条，禁用其中一份会让另一份在界面上也变成禁用。
