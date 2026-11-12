@@ -429,11 +429,19 @@
   }
 }
 
-/* ===== Mod Cards Grid ===== */
+/* ===== Mod Cards Grid =====
+   卡片尺寸统一收敛成三个变量，网格与卡片本体共用，改一处即可整体缩放。
+   默认窗口 1440×900（内容区约 1160px）下：200px 起分 → 每行 5 张（原来 4 张），
+   卡片高 288px（原来 310px），一屏能多露出整整一行；窗口缩到 1080 也不会只剩 2 张。
+   列表模式不受这些变量影响（行高另算）。 */
 .my-mods-grid {
+  --card-min-w: 200px;
+  --card-height: 288px;
+  --card-cover-height: 116px;
+
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(var(--card-min-w), 1fr));
+  gap: 14px;
   padding: 16px 0 32px;
   flex: 1;
   align-content: start;
@@ -454,7 +462,7 @@
     gap: 12px;
     height: 76px;
     // 列表模式行高是 76px，必须同步 contain-intrinsic-size，
-    // 否则视口外的行会按卡片的 310px 估算高度，滚动条长度和实际内容对不上
+    // 否则视口外的行会按卡片高度（--card-height）估算高度，滚动条长度和实际内容对不上
     contain-intrinsic-size: auto 76px;
     // 行内空间小，底部那抹渐隐会压住第二排文字，列表里只留左侧色条
     background-image: none;
@@ -666,7 +674,8 @@
 
   // 视口之外的卡片不做入场动画：它们本来就看不见，却会让浏览器给几十张卡片
 // 各建一个合成层并逐帧推进动画，切页时的掉帧大半来自这里。
-// 24 张 ≈ 三行（1440 宽下每行 4 张）/ 列表下约 1800px，足够覆盖首屏 + 一次滚动的余量。
+// 24 张 ≈ 五行的首行余量（1440 宽下每行 5 张，首屏约 2 行）/ 列表下约 1800px，
+// 足够覆盖首屏 + 一次滚动的余量。
 // 用 @at-root 提到顶层：这段规则原本嵌在 .mod-card 里，编译成后代选择器后永远匹配不到，
 // 等于一直没生效（列表模式下 58 行会同时启动动画）。
 @at-root .my-mods-grid > .mod-card:nth-child(n + 25) {
@@ -674,11 +683,11 @@
 }
 
   width: 100%;
-  height: 310px;
+  height: var(--card-height, 288px);
   overflow: hidden;
   min-width: 0;
   content-visibility: auto;
-  contain-intrinsic-size: auto 310px;
+  contain-intrinsic-size: auto var(--card-height, 288px);
 
   // 底部状态条。以前这里是「3px 色条 + box-shadow 12px 同色光晕」，
   // 而 box-shadow 每张卡都要单独做一次高斯模糊：58 张卡一起滚动时，
@@ -790,7 +799,7 @@
 
 /* Preview container wrapper (for IntersectionObserver) */
 .mod-card__preview-container {
-  height: 130px;
+  height: var(--card-cover-height, 116px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -842,8 +851,10 @@
 .mod-card__info {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 12px 14px 14px;
+  gap: 3px;
+  // 卡片收窄后内边距同步收一点，把省下的 6px 让给文字行（否则「标题两行 + 作者 +
+  // 描述 + 大小 + 标签」正好顶到卡片下沿，标签会被 overflow 裁掉）
+  padding: 10px 12px 12px;
   flex: 1;
   min-height: 0;
 }
@@ -1753,10 +1764,10 @@
 }
 
 /* 整合包卡片比 Mod 卡片多一行（创建时间 + 成员标签），
-   固定 310px 会把标签裁掉，卡片视图改成按内容自适应高度 */
+   固定高度会把标签裁掉，卡片视图改成按内容自适应高度 */
 .my-mods-grid:not(.my-mods-grid--list) .pack-card {
   height: auto;
-  min-height: 310px;
+  min-height: var(--card-height, 288px);
 }
 
 /* 整合包在列表模式下：用左侧强调色竖条代替启用状态色条 */
