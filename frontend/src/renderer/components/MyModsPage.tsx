@@ -34,6 +34,16 @@ function formatSize(bytes: number): string {
   return `${size} ${units[i]}`;
 }
 
+/** 添加日期（YYYY-MM-DD）；列表视图里跟在体积后面，让「按添加时间排序」有据可看 */
+function formatAddedDate(mod: ModData): string | null {
+  const raw = mod.added_at || mod.last_modified;
+  if (!raw) return null;
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return null;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 function getModTitle(mod: { vpk_title?: string | null; display_name?: string; name: string }, customName?: string | null): string {
   if (customName) return customName;
   return mod.vpk_title || mod.display_name || mod.name;
@@ -43,9 +53,19 @@ function getStableModId(mod: ModData): string {
   return `mod-${mod.name}`;
 }
 
+/** 「添加时间」时间戳：优先创建时间，老数据/拿不到时退回 mtime */
+function getAddedTs(mod: ModData): number {
+  const raw = mod.added_at || mod.last_modified;
+  if (!raw) return 0;
+  const ts = Date.parse(raw);
+  return Number.isNaN(ts) ? 0 : ts;
+}
+
 const sortOptions = [
   { value: 'name-asc', label: '名称 A-Z' },
   { value: 'name-desc', label: '名称 Z-A' },
+  { value: 'added-desc', label: '添加时间 ↓' },
+  { value: 'added-asc', label: '添加时间 ↑' },
   { value: 'size-desc', label: '大小 ↓' },
   { value: 'size-asc', label: '大小 ↑' },
 ];
@@ -291,6 +311,13 @@ export function MyModsPage() {
         break;
       case 'name-desc':
         list.sort((a, b) => getModTitle(b).localeCompare(getModTitle(a)));
+        break;
+      case 'added-desc':
+        // 最近添加的排前面；时间相同（同一批拖进来）时按名称兜底，顺序才稳定
+        list.sort((a, b) => getAddedTs(b) - getAddedTs(a) || getModTitle(a).localeCompare(getModTitle(b)));
+        break;
+      case 'added-asc':
+        list.sort((a, b) => getAddedTs(a) - getAddedTs(b) || getModTitle(a).localeCompare(getModTitle(b)));
         break;
       case 'size-desc':
         list.sort((a, b) => b.size_bytes - a.size_bytes);
@@ -575,6 +602,7 @@ export function MyModsPage() {
             // Filter out dismissed conflicts so the user can hide specific conflict badges
             const hasConflicts = rawConflicts && !dismissedConflicts.has(mod.name);
             const conflictTitle = rawConflicts ? `冲突: ${mod.conflicts.join(', ')}` : '';
+            const addedLabel = formatAddedDate(mod);
             return (
               <div
                 key={`${category}-${getStableModId(mod)}`}
@@ -631,7 +659,10 @@ export function MyModsPage() {
                   {mod.description && (
                     <span className="mod-card__description">{mod.description}</span>
                   )}
-                  <span className="mod-card__meta">{formatSize(mod.size_bytes)}</span>
+                  <span className="mod-card__meta">
+                    {formatSize(mod.size_bytes)}
+                    {viewMode === 'list' && addedLabel ? ` · ${addedLabel}` : ''}
+                  </span>
                   {mod.tags && mod.tags.length > 0 && (
                     <div className="mod-card__tags">
                       {mod.tags.slice(0, 3).map((tag, idx) => (
