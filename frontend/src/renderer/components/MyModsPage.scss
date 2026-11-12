@@ -1140,6 +1140,7 @@
     transition: color 0.3s ease;
     pointer-events: none;
 
+    /* 滑块在左＝禁用，在右＝启用；露出来的那个词就是当前状态 */
     &--on {
       left: 12px;
       color: var(--text-muted);
@@ -1182,7 +1183,7 @@
       color: #22c55e;
     }
     .pack-detail-toggle__thumb {
-      transform: translateX(0);
+      transform: translateX(48px);
       svg {
         color: #22c55e;
       }
@@ -1198,7 +1199,7 @@
       color: #ef4444;
     }
     .pack-detail-toggle__thumb {
-      transform: translateX(48px);
+      transform: translateX(0);
       svg {
         color: #ef4444;
       }
