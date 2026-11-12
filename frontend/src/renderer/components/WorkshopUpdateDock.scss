@@ -35,6 +35,24 @@
     animation: wsDockSpin 0.7s linear infinite;
   }
 
+  // 跑完那一小会儿显示的勾 / 感叹号：给「走到底」一个明确的收尾
+  &__mark {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    margin-top: 2px;
+    border-radius: 50%;
+    background: #22c55e;
+    color: #fff;
+
+    &--warn {
+      background: #f59e0b;
+    }
+  }
+
   &__body {
     flex: 1;
     min-width: 0;
@@ -66,6 +84,16 @@
     line-height: 17px;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+
+    &--warn {
+      background: color-mix(in srgb, #f59e0b 16%, transparent);
+      color: #b45309;
+
+      // 深橙在暗色底上几乎糊成一团，单独提亮
+      [data-theme='dark'] & {
+        color: #fbbf24;
+      }
+    }
   }
 
   &__hint {
@@ -83,13 +111,6 @@
     // 整条消失，0% 时看着像「没有进度条」。改成中性灰的透明叠色，两套主题都看得见
     background: color-mix(in srgb, var(--text-muted) 24%, transparent);
     overflow: hidden;
-
-    // 检查阶段不知道进度，用一条来回滑的短条表示「在跑」，
-    // 而不是干瘪的一行字；同时把高度撑住，避免两步之间浮层大小跳变
-    &--indeterminate .ws-dock__fill {
-      width: 30%;
-      animation: wsDockSlide 1.25s ease-in-out infinite;
-    }
   }
 
   &__fill {
@@ -97,7 +118,8 @@
     height: 100%;
     border-radius: 3px;
     background: linear-gradient(90deg, var(--accent), var(--accent-text));
-    transition: width 0.25s ease;
+    // 进度是按轮询跳着来的（每 1.2s 一次），加个过渡让它推进得连续些
+    transition: width 0.45s var(--ease-soft, ease-out);
   }
 
   &__current {
@@ -134,15 +156,6 @@
 @keyframes wsDockSpin {
   to {
     transform: rotate(360deg);
-  }
-}
-
-@keyframes wsDockSlide {
-  0% {
-    transform: translateX(-100%);
-  }
-  100% {
-    transform: translateX(200%);
   }
 }
 
