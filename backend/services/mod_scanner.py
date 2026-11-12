@@ -21,6 +21,7 @@ from . import tagger
 from .conflict_engine import (
     META_FILES,
     OfficialIndex,
+    open_vpk,
     analyze as analyze_conflicts,
     detect_role,
     role_tags,
@@ -337,7 +338,9 @@ _METADATA_CACHE_DIR = _CACHE_DIR / 'vpk_metadata'
 # 会把旧数据一直喂给界面（用户反馈：分类改成新 11 类后，旧标签还在）。
 #   v3: 分类换成 11 类 + 多标签（category_tags）；旧的单值 category 不再当标签用
 #   v4: 自动分类换成 tagger（按人工标注校准），旧缓存里的旧标签必须重算
-_METADATA_VERSION = 4
+#   v5: VPK 路径表非 UTF-8 时改走 latin-1 重试（老 Mod 用 GBK 存中文贴图名），
+#       旧缓存里那些「解析失败 / 没有细分标签」的结果必须重算
+_METADATA_VERSION = 5
 
 # 旧版分类名（曾作为自动分类）：老缓存里可能残留，展示时一并过滤掉
 _LEGACY_CATEGORY_NAMES = {
@@ -684,7 +687,7 @@ def _extract_manifest(path: Path) -> set[str]:
     """Extract file manifest from a VPK file."""
     manifest: set[str] = set()
     try:
-        v = vpk_lib.VPK(str(path.resolve()), read_header_only=False)
+        v = open_vpk(path.resolve())
         for p in v:
             if isinstance(p, str) and p.strip():
                 manifest.add(p.lower().replace('\\', '/'))
@@ -745,7 +748,7 @@ def _get_vpk_data(path: Path) -> dict:
     v = None
     
     try:
-        v = vpk_lib.VPK(str(path.resolve()), read_header_only=False)
+        v = open_vpk(path.resolve())
         
         # ── 1. Extract addoninfo (metadata) ──
         addoninfo_files = []
@@ -937,6 +940,15 @@ def _conflict_fingerprint(mods: list[ModInfo], addons_path: Optional[str] = None
     return hashlib.md5(raw.encode()).hexdigest()
 
 
+def _looks_like_zip(path: Path) -> bool:
+    """文件头是 PK\\x03\\x04：多半是 .zip 被改名成 .vpk。"""
+    try:
+        with open(path, 'rb') as fh:
+            return fh.read(4) == b'PK\x03\x04'
+    except OSError:
+        return False
+
+
 def _get_vpk_index(path: Path) -> dict[str, tuple[int, int]]:
     """VPK 目录树索引：{小写路径: (crc32, 字节数)}。
 
@@ -963,7 +975,7 @@ def _get_vpk_index(path: Path) -> dict[str, tuple[int, int]]:
 
     out: dict[str, tuple[int, int]] = {}
     try:
-        v = vpk_lib.VPK(str(path.resolve()), read_header_only=False)
+        v = open_vpk(path.resolve())
         for key, meta in (v.tree or {}).items():
             if not isinstance(key, str) or not key.strip():
                 continue
@@ -981,7 +993,12 @@ def _get_vpk_index(path: Path) -> dict[str, tuple[int, int]]:
         except Exception:
             pass
     except Exception as e:
-        print(f"[VPK] 索引失败 {path.name}: {e}")
+        # 最常见的一种「打不开」其实是压缩包被改名成 .vpk（下载站常见），
+        # 游戏同样加载不了；直接说清楚，省得用户以为管理器解析有 bug。
+        if _looks_like_zip(path):
+            print(f"[VPK] {path.name} 实际是 zip 压缩包（不是 VPK），游戏也不会加载它")
+        else:
+            print(f"[VPK] 索引失败 {path.name}: {e}")
     _VPK_INDEX_CACHE[path_str] = out
     return out
 
