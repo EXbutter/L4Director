@@ -573,7 +573,7 @@ CATEGORIES = {
 _ALL_CATEGORY_NAMES = set(CATEGORIES.keys())
 # 注：自动分类不再走 CATEGORIES 的前缀命中打分（那套会把地图判成皮肤），
 # 改由 services/tagger.py 判定；这里保留词表，用于校验手动改标签的合法性。
-# 二级细分标签（步枪/坦克/佐伊…）同样允许手动增删，所以一并放行。
+# 二级细分标签（AK-47/Tank/Zoey/Medkit…）同样允许手动增删，所以一并放行。
 _ALL_TAG_NAMES = _ALL_CATEGORY_NAMES | tagger.FINE_TAG_NAMES
 
 
