@@ -15,6 +15,7 @@ const AddonlistSyncDialog = lazy(() =>
 );
 import { DropOverlay } from './components/DropOverlay';
 import { ToastContainer } from './components/Toast';
+import { ConfirmHost } from './components/ConfirmDialog';
 import { WorkshopUpdateDock } from './components/WorkshopUpdateDock';
 import { useStore, setBackendApiBase } from './store/useStore';
 import { useDraggablePill } from './hooks/useDraggablePill';
@@ -863,6 +864,9 @@ function App() {
       </Suspense>
 
       <ToastContainer />
+
+      {/* 应用内二次确认弹窗（替代原生 window.confirm） */}
+      <ConfirmHost />
 
       {/* 创意工坊检查/更新的常驻进度条：挂在根部，切到任何页面都看得到 */}
       <WorkshopUpdateDock />

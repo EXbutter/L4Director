@@ -1,0 +1,127 @@
+/* 应用内确认弹窗（替代原生 window.confirm）
+   外观沿用 modal.scss 的 .modal-content 底子，这里补图标、正文与信息块的排版。
+
+   注意：modal.scss 在本文件之后注入（App.tsx 里导入得晚），同优先级时它会把
+   width / padding / h3 等盖回去，所以下面统一带上 .modal-content / .confirm-dialog
+   前缀来提高优先级 —— 别再拆成单类。 */
+
+.modal-overlay.confirm-overlay {
+  /* 高于普通弹窗（10000）：重复安装弹窗里点删除时，确认框要盖在它上面 */
+  z-index: 10050;
+}
+
+.modal-content.confirm-dialog {
+  width: 440px;
+  max-width: min(92vw, 440px);
+  padding: 22px 24px 18px;
+}
+
+/* 色调变量单类定义（优先级低于下面的修饰类），由图标 / 左色条 / 按钮共用 */
+.confirm-dialog {
+  --confirm-tone: var(--accent);
+  --confirm-tone-rgb: var(--accent-rgb);
+}
+
+.confirm-dialog--warning {
+  --confirm-tone: #d97706;
+  --confirm-tone-rgb: 217, 119, 6;
+}
+
+.confirm-dialog--danger {
+  --confirm-tone: #ef4444;
+  --confirm-tone-rgb: 239, 68, 68;
+}
+
+.confirm-dialog .confirm-dialog__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.confirm-dialog .confirm-dialog__head h3 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding-top: 5px;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.confirm-dialog .confirm-dialog__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  color: var(--confirm-tone);
+  background: rgba(var(--confirm-tone-rgb), 0.12);
+  border: 1px solid rgba(var(--confirm-tone-rgb), 0.28);
+
+  svg {
+    flex: none;
+  }
+}
+
+.confirm-dialog .confirm-dialog__desc {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.68;
+  color: var(--text-secondary);
+  word-break: break-word;
+
+  strong {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  code {
+    padding: 1px 4px;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--text-muted) 16%, transparent);
+  }
+}
+
+/* 危险操作：正文里加重的那几个字就是「不可撤销」这类警告，跟着色调走更醒目 */
+.confirm-dialog--danger .confirm-dialog__desc strong {
+  color: var(--confirm-tone);
+}
+
+/* 文件路径等关键信息：等宽、可换行、过长时内部滚动 */
+.confirm-dialog .confirm-dialog__detail {
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  max-height: 96px;
+  overflow-y: auto;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--text-muted) 8%, transparent);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  word-break: break-all;
+  user-select: text;
+}
+
+/* 补充说明：左侧一道细色条，和正文区分开但不抢注意力 */
+.confirm-dialog .confirm-dialog__note {
+  margin-bottom: 16px;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid rgba(var(--confirm-tone-rgb), 0.45);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.confirm-dialog .modal-actions {
+  margin-top: 18px;
+}
