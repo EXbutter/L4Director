@@ -310,12 +310,13 @@ let API_BASE = 'http://127.0.0.1:8288';
  * 主进程在检测到 8288 被其他程序占用并自动改用备用端口时，
  * 会通过 'backend:info' 事件告知渲染进程，这里动态切换后端地址。
  */
-export function setBackendApiBase(url: string) {
-  if (API_BASE === url) return;
+export function setBackendApiBase(url: string): boolean {
+  if (API_BASE === url) return false;
   API_BASE = url;
   // 后端端口变了：发往旧端口的流式请求不可能再返回数据，
   // 主动中止并复位扫描状态，避免「正在扫描 Mod」永久停留
   abortScan();
+  return true;
 }
 
 /**

@@ -634,9 +634,24 @@ function App() {
     if ((window as any).electronAPI?.onBackendInfo) {
       (window as any).electronAPI.onBackendInfo(({ port }: { port: number }) => {
         console.log(`[App] Backend reported port ${port}`);
-        setBackendApiBase(`http://127.0.0.1:${port}`);
+        const changed = setBackendApiBase(`http://127.0.0.1:${port}`);
         checkBackendConnection();
+        if (changed) void useStore.getState().refreshAll();
       });
+    }
+
+    // 后端往往比界面先就绪，那条 push 通知可能在本组件挂载前就发出去了。
+    // 主动问一次当前端口，否则会一直连默认的 8288（装了旧版时读到旧代码的数据）。
+    if ((window as any).electronAPI?.getBackendPort) {
+      (window as any).electronAPI
+        .getBackendPort()
+        .then((port: number) => {
+          if (!port) return;
+          const changed = setBackendApiBase(`http://127.0.0.1:${port}`);
+          checkBackendConnection();
+          if (changed) void useStore.getState().refreshAll();
+        })
+        .catch(() => { /* 拿不到就继续用默认端口 */ });
     }
 
     // 定期检测后端连接：统一 3 秒轮询（本地请求开销极小），这样冷启动后后端一就绪就能立刻接上。

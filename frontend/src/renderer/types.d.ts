@@ -55,6 +55,8 @@ interface Window {
       error?: string;
     }>;
     onBackendInfo: (callback: (info: { port: number }) => void) => void;
+    /** 主动查询后端实际端口（push 通知可能在挂载前就发出去了） */
+    getBackendPort: () => Promise<number>;
     exportLogs: () => Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }>;
     restartBackend: () => Promise<{ ok: boolean; error?: string }>;
     reportPerf: (name: string, payload?: Record<string, any>) => void;

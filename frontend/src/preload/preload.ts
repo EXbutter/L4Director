@@ -39,6 +39,8 @@ interface ElectronAPI {
   importDroppedVpks: (filePaths: string[], addonsPath: string) => Promise<ImportVpkResult>;
   onBackendReady: (callback: () => void) => void;
   onBackendInfo: (callback: (info: { port: number }) => void) => void;
+  /** 主动查询后端实际端口（避免 push 通知在挂载前丢失） */
+  getBackendPort: () => Promise<number>;
   exportLogs: () => Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }>;
   restartBackend: () => Promise<{ ok: boolean; error?: string }>;
   /** 上报启动性能里程碑（首屏渲染完成 / 首个 Mod 出现 / 扫描完成），用于加载速度排障 */
@@ -84,6 +86,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onBackendInfo: (callback: (info: { port: number }) => void) => {
     ipcRenderer.on('backend:info', (_event, info: { port: number }) => callback(info));
   },
+  getBackendPort: () => ipcRenderer.invoke('backend:getPort'),
   // 由主进程本地导出日志（不依赖后端进程是否存活）
   exportLogs: () => ipcRenderer.invoke('logs:export'),
   // 请求主进程重新启动后端

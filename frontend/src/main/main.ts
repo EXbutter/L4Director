@@ -545,6 +545,11 @@ function notifyBackendPort(port: number): void {
   }
 }
 
+// push 版有竞态：后端在渲染进程挂载出监听器之前就启动完毕时，这条消息会直接丢掉，
+// 前端就永远停在默认的 8288（若 8288 被旧版占用，界面会一直读到旧数据）。
+// 补一个拉取版：渲染进程挂载时主动问一次当前端口。
+ipcMain.handle('backend:getPort', () => activeBackendPort);
+
 /** 单次探测某个端口上的后端是否健康（不轮询）。 */
 function probeBackendHealth(port: number, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
