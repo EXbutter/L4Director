@@ -1,6 +1,8 @@
 .toast-container {
   position: fixed;
-  bottom: 80px;
+  // 100px 而不是贴着底边：下方还留出「创意工坊更新」进度条的位置，
+  // 两者同时出现时上下错开，不会叠在一起
+  bottom: 100px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 10001;

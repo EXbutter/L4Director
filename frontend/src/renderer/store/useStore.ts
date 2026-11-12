@@ -533,6 +533,15 @@ function scheduleGamePoll() {
 let workshopPollTimer: ReturnType<typeof setTimeout> | null = null;
 /** 上一次轮询时「是否正在更新」，用来在跑完的那一刻弹一次结果提示 */
 let workshopApplyingBefore = false;
+/** 上一次轮询时「是否正在检查更新」，同样用来在检查结束那一刻给个结果 */
+let workshopCheckingBefore = false;
+/**
+ * 这一轮检查是谁发起的：
+ * - 'manual' 用户点了「检查更新」/「立即检查」→ 无论有没有新版本都要回一句，
+ *   否则点完按钮什么也没发生，像是没反应；
+ * - 'auto' 启动时后端自己查的 → 只有发现新版本或出错才提示，别每次开软件都报平安。
+ */
+let workshopCheckIntent: 'manual' | 'auto' | null = null;
 
 /**
  * 检查/更新过程中的状态轮询。检查要联网、更新要下载，都可能持续几十秒，
@@ -550,7 +559,8 @@ function scheduleWorkshopUpdatePoll() {
   }, 1200);
 }
 
-/** 把「已运行时长」格式化成 mm:ss / h:mm:ss */export function formatGameElapsed(ms: number): string {
+/** 把「已运行时长」格式化成 mm:ss / h:mm:ss */
+export function formatGameElapsed(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000));
   const hours = Math.floor(total / 3600);
   const minutes = Math.floor((total % 3600) / 60);
@@ -2045,6 +2055,26 @@ export const useStore = create<AppState>((set, get) => ({
           showToast(`已更新 ${okCount} 个创意工坊 Mod`, 'success');
         }
       }
+
+      // 检查也同理：结束那一刻要在底部给一句结论，不能只是按钮从「检查中…」变回来
+      const wasChecking = workshopCheckingBefore;
+      workshopCheckingBefore = !!data.checking;
+      if (data.checking && workshopCheckIntent === null) {
+        // 不是用户点的，那就是后端启动时的自动检查
+        workshopCheckIntent = 'auto';
+      }
+      if (wasChecking && !data.checking) {
+        const manual = workshopCheckIntent === 'manual';
+        if (data.last_error) {
+          showToast(`检查更新失败：${data.last_error}`, 'error');
+        } else if (data.update_count > 0) {
+          showToast(`检查完成：${data.update_count} 个 Mod 有更新`, 'info');
+        } else if (manual) {
+          showToast('检查完成：所有创意工坊 Mod 都是最新版本', 'success');
+        }
+        workshopCheckIntent = null;
+      }
+
       set({ workshopUpdates: data });
       if (data.checking || data.applying?.running) scheduleWorkshopUpdatePoll();
     } catch {
@@ -2054,16 +2084,22 @@ export const useStore = create<AppState>((set, get) => ({
 
   checkWorkshopUpdates: async () => {
     try {
+      workshopCheckIntent = 'manual';
+      workshopCheckingBefore = true;
       set((s) => (s.workshopUpdates ? { workshopUpdates: { ...s.workshopUpdates, checking: true } } : {}));
       const res = await fetch(`${API_BASE}/api/workshop-updates/check`, { method: 'POST' });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
         showToast(d.detail || '检查更新失败', 'error');
+        workshopCheckIntent = null;
+        workshopCheckingBefore = false;
         await get().fetchWorkshopUpdates();
         return;
       }
       scheduleWorkshopUpdatePoll();
     } catch {
+      workshopCheckIntent = null;
+      workshopCheckingBefore = false;
       showToast('检查更新失败：无法连接到后端服务', 'error');
     }
   },
