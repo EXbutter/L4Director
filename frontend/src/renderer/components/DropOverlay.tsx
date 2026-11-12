@@ -99,10 +99,14 @@ export function DropOverlay({ addonsPath }: DropOverlayProps) {
         if (result.covers > 0) done.push(`识别 ${result.covers} 张封面`);
         if (done.length > 0) showToast(done.join('，'), 'success');
 
-        // 2) 重复：内容相同的同一个 Mod（可能是改名后重复拖入）
+        // 2) 重复：内容相同的同一个 Mod（可能是改名后重复拖入，也可能与工坊里已订阅的那份相同）
         const dupNames: string[] = result.duplicates || [];
         if (dupNames.length > 0) {
-          showToast(`跳过 ${dupNames.length} 个重复 Mod：${previewNames(dupNames)}`, 'info');
+          const wsCount = (result.duplicateSources || []).filter(
+            (s: { workshop: boolean }) => s.workshop
+          ).length;
+          const extra = wsCount > 0 ? `（其中 ${wsCount} 个与创意工坊里的副本内容相同）` : '';
+          showToast(`跳过 ${dupNames.length} 个已安装的 Mod${extra}：${previewNames(dupNames)}`, 'info');
         }
 
         // 3) 同名但内容不同：不动用户已有文件，只提示

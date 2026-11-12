@@ -31,6 +31,8 @@ export interface ImportVpkResult {
   covers: number;
   /** 内容相同（改过名的同一个 Mod），已跳过 */
   duplicates: string[];
+  /** 每个被跳过的重复项对应哪份「已安装副本」，用于说清是跟工坊还是外部 Mod 重复 */
+  duplicateSources: { file: string; target: string; workshop: boolean }[];
   /** 同名但内容不同，未覆盖 */
   conflicts: string[];
   /** addons 里原本就存在的重复组（每组给出两个文件名） */
@@ -45,6 +47,7 @@ function emptyResult(): ImportVpkResult {
     skipped: 0,
     covers: 0,
     duplicates: [],
+    duplicateSources: [],
     conflicts: [],
     existingDuplicates: [],
   };
@@ -102,8 +105,12 @@ function collectExistingVpks(addonsPath: string, out: string[]): void {
 
   pushVpksIn(addonsPath);
 
-  // addons/workshop/*.vpk 与 addons/workshop/<id>/*.vpk 都是工坊 Mod 的正式位置
+  // addons/workshop/*.vpk 与 addons/workshop/<id>/*.vpk 都是工坊 Mod 的正式位置。
+  // 以前只遍历了子目录，直接放在 workshop 根下的包（Steam 更新后很常见的形态）
+  // 完全没进索引 —— 于是把工坊里已有的包再拖一次时判不出重复，凭空多出一份。
   const workshop = path.join(addonsPath, 'workshop');
+  pushVpksIn(workshop);
+
   let items: fs.Dirent[];
   try {
     items = fs.readdirSync(workshop, { withFileTypes: true });
@@ -113,6 +120,25 @@ function collectExistingVpks(addonsPath: string, out: string[]): void {
   for (const item of items) {
     if (item.isDirectory()) pushVpksIn(path.join(workshop, item.name));
   }
+}
+
+/** 这个路径是不是创意工坊目录下的包（用于把「重复」说清楚是跟谁重复） */
+function isWorkshopPath(p: string): boolean {
+  return /[\\/]workshop[\\/][^\\/]+\.vpk$/i.test(p);
+}
+
+/**
+ * 文件是否已经处在「游戏会加载」的位置：addons 根目录、addons/workshop、workshop/<id>。
+ *
+ * 只判这三处，不能笼统地说「在 addons 里面就算」—— `addons/整合包2/` 这类
+ * 暂存文件夹正是用户拖进来导入的来源，把它算进去会导致整包被跳过。
+ */
+function isLoadedLocation(p: string, addonsPath: string): boolean {
+  const rel = path.relative(addonsPath, p);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return false;
+  const parts = rel.split(path.sep);
+  if (parts.length === 1) return true;
+  return parts[0].toLowerCase() === 'workshop' && parts.length <= 3;
 }
 
 /** 分块计算 SHA-256：几十上百 MB 的 vpk 不整文件读进内存 */
@@ -218,6 +244,19 @@ export function importDroppedVpks(filePaths: string[], addonsPath: string): Impo
         continue;
       }
 
+      // 源文件本来就在库里（例如用户直接把 addons/workshop 里的包拖进来）：
+      // 再复制一份到根目录，等于亲手制造「同一个 Mod 装了两份」
+      if (isLoadedLocation(src, addonsPath)) {
+        duplicates.push(fileName);
+        result.duplicateSources.push({
+          file: fileName,
+          target: src,
+          workshop: isWorkshopPath(src),
+        });
+        result.skipped++;
+        continue;
+      }
+
       // 同名：内容相同算重复，否则提示「同名不同内容」
       if (fs.existsSync(destPath)) {
         let same = false;
@@ -226,8 +265,14 @@ export function importDroppedVpks(filePaths: string[], addonsPath: string): Impo
         } catch {
           same = false;
         }
-        if (same) duplicates.push(fileName);
-        else conflicts.push(fileName);
+        if (same) {
+          duplicates.push(fileName);
+          result.duplicateSources.push({
+            file: fileName,
+            target: destPath,
+            workshop: isWorkshopPath(destPath),
+          });
+        } else conflicts.push(fileName);
         result.skipped++;
         continue;
       }
@@ -251,6 +296,11 @@ export function importDroppedVpks(filePaths: string[], addonsPath: string): Impo
       }
       if (dupOf) {
         duplicates.push(fileName);
+        result.duplicateSources.push({
+          file: fileName,
+          target: dupOf,
+          workshop: isWorkshopPath(dupOf),
+        });
         result.skipped++;
         continue;
       }

@@ -51,6 +51,25 @@ export interface ModData {
   role_tags?: string[];
   /** VPK 解析失败（坏包 / 非标准编码），这类包不参与冲突判定 */
   unreadable?: boolean;
+  /** 同一个 Mod 装在另一处的副本（工坊订阅 + 手动拖进 addons 的同一个包） */
+  duplicates?: DuplicateRef[];
+  /** content = 两份内容完全一致；version = 标题相同、内容不同（多半是两个版本） */
+  duplicate_kind?: 'content' | 'version' | null;
+}
+
+export interface DuplicateRef {
+  name: string;
+  /** 对侧文件的绝对路径（同名副本里只有路径能唯一指认） */
+  path: string;
+  title: string;
+  is_workshop: boolean;
+  workshop_id: string | null;
+  kind: 'content' | 'version';
+}
+
+/** mod 的唯一键：同名文件可能同时存在于 addons 根与 workshop 下，只有路径唯一 */
+export function modKey(mod: { path?: string; name: string }): string {
+  return mod.path || mod.name;
 }
 
 export interface ConflictDetail {
@@ -169,8 +188,8 @@ interface AppState {
   fetchSettings: () => Promise<void>;
   setAddonsPath: (path: string) => Promise<boolean>;
   autoDetectPath: () => Promise<void>;
-  toggleMod: (modName: string) => Promise<void>;
-  deleteMod: (modName: string) => Promise<void>;
+  toggleMod: (modName: string, path?: string) => Promise<void>;
+  deleteMod: (modName: string, path?: string) => Promise<void>;
   refreshAll: () => Promise<void>;
   setBackground: (bg: Partial<BackgroundSettings>) => boolean;
   /** 把（可能是超大原图的）背景图压缩到合适尺寸，仅首次需要执行 */
@@ -1138,9 +1157,12 @@ export const useStore = create<AppState>((set, get) => ({
 
       // 非首次刷新时保留已有数据，避免界面闪空；逐块批量更新，实现“收一个显示一个”
       // 且不会每次事件都整表重渲。
+      // 键用**路径**而不是文件名：addons 根目录与 workshop 下可能各有一份同名 vpk
+      //（同一个 Mod 既订阅了工坊、又被手动拖进来），用文件名当键会让两条互相覆盖，
+      // 一次流式刷新后只剩一条，而静默刷新（/api/mods 数组）又变回两条。
       const modsMap = new Map<string, ModData>();
       if (get().mods.length > 0) {
-        for (const m of get().mods) modsMap.set(m.name, m);
+        for (const m of get().mods) modsMap.set(modKey(m), m);
       }
       const streamSeen = new Set<string>();
 
@@ -1172,8 +1194,8 @@ export const useStore = create<AppState>((set, get) => ({
             } else if (evt.type === 'mod') {
               const m = evt.mod as ModData;
               if (m && m.name) {
-                modsMap.set(m.name, m);
-                streamSeen.add(m.name);
+                modsMap.set(modKey(m), m);
+                streamSeen.add(modKey(m));
                 changed = true;
                 if (!perfFirstReported) {
                   perfFirstReported = true;
@@ -1192,6 +1214,16 @@ export const useStore = create<AppState>((set, get) => ({
                 if (Array.isArray(evt.role_tags)) cur.role_tags = evt.role_tags;
               }
               conflictsChanged = true;
+            } else if (evt.type === 'duplicates' && evt.items) {
+              // 重复安装只能等全部包解析完才能判定，后端单独补一条事件。
+              // 键是文件路径（同名文件可能有两份，文件名不唯一）。
+              for (const [key, refs] of Object.entries(evt.items as Record<string, DuplicateRef[]>)) {
+                const target = modsMap.get(key);
+                if (!target) continue;
+                target.duplicates = refs;
+                target.duplicate_kind = refs.some((r) => r.kind === 'content') ? 'content' : 'version';
+                conflictsChanged = true;
+              }
             }
           } catch { /* 跳过异常/半行 */ }
           nl = buffer.indexOf('\n');
@@ -1422,29 +1454,28 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  toggleMod: async (modName: string) => {
+  toggleMod: async (modName: string, path?: string) => {
     const target = normalizeModKey(modName);
-    const prevState = get().mods.find((m) => normalizeModKey(m.name) === target)?.enabled;
+    // 传了路径就按路径匹配：同名副本（addons 根 + workshop）必须各改各的
+    const match = (m: ModData) => (path ? m.path === path : normalizeModKey(m.name) === target);
+    const prevState = get().mods.find(match)?.enabled;
 
     // 失败时回滚到点击前的状态
     const rollback = () => {
       set((state) => ({
-        mods: state.mods.map((m) =>
-          normalizeModKey(m.name) === target ? { ...m, enabled: prevState ?? !m.enabled } : m
-        ),
+        mods: state.mods.map((m) => (match(m) ? { ...m, enabled: prevState ?? !m.enabled } : m)),
       }));
     };
 
     // 先乐观切换，界面立刻响应（用归一化名字匹配，兼容各种历史写法）
     set((state) => ({
-      mods: state.mods.map((m) =>
-        normalizeModKey(m.name) === target ? { ...m, enabled: !m.enabled } : m
-      ),
+      mods: state.mods.map((m) => (match(m) ? { ...m, enabled: !m.enabled } : m)),
     }));
 
     try {
       const encoded = encodeURIComponent(modName);
-      const res = await fetch(`${API_BASE}/api/mods/${encoded}/toggle`, {
+      const qs = path ? `?path=${encodeURIComponent(path)}` : '';
+      const res = await fetch(`${API_BASE}/api/mods/${encoded}/toggle${qs}`, {
         method: 'POST',
       });
       if (!res.ok) {
@@ -1463,15 +1494,21 @@ export const useStore = create<AppState>((set, get) => ({
       const data = await res.json().catch(() => null);
       if (data && data.name) {
         const key = normalizeModKey(data.name);
+        // 后端按名字返回、不带路径：优先用路径精确落到那一条
+        const hitPath = path || (data.path as string | undefined);
         set((state) => ({
           mods: state.mods.map((m) => {
-            if (normalizeModKey(m.name) !== key) return m;
+            const same = hitPath ? m.path === hitPath : normalizeModKey(m.name) === key;
+            if (!same) return m;
             const merged = { ...m, ...data };
             // 禁用后立刻清掉冲突（冲突只在启用中的 Mod 之间才有意义）；
             // 仍启用时先沿用旧值，等随后的静默刷新来校正。
             merged.conflicts = merged.enabled ? (m.conflicts || []) : [];
             merged.conflict_details = merged.enabled ? (m.conflict_details || []) : [];
             merged.conflict_hints = merged.enabled ? (m.conflict_hints || []) : [];
+            // 重复信息由扫描产出，toggle 的返回值里没有，沿用旧值
+            merged.duplicates = m.duplicates;
+            merged.duplicate_kind = m.duplicate_kind;
             return merged;
           }),
         }));
@@ -1487,10 +1524,11 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  deleteMod: async (modName: string) => {
+  deleteMod: async (modName: string, path?: string) => {
     try {
       const encoded = encodeURIComponent(modName);
-      const res = await fetch(`${API_BASE}/api/mods/${encoded}`, {
+      const qs = path ? `?path=${encodeURIComponent(path)}` : '';
+      const res = await fetch(`${API_BASE}/api/mods/${encoded}${qs}`, {
         method: 'DELETE',
       });
       if (res.ok) {

@@ -2074,3 +2074,200 @@
     }
   }
 }
+
+/* ===== 重复安装（同一个 Mod 同时存在于 addons 根与 workshop） ===== */
+.mod-card__dup {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 2px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: filter 0.15s ease, background 0.15s ease;
+
+  svg {
+    flex: none;
+  }
+
+  &--content {
+    // 内容完全一致：橙色，和「冲突」的红/橙系区分开（冲突是红点，这里是标签）
+    color: #f97316;
+    background: rgba(249, 115, 22, 0.12);
+    border-color: rgba(249, 115, 22, 0.35);
+  }
+
+  &--version {
+    color: #d97706;
+    background: rgba(234, 179, 8, 0.12);
+    border-color: rgba(234, 179, 8, 0.3);
+  }
+
+  &:hover {
+    filter: brightness(1.18);
+  }
+}
+
+/* 「重复安装」筛选标签 */
+.vpk-categories__tab--dup.active {
+  background: rgba(249, 115, 22, 0.15);
+  color: #f97316;
+}
+
+/* 重复安装详情弹窗 */
+.dup-dialog {
+  width: 560px;
+
+  .conflict-dialog__header h3::before {
+    content: '🧩';
+  }
+}
+
+.dup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.dup-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-card);
+
+  &--self {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border-color));
+  }
+
+  &__thumb {
+    width: 56px;
+    height: 56px;
+    flex: none;
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--bg-card-hover);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    svg {
+      width: 22px;
+      height: 22px;
+      stroke: var(--text-muted);
+    }
+  }
+
+  &__img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  &__info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  &__name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  &__self-tag {
+    font-style: normal;
+    font-size: 10px;
+    font-weight: 500;
+    padding: 0 5px;
+    border-radius: 4px;
+    color: var(--accent-text);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    flex: none;
+  }
+
+  &__meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  &__src {
+    padding: 0 6px;
+    border-radius: 4px;
+    font-size: 10px;
+
+    &--ws {
+      color: #3b82f6;
+      background: rgba(59, 130, 246, 0.12);
+    }
+
+    &--ext {
+      color: var(--text-secondary);
+      background: var(--bg-card-hover);
+    }
+  }
+
+  &__state--on {
+    color: #22c55e;
+  }
+
+  &__state--off {
+    color: var(--text-muted);
+  }
+
+  &__path {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: var(--font-mono, monospace);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 0.75;
+    // 路径太长，只保留末尾对用户有用的部分
+    direction: rtl;
+    text-align: left;
+  }
+
+  &__actions {
+    flex: none;
+    display: flex;
+    gap: 6px;
+  }
+}
+
+.dup-btn {
+  padding: 5px 10px;
+  font-size: 12px;
+  border-radius: 7px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card-hover);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  &--danger:hover {
+    border-color: rgba(239, 68, 68, 0.5);
+    background: rgba(239, 68, 68, 0.12);
+    color: #ef4444;
+  }
+}

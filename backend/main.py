@@ -244,12 +244,17 @@ def dismiss_addonlist_changes():
 
 
 @app.post("/api/mods/{mod_name}/toggle")
-def toggle_mod(mod_name: str):
-    """切换 Mod 启用/禁用状态"""
+def toggle_mod(mod_name: str, path: Optional[str] = None):
+    """切换 Mod 启用/禁用状态。
+
+    `path` 可选：addons 根目录与 workshop 下可能各有一份同名 vpk（同一个 Mod
+    既订阅了工坊、又被手动拖进来）。只按文件名查找永远命中根目录那一份，
+    传了路径才能精确作用到用户点的那一条。
+    """
     from urllib.parse import unquote
     mod_name = unquote(mod_name)
-    
-    result = scanner.toggle_mod(mod_name)
+
+    result = scanner.toggle_mod(mod_name, path_hint=unquote(path) if path else None)
     if result is None:
         raise HTTPException(
             status_code=404,
@@ -262,12 +267,12 @@ def toggle_mod(mod_name: str):
 
 
 @app.delete("/api/mods/{mod_name}")
-def delete_mod(mod_name: str):
-    """删除 Mod 文件"""
+def delete_mod(mod_name: str, path: Optional[str] = None):
+    """删除 Mod 文件（`path` 用于在同名副本之间精确指定删哪一个）"""
     from urllib.parse import unquote
     mod_name = unquote(mod_name)
-    
-    success = scanner.delete_mod(mod_name)
+
+    success = scanner.delete_mod(mod_name, path_hint=unquote(path) if path else None)
     if not success:
         raise HTTPException(status_code=404, detail=f"Mod '{mod_name}' not found or could not be deleted")
     return {"status": "deleted", "mod_name": mod_name}

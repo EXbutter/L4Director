@@ -50,7 +50,8 @@ function getModTitle(mod: { vpk_title?: string | null; display_name?: string; na
 }
 
 function getStableModId(mod: ModData): string {
-  return `mod-${mod.name}`;
+  // 用路径而不是文件名：addons 根与 workshop 下可能是同一个文件名（重复安装）
+  return `mod-${mod.path || mod.name}`;
 }
 
 /** 「添加时间」时间戳：优先创建时间，老数据/拿不到时退回 mtime */
@@ -197,6 +198,10 @@ export function MyModsPage() {
   const [category, setCategory] = useState<'all' | 'custom' | 'workshop'>('all');
   const [enabledFilter, setEnabledFilter] = useState<'all' | 'enabled' | 'disabled'>('all');
   const [conflictFilter, setConflictFilter] = useState<'all' | 'conflict' | 'no-conflict'>('all');
+  // 「只看重复安装」：同一个 Mod 同时存在于 addons 根与 workshop
+  const [dupFilter, setDupFilter] = useState(false);
+  // 重复安装详情弹窗（用路径标识，同名文件可能有两份）
+  const [dupDialogPath, setDupDialogPath] = useState<string | null>(null);
   const [vpkCategory, setVpkCategory] = useState<string | null>(null);
   const [renameModName, setRenameModName] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -265,7 +270,7 @@ export function MyModsPage() {
     return counts;
   }, [mods]);
 
-  const combinedCategoryKey = useMemo(() => `${category}-${vpkCategory || 'all'}-${enabledFilter}-${conflictFilter}`, [category, vpkCategory, enabledFilter, conflictFilter]);
+  const combinedCategoryKey = useMemo(() => `${category}-${vpkCategory || 'all'}-${enabledFilter}-${conflictFilter}-${dupFilter ? 'dup' : 'all'}`, [category, vpkCategory, enabledFilter, conflictFilter, dupFilter]);
 
   const enabledCounts = useMemo(() => ({
     enabled: mods.filter((m) => m.enabled).length,
@@ -298,6 +303,10 @@ export function MyModsPage() {
       list = list.filter((m) => !m.enabled || !m.conflicts || m.conflicts.length === 0);
     }
 
+    if (dupFilter) {
+      list = list.filter((m) => (m.duplicates?.length ?? 0) > 0);
+    }
+
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(
@@ -328,9 +337,10 @@ export function MyModsPage() {
     }
 
     return list;
-  }, [search, sortBy, mods, category, vpkCategory, enabledFilter, conflictFilter]);
+  }, [search, sortBy, mods, category, vpkCategory, enabledFilter, conflictFilter, dupFilter]);
 
-  const handleCardClick = (e: React.MouseEvent, modName: string) => {
+  const handleCardClick = (e: React.MouseEvent, mod: ModData) => {
+    const modName = mod.name;
     if (e.ctrlKey || e.metaKey) {
       e.stopPropagation();
       setSelectedMods((prev) => {
@@ -347,7 +357,8 @@ export function MyModsPage() {
       if (selectedMods.size > 0) {
         setSelectedMods(new Set());
       }
-      toggleMod(modName);
+      // 带上路径：同名副本（addons 根 + workshop）不能都按文件名去改
+      toggleMod(modName, mod.path);
     }
   };
 
@@ -559,6 +570,14 @@ export function MyModsPage() {
             ✅ 无冲突
             <span className="vpk-categories__count">{mods.filter(m => !m.enabled || !m.conflicts || m.conflicts.length === 0).length}</span>
           </button>
+          <button
+            className={`vpk-categories__tab vpk-categories__tab--dup ${dupFilter ? 'active' : ''}`}
+            onClick={() => setDupFilter(!dupFilter)}
+            title="同一个 Mod 装了多份：工坊订阅了一份，又把同一个 vpk 拖进了 addons"
+          >
+            🧩 重复安装
+            <span className="vpk-categories__count">{mods.filter(m => (m.duplicates?.length ?? 0) > 0).length}</span>
+          </button>
         </div>
       </div>
 
@@ -607,7 +626,7 @@ export function MyModsPage() {
               <div
                 key={`${category}-${getStableModId(mod)}`}
                 className={`mod-card ${mod.is_workshop ? 'mod-card--workshop' : 'mod-card--custom'} ${enabled ? 'mod-card--enabled' : 'mod-card--disabled'} ${hasConflicts ? 'mod-card--conflict' : ''} ${selectedMods.has(mod.name) ? 'mod-card--selected' : ''}`}
-                onClick={(e) => handleCardClick(e, mod.name)}
+                onClick={(e) => handleCardClick(e, mod)}
                 onContextMenu={(e) => handleContextMenu(e, mod.name)}
                 // --card-i 给 CSS 算入场延迟用：序号越靠后出场越晚（上限 16，见 SCSS 注释）
                 style={{ cursor: 'pointer', '--card-i': Math.min(index, 16) } as CSSProperties}
@@ -647,7 +666,7 @@ export function MyModsPage() {
                       <ModSwitch
                         enabled={enabled}
                         conflict={hasConflicts}
-                        onToggle={() => toggleMod(mod.name)}
+                        onToggle={() => toggleMod(mod.name, mod.path)}
                       />
                     ) : (
                       <span className={`mod-card__status ${hasConflicts ? 'mod-card__status--conflict' : (enabled ? 'mod-card__status--enabled' : 'mod-card__status--disabled')}`}>
@@ -663,12 +682,37 @@ export function MyModsPage() {
                     {formatSize(mod.size_bytes)}
                     {viewMode === 'list' && addedLabel ? ` · ${addedLabel}` : ''}
                   </span>
-                  {mod.tags && mod.tags.length > 0 && (
+                  {((mod.duplicates?.length ?? 0) > 0 || (mod.tags && mod.tags.length > 0)) && (
                     <div className="mod-card__tags">
-                      {mod.tags.slice(0, 3).map((tag, idx) => (
+                      {(mod.duplicates?.length ?? 0) > 0 && (() => {
+                        const twin = mod.duplicates![0];
+                        const src = twin.is_workshop
+                          ? `创意工坊 Mod${twin.workshop_id ? ` (ID ${twin.workshop_id})` : ''}`
+                          : '外部 Mod';
+                        const sameContent = (mod.duplicate_kind || twin.kind) === 'content';
+                        return (
+                          <button
+                            className={`mod-card__dup mod-card__dup--${sameContent ? 'content' : 'version'}`}
+                            title={sameContent
+                              ? `与同名的${src}内容完全一致：游戏会把两份各加载一遍。点击查看处理方式。`
+                              : `与${src}标题相同、内容不同，可能是同一个 Mod 的两个版本。点击查看。`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDupDialogPath(mod.path || mod.name);
+                            }}
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="11" height="11">
+                              <rect x="9" y="9" width="12" height="12" rx="2" />
+                              <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+                            </svg>
+                            {sameContent ? '重复安装' : '疑似重复'}
+                          </button>
+                        );
+                      })()}
+                      {mod.tags && mod.tags.slice(0, 3).map((tag, idx) => (
                         <span key={idx} className="mod-card__tag">{tag}</span>
                       ))}
-                      {mod.tags.length > 3 && (
+                      {mod.tags && mod.tags.length > 3 && (
                         <span className="mod-card__tag mod-card__tag--more">+{mod.tags.length - 3}</span>
                       )}
                     </div>
@@ -1130,7 +1174,7 @@ export function MyModsPage() {
               title={d.files.join('\n')}
               onClick={(e) => {
                 e.stopPropagation();
-                toggleMod(conflictMod.name);
+                toggleMod(conflictMod.name, conflictMod.path);
               }}
             >
               <div className="conflict-card__thumb">
@@ -1235,6 +1279,131 @@ export function MyModsPage() {
               <div className="conflict-dialog__footer">
                 <span className="conflict-dialog__hint">点击卡片可切换启用/禁用状态</span>
                 <button className="modal-btn modal-btn-cancel" onClick={() => closeConflictDialog()}>
+                  关闭
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        );
+      })()}
+
+      {/* 重复安装详情：同一个 Mod 装在 addons 根与 workshop 两处 */}
+      {dupDialogPath && (() => {
+        const owner = mods.find((m) => (m.path || m.name) === dupDialogPath);
+        if (!owner) return null;
+
+        const sameContent = owner.duplicate_kind === 'content';
+        // 当前条目 + 对侧条目一起列出，让用户看清楚「哪两份、各自在哪」
+        const entries: { mod: ModData; self: boolean }[] = [{ mod: owner, self: true }];
+        for (const ref of owner.duplicates || []) {
+          const twin = mods.find((m) => (m.path || m.name) === ref.path);
+          if (twin) entries.push({ mod: twin, self: false });
+        }
+
+        const removeEntry = (target: ModData) => {
+          const src = target.is_workshop ? '创意工坊副本' : '外部副本';
+          const extra = target.is_workshop
+            ? '\n\n注意：Steam 仍订阅着这个 Mod，删除后下次启动游戏会被重新下载。要彻底去掉它，请同时在 Steam 里取消订阅。'
+            : '';
+          const ok = window.confirm(
+            `确定删除这个${src}吗？\n\n${target.path}${extra}\n\n此操作会从磁盘移除文件，不可撤销。`
+          );
+          if (!ok) return;
+          void deleteMod(target.name, target.path);
+          setDupDialogPath(null);
+        };
+
+        return createPortal(
+          <div className="modal-overlay" onClick={() => setDupDialogPath(null)}>
+            <div className="conflict-dialog dup-dialog" onClick={(e) => e.stopPropagation()}>
+              <div className="conflict-dialog__header">
+                <h3>重复安装</h3>
+                <button className="conflict-dialog__close" onClick={() => setDupDialogPath(null)}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18">
+                    <path d="M18 6L6 18M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="conflict-dialog__subheader">
+                下面这些条目是<strong>同一个 Mod</strong>：
+                {sameContent
+                  ? 'VPK 里的资源逐条一致，只是被装在了两个位置。'
+                  : '标题相同但内容不同，可能是同一个 Mod 的两个版本。'}
+              </div>
+
+              <div className="conflict-dialog__note">
+                {sameContent
+                  ? '游戏会把两份各加载一遍 —— 既多占内存，也可能出现贴图/音效叠加的怪现象。建议只留一份：通常保留创意工坊版（会自动更新），删掉手动拖进来的外部副本；不确定的话先禁用其中一份。如果你已经不需要它，删掉工坊副本后记得去 Steam 取消订阅。'
+                  : '两个版本同时启用时，游戏按加载顺序决定谁生效，表现不可预期。确认好要哪一版后删掉另一份即可。'}
+              </div>
+
+              <div className="dup-list">
+                {entries.map(({ mod: item, self }) => {
+                  const title = getModTitle(item, getModDisplayName(item.name) || undefined);
+                  const added = formatAddedDate(item);
+                  const srcLabel = item.is_workshop
+                    ? `创意工坊 Mod${item.workshop_id ? ` · ID ${item.workshop_id}` : ''}`
+                    : '外部 Mod';
+                  return (
+                    <div className={`dup-row ${self ? 'dup-row--self' : ''}`} key={item.path || item.name}>
+                      <div className="dup-row__thumb">
+                        {resolveUrl(item.thumbnail_url) ? (
+                          <ThumbImage
+                            src={resolveUrl(item.thumbnail_url)!}
+                            alt={title}
+                            className="dup-row__img"
+                            maxWidth={72}
+                            maxHeight={72}
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).style.display = 'none';
+                            }}
+                          />
+                        ) : (
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                            <rect x="3" y="3" width="18" height="18" rx="3" />
+                            <circle cx="9" cy="9" r="2" />
+                            <path d="M21 15l-4-4-6 6-3-3-5 5" />
+                          </svg>
+                        )}
+                      </div>
+                      <div className="dup-row__info">
+                        <span className="dup-row__name">
+                          {title}
+                          {self && <em className="dup-row__self-tag">当前条目</em>}
+                        </span>
+                        <span className="dup-row__meta">
+                          <span className={`dup-row__src ${item.is_workshop ? 'dup-row__src--ws' : 'dup-row__src--ext'}`}>
+                            {srcLabel}
+                          </span>
+                          <span>{formatSize(item.size_bytes)}{added ? ` · ${added}` : ''}</span>
+                          <span className={item.enabled ? 'dup-row__state--on' : 'dup-row__state--off'}>
+                            {item.enabled ? '已启用' : '已禁用'}
+                          </span>
+                        </span>
+                        <span className="dup-row__path" title={item.path}>{item.path}</span>
+                      </div>
+                      <div className="dup-row__actions">
+                        <button
+                          className="dup-btn"
+                          onClick={() => toggleMod(item.name, item.path)}
+                          title="两份是同一个 Mod，正常只需启用其中一份"
+                        >
+                          {item.enabled ? '禁用' : '启用'}
+                        </button>
+                        <button className="dup-btn dup-btn--danger" onClick={() => removeEntry(item)}>
+                          删除
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="conflict-dialog__footer">
+                <span className="conflict-dialog__hint">删除后不会影响另一份，剩下的那份继续正常使用</span>
+                <button className="modal-btn modal-btn-cancel" onClick={() => setDupDialogPath(null)}>
                   关闭
                 </button>
               </div>

@@ -7,6 +7,7 @@ import shutil
 import threading
 import time
 import locale
+from collections import defaultdict
 from urllib.parse import quote
 from pathlib import Path
 from typing import Optional
@@ -18,6 +19,7 @@ import vpk as vpk_lib
 
 from . import tagger
 from .conflict_engine import (
+    META_FILES,
     OfficialIndex,
     analyze as analyze_conflicts,
     detect_role,
@@ -77,6 +79,15 @@ class ModInfo:
     role: str = 'art'                     # campaign / art / script / hud
     role_tags: list[str] = field(default_factory=list)   # 地图 / 脚本 / 音效 / 美术
     unreadable: bool = False              # VPK 解析失败（坏包/非标准编码）
+    # ── 重复安装（同一个 Mod 装了两份）────────────────────────────────
+    # 典型来源：Steam 创意工坊订阅了一份，又把同一个 vpk 手动拖进了 addons 根目录。
+    # 冲突引擎对「内容完全一致」的两份会判成无冲突（逐字节相同不算资源争夺），
+    # 但游戏确实会把它们各加载一遍，界面里也会出现两条同名条目 —— 就是用户看到的
+    # 「启用后重复显示」。这里的 duplicates 记录对侧条目，duplicate_kind 说明依据：
+    #   content = 两份 VPK 携带的资源条目完全一致（铁证）
+    #   version = 标题相同、内容不同，且分属工坊/外部两种来源（多半是同一 Mod 的两个版本）
+    duplicates: list[dict] = field(default_factory=list)
+    duplicate_kind: Optional[str] = None
     # 分类标签是用户手动设置的吗（true = 手动，可通过右键「恢复自动检测」还原）
     tags_manual: bool = False
 
@@ -1018,6 +1029,126 @@ def _conflict_entry(other: str, sev: str, files: list[str],
     }
 
 
+def _vpk_content_signature(path: Path) -> Optional[tuple[int, str]]:
+    """VPK 内容指纹：(条目数, 排序后「路径+CRC32+长度」的 MD5)。
+
+    只读目录树，不解压任何内容。两份 VPK 指纹相同 = 携带的资源逐条一致，
+    与文件名、打包时间、addoninfo 里写了什么无关 —— 这正是「工坊订阅 +
+    手动拖进来的同一个包」的形态。
+
+    元数据文件（addoninfo.txt / 封面 / readme）不参与比对：重打包工具常常
+    重写这些，它们不影响游戏实际加载的资源。
+    """
+    try:
+        idx = _get_vpk_index(path)
+    except Exception:
+        return None
+    if not idx:
+        return None
+    items = [
+        (p, fp) for p, fp in idx.items()
+        if p.rsplit('/', 1)[-1] not in META_FILES
+    ]
+    if not items:
+        return None
+    items.sort()
+    raw = '|'.join(f'{p}:{c[0]}:{c[1]}' for p, c in items)
+    return len(items), hashlib.md5(raw.encode()).hexdigest()
+
+
+def _normalize_title(title: Optional[str]) -> str:
+    """用于「同名」比较的标题：压空白、转小写。太短的标题不参与（误报太多）。"""
+    if not title:
+        return ''
+    t = re.sub(r'\s+', ' ', title).strip().lower()
+    return t if len(t) >= 4 else ''
+
+
+def _duplicate_ref(mod: 'ModInfo', kind: str) -> dict:
+    return {
+        'name': mod.name,
+        # 同名文件可能有两份（addons 根 + workshop），只有路径能唯一指认
+        'path': mod.path,
+        'title': mod.display_name,
+        'is_workshop': mod.is_workshop,
+        'workshop_id': mod.workshop_id,
+        'kind': kind,
+    }
+
+
+def _detect_duplicates(mods: list['ModInfo']) -> None:
+    """标记「同一个 Mod 装了两份」的条目。
+
+    判据两档：
+      content  两份 VPK 的资源条目（路径 + CRC + 长度）完全一致 —— 铁证；
+      version  标题相同、内容不同，且一份来自工坊、一份来自外部 —— 多半是
+               同一个 Mod 的两个版本，一起提示让用户决定留哪份。
+
+    为什么单独做而不并进冲突检测：冲突引擎认为「逐字节一致」是无害覆盖，
+    直接跳过（见 analyze 里 len(fingerprints) >= 2 的判断）。对资源争夺来说
+    这个结论没错，但「装了两份同一 Mod」本身是要提醒的 —— 游戏会各加载一遍。
+
+    性能：先按体积分组，只有体积撞上了才读 VPK 目录树（走磁盘索引缓存），
+    正常库（几十个 Mod）里体积相同的组通常只有个位数。
+    """
+    for mod in mods:
+        mod.duplicates = []
+        mod.duplicate_kind = None
+
+    if len(mods) < 2:
+        return
+
+    linked: set[frozenset] = set()
+
+    def link(a: 'ModInfo', b: 'ModInfo', kind: str) -> None:
+        key = frozenset((a.name, b.name))
+        if key in linked:
+            return
+        linked.add(key)
+        a.duplicates.append(_duplicate_ref(b, kind))
+        b.duplicates.append(_duplicate_ref(a, kind))
+
+    # 1) 内容完全一致（先按体积筛，避免给整库算指纹）
+    by_size: dict[int, list['ModInfo']] = defaultdict(list)
+    for mod in mods:
+        if mod.size_bytes > 0:
+            by_size[mod.size_bytes].append(mod)
+
+    by_sig: dict[tuple[int, str], list['ModInfo']] = defaultdict(list)
+    for group in by_size.values():
+        if len(group) < 2:
+            continue
+        for mod in group:
+            sig = _vpk_content_signature(Path(mod.path))
+            if sig is not None:
+                by_sig[sig].append(mod)
+
+    for group in by_sig.values():
+        for i in range(len(group)):
+            for j in range(i + 1, len(group)):
+                link(group[i], group[j], 'content')
+
+    # 2) 同名不同内容，且跨来源（只在工坊 × 外部之间提示，避免同来源变体互报）
+    by_title: dict[str, list['ModInfo']] = defaultdict(list)
+    for mod in mods:
+        title = _normalize_title(mod.vpk_title or mod.display_name)
+        if title:
+            by_title[title].append(mod)
+
+    for group in by_title.values():
+        if len(group) < 2 or len({m.is_workshop for m in group}) < 2:
+            continue
+        for i in range(len(group)):
+            for j in range(i + 1, len(group)):
+                link(group[i], group[j], 'version')
+
+    for mod in mods:
+        if mod.duplicates:
+            mod.duplicate_kind = (
+                'content' if any(d['kind'] == 'content' for d in mod.duplicates) else 'version'
+            )
+
+
 def _detect_conflicts(mods: list[ModInfo], addons_path: Optional[str] = None):
     """冲突检测：只看启用中的 Mod，基于 VPK 目录树（路径 + CRC + 长度）。
 
@@ -1292,6 +1423,12 @@ class ModScanner:
                 for name, meta in ordered:
                     value = bool(meta.enabled)
                     prefs[name] = value
+                    # 归一化索引只收「纯文件名」的偏好。带 `workshop\` 前缀的是
+                    # 重复安装时按 list_key 存的（addons 根与 workshop 各一份同名
+                    # vpk），归一化后会把路径信息丢掉，两份互相串味：
+                    # 禁用了工坊那份，根目录那份也会跟着显示成禁用。
+                    if '\\' in name or '/' in name:
+                        continue
                     index[_normalize_mod_key(name)] = value   # 覆盖：后更新的胜出
 
                 self._pref_cache = prefs
@@ -1352,7 +1489,11 @@ class ModScanner:
         「软件里禁用了 mod，启动游戏后再看软件又变回修改前的配置」。
         """
         prefs = self._mod_enabled_prefs()
-        pref = prefs.get(mod_name)
+        # 先看「按 list_key 记的偏好」：同名 vpk 在 addons 根与 workshop 下各有一份时，
+        # 两份必须能各自启停，只能用 list_key 区分（名字是一样的）。
+        pref = prefs.get(list_key)
+        if pref is None:
+            pref = prefs.get(mod_name)
         if pref is None:
             pref = self._pref_norm_index.get(_normalize_mod_key(mod_name))
         if pref is not None:
@@ -1384,10 +1525,14 @@ class ModScanner:
             if workshop_dir.exists():
                 for p in workshop_dir.glob('*.vpk'):
                     add(p.name, 'workshop\\' + p.name)
+                    # 精确登记 list_key 本身：重复安装时偏好是按 list_key 存的，
+                    # 这里没有映射的话「应用设置到游戏 / 一致性检查」会把它漏掉
+                    mapping.setdefault('workshop\\' + p.name, 'workshop\\' + p.name)
                 for item in workshop_dir.iterdir():
                     if item.is_dir():
                         for p in item.glob('*.vpk'):
                             add(p.name, 'workshop\\' + p.name)
+                            mapping.setdefault('workshop\\' + p.name, 'workshop\\' + p.name)
         except Exception as e:
             print(f"[Prefs] Failed to enumerate mods: {e}")
         return mapping
@@ -1464,6 +1609,29 @@ class ModScanner:
             if wanted_norm and normalized_hit is None and _normalize_mod_key(path.name) == wanted_norm:
                 normalized_hit = (path, is_workshop)
         return normalized_hit
+
+    def _resolve_path_hint(self, path_hint: Optional[str]) -> Optional[tuple[Path, bool]]:
+        """把前端传来的绝对路径解析成 (文件, 是否工坊)，并确认它就在 addons 目录内。
+
+        为什么需要它：`find_mod_file` 按**文件名**匹配，而 addons 根目录与
+        `workshop/` 下可能各放着一份同名 vpk（同一个 Mod 既订阅了工坊、又被
+        手动拖进来）。只按名字查找永远返回根目录那一份 —— 于是点工坊那条的
+        开关，改的其实是另一份文件，界面和游戏永远对不上。
+
+        路径来自调用方，必须限定在 addons 目录内，避免被构造成任意文件操作。
+        """
+        if not path_hint or not self._addons_path:
+            return None
+        try:
+            p = Path(path_hint).resolve()
+            p.relative_to(Path(self._addons_path).resolve())
+        except Exception:
+            return None
+        if not p.is_file() or p.suffix.lower() != '.vpk':
+            return None
+        parent = p.parent.name.lower()
+        grandparent = p.parent.parent.name.lower()
+        return p, (parent == 'workshop' or grandparent == 'workshop')
 
     def apply_mod_prefs_to_addonlist(self) -> int:
         """把软件里记录的启用状态写回 addonlist.txt（启动游戏前调用）。
@@ -1548,21 +1716,23 @@ class ModScanner:
         changes: list[dict] = []
         for path, is_workshop in self.iter_mod_files():
             name = path.name
-            list_key = f'workshop\\{name}' if is_workshop else name
-            list_key = self._resolve_list_key(addonlist, list_key)
+            canonical_key = f'workshop\\{name}' if is_workshop else name
+            list_key = self._resolve_list_key(addonlist, canonical_key)
             # 条目在文件里不存在时不做任何推测（保持软件里的记录不变）
             if list_key not in addonlist:
                 continue
 
             value = addonlist[list_key]
-            pref = prefs.get(name)
+            # 重复安装时偏好按 list_key 存（见 toggle_mod），先按它取，再退回文件名
+            pref_key = canonical_key if canonical_key in prefs else name
+            pref = prefs.get(pref_key)
             if pref is None:
                 pref = self._pref_norm_index.get(_normalize_mod_key(name))
             # 软件里没记录过的 mod：界面本来就跟随文件，无需提示同步
             if pref is None or pref == value:
                 continue
 
-            if not known and not self._file_is_newer_than_pref(addonlist_path, name, metas):
+            if not known and not self._file_is_newer_than_pref(addonlist_path, pref_key, metas):
                 continue
 
             changes.append({'name': name, 'enabled': bool(value), 'previous': bool(pref)})
@@ -1679,7 +1849,9 @@ class ModScanner:
             in_file = resolved in addonlist
             occurrences = raw_entries.get(resolved, [])
 
-            pref = prefs.get(name)
+            pref = prefs.get(list_key)
+            if pref is None:
+                pref = prefs.get(name)
             if pref is None:
                 pref = self._pref_norm_index.get(_normalize_mod_key(name))
 
@@ -1974,6 +2146,8 @@ class ModScanner:
         
         # Detect conflicts（读 VPK 目录树的路径 + CRC，走磁盘索引缓存）
         _detect_conflicts(all_mods, self._addons_path)
+        # 重复安装（工坊订阅 + 手动拖入的同一份包）与冲突无关，单独判定
+        _detect_duplicates(all_mods)
         
         # Cache result
         _LAST_SCAN_KEY = scan_key
@@ -2174,10 +2348,18 @@ class ModScanner:
 
         collected.sort(key=lambda m: (0 if not m.is_workshop else 1, m.display_name.lower()))
         _detect_conflicts(collected, self._addons_path)
+        _detect_duplicates(collected)
 
         _LAST_SCAN_KEY = scan_key
         _LAST_SCAN_RESULT = collected
         _LAST_CONFLICT_KEY = _conflict_fingerprint(collected, self._addons_path)
+
+        # 重复安装只能在「全部解析完」之后判定（要比对两份包的目录树），
+        # 所以单独补一条事件，前端收到后合并进对应条目。
+        # 键用文件路径：同名文件可能同时存在于 addons 根与 workshop 下。
+        dup_payload = {m.path: m.duplicates for m in collected if m.duplicates}
+        if dup_payload:
+            yield {'type': 'duplicates', 'items': dup_payload}
 
         # 全部解析完成后回填冲突
         for mod in collected:
@@ -2296,32 +2478,42 @@ class ModScanner:
             print(f"[VPK] Error {file_path.name}: {e}")
             return None
 
-    def toggle_mod(self, mod_name: str, enable: Optional[bool] = None) -> Optional[ModInfo]:
+    def toggle_mod(self, mod_name: str, enable: Optional[bool] = None,
+                   path_hint: Optional[str] = None) -> Optional[ModInfo]:
         if not self._addons_path:
             return None
 
         # 精确查找（不能再用 glob：mod 名里的 [ ] 会被当成字符类，
         # 导致「点启用没反应」—— 详见 find_mod_file 的说明）
-        found = self.find_mod_file(mod_name)
+        # path_hint 优先：同名文件可能同时存在于 addons 根与 workshop 下
+        found = self._resolve_path_hint(path_hint) or self.find_mod_file(mod_name)
         if not found:
             return None
         file_path, is_workshop = found
 
         addonlist = self._read_addonlist()
-        list_key = f'workshop\\{file_path.name}' if is_workshop else file_path.name
+        canonical_key = f'workshop\\{file_path.name}' if is_workshop else file_path.name
         # 用「界面同一套逻辑」取当前状态，并把值写到文件里真实存在的那个条目上：
         #   - 取反基准与界面显示一致 → 点一下必然切换（不会出现「点了没反应」）
         #   - 兼容 workshop/<id>/<name>.vpk 等写法 → 不会分裂成两条互不相关的记录
-        list_key = self._resolve_list_key(addonlist, list_key)
-        current = self._resolve_enabled(file_path.name, list_key, addonlist)
+        list_key = self._resolve_list_key(addonlist, canonical_key)
+        current = self._resolve_enabled(file_path.name, canonical_key, addonlist)
         new_enabled = not current if enable is None else enable
         addonlist[list_key] = new_enabled
         self._write_addonlist(addonlist)
 
+        # 同名副本（addons 根 + workshop 各一份）存在时，偏好必须按 list_key 记：
+        # 按文件名记的话两份共用一条，禁用其中一份会让另一份在界面上也变成禁用。
+        twin_exists = any(
+            p.name.lower() == file_path.name.lower()
+            and str(p.resolve()).lower() != str(file_path.resolve()).lower()
+            for p, _ws in self.iter_mod_files()
+        )
+
         # 把用户的选择持久化为「软件配置」：游戏（或 Steam 云同步）之后改写
         # addonlist.txt 时，软件仍按这里的设置显示，并在启动游戏前写回文件。
         try:
-            set_mod_enabled(file_path.name, new_enabled)
+            set_mod_enabled(canonical_key if twin_exists else file_path.name, new_enabled)
             # 记下「有改动还没写回 addonlist.txt」：界面左下角的「应用」按钮会点亮
             set_prefs_dirty(True)
         except Exception as e:
@@ -2394,12 +2586,13 @@ class ModScanner:
         return self._parse_vpk_fast(file_path, addonlist, is_workshop,
                                      file_path.stem if is_workshop else None)
 
-    def delete_mod(self, mod_name: str) -> bool:
+    def delete_mod(self, mod_name: str, path_hint: Optional[str] = None) -> bool:
         if not self._addons_path:
             return False
 
         # 精确查找：名字里的 [ ] 会让 glob 匹配失败（表现为「删不掉」）
-        found = self.find_mod_file(mod_name)
+        # path_hint 优先：同名文件同时存在于 addons 根与 workshop 时，必须能指定删哪一份
+        found = self._resolve_path_hint(path_hint) or self.find_mod_file(mod_name)
         if not found:
             return False
         file_path, _ = found
@@ -2410,10 +2603,20 @@ class ModScanner:
         except Exception:
             return False
 
+        # 还有同名副本（重复安装、只删了其中一份）时保留启用偏好：
+        # 偏好是按文件名存的，删掉会连带把留下来的那份设置一起清空
+        twin_exists = any(
+            p.name.lower() == file_path.name.lower() and p.exists()
+            for p, _ws in self.iter_mod_files()
+        )
+
         # Clear caches for this file
         _VPK_MANIFEST_CACHE.pop(str(file_path.resolve()), None)
         _VPK_METADATA_CACHE.pop(str(file_path.resolve()), None)
-        self._forget_mod_pref(file_path.name)
+        if not twin_exists:
+            # 偏好可能按文件名存（普通 mod），也可能按 list_key 存（重复安装时）
+            self._forget_mod_pref(file_path.name)
+            self._forget_mod_pref(f'workshop\\{file_path.name}')
 
         # 连同名封面图一起删掉，避免留下一张孤儿图片
         for ext in ('.jpg', '.jpeg', '.png', '.webp', '.bmp'):
