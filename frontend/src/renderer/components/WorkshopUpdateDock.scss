@@ -1,0 +1,158 @@
+/* 屏幕下方的创意工坊更新提示条：任务在就在，任务结束才收起。
+   位置固定在底部中央、比 Toast 更低一档，两者同时出现时上下错开不重叠。 */
+.ws-dock {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9995;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  box-sizing: border-box;
+  // 窗口最小 1100px，正常宽度下就是 520px；窄下去时给右下角的用量胶囊
+  // 留出位置，别让两个浮层在底部横向打架
+  width: min(520px, calc(100vw - 460px));
+  min-width: 340px;
+  padding: 10px 10px 10px 14px;
+  border-radius: 13px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 10px 30px var(--glass-shadow, rgba(0, 0, 0, 0.35));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  color: var(--text-primary);
+  animation: wsDockIn 0.26s cubic-bezier(0.34, 1.4, 0.64, 1) both;
+
+  &__spinner {
+    flex: none;
+    width: 15px;
+    height: 15px;
+    margin-top: 2px;
+    border: 2px solid color-mix(in srgb, var(--accent-text) 28%, transparent);
+    border-top-color: var(--accent-text);
+    border-radius: 50%;
+    animation: wsDockSpin 0.7s linear infinite;
+  }
+
+  &__body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  &__title {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 12.5px;
+    font-weight: 600;
+    line-height: 1.5;
+    color: var(--text-primary);
+    white-space: nowrap;
+  }
+
+  &__count {
+    margin-left: auto;
+    flex: none;
+    padding: 0 7px;
+    border-radius: 5px;
+    background: color-mix(in srgb, var(--accent-text) 14%, transparent);
+    color: var(--accent-text);
+    font-size: 11.5px;
+    font-weight: 600;
+    line-height: 17px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  &__hint {
+    margin-left: auto;
+    flex: none;
+    font-size: 11.5px;
+    font-weight: 400;
+    color: var(--text-muted);
+  }
+
+  &__bar {
+    height: 4px;
+    border-radius: 3px;
+    // 不用 --bg-card-hover 当槽底：浅色主题下它就是纯白，白卡片上的进度槽会
+    // 整条消失，0% 时看着像「没有进度条」。改成中性灰的透明叠色，两套主题都看得见
+    background: color-mix(in srgb, var(--text-muted) 24%, transparent);
+    overflow: hidden;
+
+    // 检查阶段不知道进度，用一条来回滑的短条表示「在跑」，
+    // 而不是干瘪的一行字；同时把高度撑住，避免两步之间浮层大小跳变
+    &--indeterminate .ws-dock__fill {
+      width: 30%;
+      animation: wsDockSlide 1.25s ease-in-out infinite;
+    }
+  }
+
+  &__fill {
+    display: block;
+    height: 100%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-text));
+    transition: width 0.25s ease;
+  }
+
+  &__current {
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__close {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: color var(--dur-fast, 0.15s) ease, background var(--dur-fast, 0.15s) ease;
+
+    &:hover {
+      color: var(--text-primary);
+      background: var(--bg-card-hover);
+    }
+  }
+}
+
+@keyframes wsDockSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes wsDockSlide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(200%);
+  }
+}
+
+@keyframes wsDockIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(14px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}

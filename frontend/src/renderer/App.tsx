@@ -15,6 +15,7 @@ const AddonlistSyncDialog = lazy(() =>
 );
 import { DropOverlay } from './components/DropOverlay';
 import { ToastContainer } from './components/Toast';
+import { WorkshopUpdateDock } from './components/WorkshopUpdateDock';
 import { useStore, setBackendApiBase } from './store/useStore';
 import { useDraggablePill } from './hooks/useDraggablePill';
 import { applyAccent } from './utils/themeColor';
@@ -862,6 +863,9 @@ function App() {
       </Suspense>
 
       <ToastContainer />
+
+      {/* 创意工坊检查/更新的常驻进度条：挂在根部，切到任何页面都看得到 */}
+      <WorkshopUpdateDock />
 
       {/* 首次/刷新扫描中的全局进度提示（Mod 页内已有更详细展示） */}
       {scanning && currentPage !== 'my-mods' && (
