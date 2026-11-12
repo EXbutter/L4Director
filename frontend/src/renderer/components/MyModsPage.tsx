@@ -6,6 +6,7 @@ import { ToolBar } from './ToolBar';
 import { ThumbImage } from './ThumbImage';
 import { ModSwitch } from './ModSwitch';
 import { showToast } from './Toast';
+import { confirmDialog } from './ConfirmDialog';
 import './ContentArea.scss';
 import './MyModsPage.scss';
 
@@ -475,13 +476,23 @@ export function MyModsPage() {
   const handleFixAddoninfo = async (e: React.MouseEvent, mod: ModData) => {
     e.stopPropagation();
     const title = getModTitle(mod, getModDisplayName(mod.name));
-    const ok = window.confirm(
-      `给「${title}」补一份 addoninfo.txt？\n\n`
-      + '这个 VPK 里没有 addoninfo.txt，游戏不会把它当作可管理的附加内容 —— '
-      + '在软件里关掉后，游戏仍会加载它。补上之后游戏才能在「附加内容」里看到并真正关掉。\n\n'
-      + `文件：${mod.path}\n\n`
-      + '注意：这会重建这个 VPK（先在临时文件里写好、逐条目校验一致后才替换原文件）。'
-    );
+    const ok = await confirmDialog({
+      title: '补一份 addoninfo.txt？',
+      tone: 'warning',
+      description: (
+        <>
+          {'给「'}
+          <strong>{title}</strong>
+          {'」。这个 VPK 里没有 '}
+          <code>addoninfo.txt</code>
+          {'，游戏不会把它当作可管理的附加内容 —— 在软件里关掉后，游戏仍会加载它。'}
+          {'补上之后，游戏才能在「附加内容」里看到它并真正关掉。'}
+        </>
+      ),
+      detail: mod.path,
+      note: '这会重建这个 VPK：先在临时文件里写好、逐条目校验一致后才替换原文件，原文件不会被中途改动。',
+      confirmText: '补上',
+    });
     if (!ok) return;
     await addAddoninfo(mod.name, mod.path);
   };
@@ -1124,12 +1135,27 @@ export function MyModsPage() {
               </div>
               <button
                 className="context-menu__item context-menu__item--danger"
-                onClick={() => {
-                  if (window.confirm(`确定要删除选中的 ${selectedMods.size} 个 Mod 吗？\n此操作将从磁盘上移除文件，不可撤销。`)) {
-                    selectedMods.forEach(modName => deleteMod(modName));
-                    setSelectedMods(new Set());
-                  }
+                onClick={async () => {
+                  const count = selectedMods.size;
+                  const targets = [...selectedMods];
                   setContextMenu(null);
+                  const ok = await confirmDialog({
+                    title: `删除选中的 ${count} 个 Mod？`,
+                    tone: 'danger',
+                    description: (
+                      <>
+                        {'将从磁盘上移除这 '}
+                        <strong>{count}</strong>
+                        {' 个 Mod 的文件，'}
+                        <strong>不可撤销</strong>
+                        {'。'}
+                      </>
+                    ),
+                    confirmText: '删除',
+                  });
+                  if (!ok) return;
+                  targets.forEach((modName) => deleteMod(modName));
+                  setSelectedMods(new Set());
                 }}
               >
                 🗑️ 批量删除
@@ -1687,14 +1713,22 @@ export function MyModsPage() {
           if (twin) entries.push({ mod: twin, self: false });
         }
 
-        const removeEntry = (target: ModData) => {
+        const removeEntry = async (target: ModData) => {
           const src = target.is_workshop ? '创意工坊副本' : '外部副本';
-          const extra = target.is_workshop
-            ? '\n\n注意：Steam 仍订阅着这个 Mod，删除后下次启动游戏会被重新下载。要彻底去掉它，请同时在 Steam 里取消订阅。'
-            : '';
-          const ok = window.confirm(
-            `确定删除这个${src}吗？\n\n${target.path}${extra}\n\n此操作会从磁盘移除文件，不可撤销。`
-          );
+          const ok = await confirmDialog({
+            title: `删除这个${src}？`,
+            tone: 'danger',
+            description: (
+              <>
+                将从磁盘上移除下面这个文件，<strong>不可撤销</strong>。
+              </>
+            ),
+            detail: target.path,
+            note: target.is_workshop
+              ? 'Steam 仍订阅着这个 Mod：删除后下次启动游戏会被重新下载。要彻底去掉它，请同时在 Steam 里取消订阅。'
+              : undefined,
+            confirmText: '删除',
+          });
           if (!ok) return;
           void deleteMod(target.name, target.path);
           setDupDialogPath(null);
@@ -1780,7 +1814,12 @@ export function MyModsPage() {
                         >
                           {item.enabled ? '禁用' : '启用'}
                         </button>
-                        <button className="dup-btn dup-btn--danger" onClick={() => removeEntry(item)}>
+                        <button
+                          className="dup-btn dup-btn--danger"
+                          onClick={() => {
+                            void removeEntry(item);
+                          }}
+                        >
                           删除
                         </button>
                       </div>
