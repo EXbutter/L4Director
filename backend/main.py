@@ -57,6 +57,13 @@ async def _app_lifespan(_app: FastAPI):
     当前只做一件事：校正上一次会话遗留的「有改动还没应用」标记（见下方函数说明）。
     """
     _reconcile_prefs_dirty_flag()
+    # 自动检查工坊更新：开关打开且距上次检查超过设定间隔时，延后几秒在后台跑
+    # （让首次 Mod 扫描先用上磁盘，别和 VPK 解析抢资源）。
+    try:
+        from services.workshop_updates import get_service as _get_wsu
+        _get_wsu().maybe_auto_check(scanner.get_addons_path() or "")
+    except Exception as _e:
+        print(f"[WsUpdate] auto check not started: {_e}")
     yield
 
 
@@ -325,7 +332,13 @@ def set_addons_path(data: dict):
     success = scanner.set_addons_path(normalized_path)
     if not success:
         raise HTTPException(status_code=400, detail=f"Invalid path: {normalized_path}")
-    
+
+    # 首次配置路径时补一次工坊更新检查：启动时的自动检查因为当时还没有路径而跳过了
+    try:
+        _wsu().maybe_auto_check(normalized_path)
+    except Exception as _e:
+        print(f"[WsUpdate] auto check after path set failed: {_e}")
+
     return {"status": "ok", "addons_path": normalized_path}
 
 
@@ -1436,6 +1449,57 @@ def _image_mime_from_bytes(data: bytes) -> str:
     if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "image/webp"
     return "image/jpeg"
+
+
+# ── 创意工坊更新检查 ──────────────────────────────────────────────────
+# 查 Steam 的 time_updated，和本地基线比对，判断已安装的工坊 Mod 有没有新版；
+# 更新时直接走下载器覆盖原文件（不依赖 Steam 客户端）。
+
+def _wsu():
+    from services.workshop_updates import get_service
+    return get_service()
+
+
+@app.get("/api/workshop-updates")
+def workshop_updates_state():
+    """当前「哪些工坊 Mod 有新版本」+ 检查/更新进度（纯本地计算，可随时轮询）。"""
+    return _wsu().snapshot(scanner.get_addons_path() or "")
+
+
+@app.post("/api/workshop-updates/check")
+def workshop_updates_check():
+    """后台起一次检查（联网查 Steam），立刻返回。"""
+    path = scanner.get_addons_path()
+    if not path:
+        raise HTTPException(status_code=400, detail="Addons 路径未配置")
+    result = _wsu().start_check(path)
+    if not result.get("ok"):
+        raise HTTPException(status_code=409, detail=result.get("error") or "检查失败")
+    return result
+
+
+@app.post("/api/workshop-updates/apply")
+def workshop_updates_apply(payload: dict):
+    """更新指定条目（重新下载并覆盖本地 vpk）。payload: {ids: [...]} 或 {all: true}。"""
+    path = scanner.get_addons_path()
+    if not path:
+        raise HTTPException(status_code=400, detail="Addons 路径未配置")
+    p = payload or {}
+    ids = p.get("ids")
+    if p.get("all"):
+        snap = _wsu().snapshot(path)
+        ids = [i["workshop_id"] for i in snap["items"] if i["update_available"]]
+    result = _wsu().start_apply(ids or [], path)
+    if not result.get("ok"):
+        raise HTTPException(status_code=409, detail=result.get("error") or "更新失败")
+    return result
+
+
+@app.post("/api/workshop-updates/settings")
+def workshop_updates_settings(payload: dict):
+    """自动检查开关与检查间隔（小时）。"""
+    p = payload or {}
+    return _wsu().save_settings(p.get("auto_check"), p.get("interval_hours"))
 
 
 @app.get("/api/download/state")

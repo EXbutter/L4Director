@@ -141,6 +141,48 @@ export interface AddonlistChange {
   previous: boolean;
 }
 
+/**
+ * 创意工坊 Mod 的更新状态。
+ *
+ * 后端查 Steam 的 `time_updated` 得到新版时间，和本地「已对齐的基线」比较；
+ * 这里只负责展示与操作，判定口径全部在后端（services/workshop_updates.py）。
+ */
+export interface WorkshopUpdateItem {
+  workshop_id: string;
+  /** 本地文件名（用于和 ModData.name 对上，addons 根目录里的工坊包没有 is_workshop 标记） */
+  name: string;
+  paths: string[];
+  title: string;
+  /** 远端最新版的时间戳（秒） */
+  remote_time: number;
+  /** 本地文件 mtime（秒） */
+  local_time: number;
+  local_size: number;
+  remote_size: number;
+  update_available: boolean;
+  /** 条目查不到详情（已下架 / 私有化） */
+  unavailable: boolean;
+}
+
+export interface WorkshopUpdatesState {
+  checked_at: number;
+  checking: boolean;
+  last_error: string;
+  auto_check: boolean;
+  interval_hours: number;
+  items: WorkshopUpdateItem[];
+  update_count: number;
+  applying: {
+    running: boolean;
+    total: number;
+    done: number;
+    current: string;
+    pct: number;
+    errors: string[];
+    finished_at: number;
+  };
+}
+
 interface AppState {
   gpuAccelerationDisabled: boolean;
   gpuAccelerationLoading: boolean;
@@ -157,6 +199,8 @@ interface AppState {
   scanProgress: { done: number; total: number | null } | null;
   packs: PackData[];
   status: StatusData | null;
+  /** 创意工坊更新检查结果（启动时后端自动查一次，也可手动触发） */
+  workshopUpdates: WorkshopUpdatesState | null;
   addonsPath: string | null;
   loading: boolean;
   error: string | null;
@@ -188,6 +232,14 @@ interface AppState {
   toggleTheme: () => void;
   setMaximized: (value: boolean) => void;
   fetchMods: () => Promise<void>;
+  /** 读一次工坊更新状态（纯本地计算，很快；后端自动检查的结果也在这里） */
+  fetchWorkshopUpdates: () => Promise<void>;
+  /** 让后端联网检查一遍（后台跑，结果靠轮询回来） */
+  checkWorkshopUpdates: () => Promise<void>;
+  /** 更新指定的工坊 Mod（重新下载覆盖），ids 为空 = 更新全部可更新的 */
+  applyWorkshopUpdates: (ids?: string[]) => Promise<void>;
+  /** 自动检查开关 / 间隔 */
+  setWorkshopUpdateSettings: (patch: { auto_check?: boolean; interval_hours?: number }) => Promise<void>;
   fetchStatus: () => Promise<void>;
   fetchSettings: () => Promise<void>;
   setAddonsPath: (path: string) => Promise<boolean>;
@@ -478,8 +530,27 @@ function scheduleGamePoll() {
   }, delay);
 }
 
-/** 把「已运行时长」格式化成 mm:ss / h:mm:ss */
-export function formatGameElapsed(ms: number): string {
+let workshopPollTimer: ReturnType<typeof setTimeout> | null = null;
+/** 上一次轮询时「是否正在更新」，用来在跑完的那一刻弹一次结果提示 */
+let workshopApplyingBefore = false;
+
+/**
+ * 检查/更新过程中的状态轮询。检查要联网、更新要下载，都可能持续几十秒，
+ * 全靠后端状态快照驱动界面；一旦两边都空闲就停表，不留空转的定时器。
+ */
+function scheduleWorkshopUpdatePoll() {
+  if (workshopPollTimer) clearTimeout(workshopPollTimer);
+  workshopPollTimer = setTimeout(async () => {
+    try {
+      await useStore.getState().fetchWorkshopUpdates();
+    } finally {
+      const st = useStore.getState().workshopUpdates;
+      if (st && (st.checking || st.applying.running)) scheduleWorkshopUpdatePoll();
+    }
+  }, 1200);
+}
+
+/** 把「已运行时长」格式化成 mm:ss / h:mm:ss */export function formatGameElapsed(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000));
   const hours = Math.floor(total / 3600);
   const minutes = Math.floor((total % 3600) / 60);
@@ -642,6 +713,7 @@ export const useStore = create<AppState>((set, get) => ({
   scanProgress: null,
   packs: [],
   status: null,
+  workshopUpdates: null,
   addonsPath: null,
   loading: false,
   error: null,
@@ -1950,5 +2022,88 @@ export const useStore = create<AppState>((set, get) => ({
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  },
+
+  // ── 创意工坊更新 ──────────────────────────────────────────────
+  // 判定全在后端（查 Steam 的 time_updated 与基线比对），这里只管轮询与交互反馈。
+
+  fetchWorkshopUpdates: async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/workshop-updates`);
+      if (!res.ok) return;
+      const data: WorkshopUpdatesState = await res.json();
+      const wasRunning = workshopApplyingBefore;
+      workshopApplyingBefore = !!data.applying?.running;
+      // 刚跑完更新：给一次明确的结果提示（成功几个 / 失败几个），
+      // 否则用户只能盯着卡片上的小字猜到底做完了没有
+      if (wasRunning && !workshopApplyingBefore) {
+        const errs = data.applying?.errors?.length ?? 0;
+        const okCount = data.applying?.done ?? 0;
+        if (errs > 0) {
+          showToast(`更新结束：${okCount} 个已更新，${errs} 个失败（详见悬浮提示）`, 'warning');
+        } else if (okCount > 0) {
+          showToast(`已更新 ${okCount} 个创意工坊 Mod`, 'success');
+        }
+      }
+      set({ workshopUpdates: data });
+      if (data.checking || data.applying?.running) scheduleWorkshopUpdatePoll();
+    } catch {
+      // 后端不可用：保留上次结果，不打扰用户
+    }
+  },
+
+  checkWorkshopUpdates: async () => {
+    try {
+      set((s) => (s.workshopUpdates ? { workshopUpdates: { ...s.workshopUpdates, checking: true } } : {}));
+      const res = await fetch(`${API_BASE}/api/workshop-updates/check`, { method: 'POST' });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        showToast(d.detail || '检查更新失败', 'error');
+        await get().fetchWorkshopUpdates();
+        return;
+      }
+      scheduleWorkshopUpdatePoll();
+    } catch {
+      showToast('检查更新失败：无法连接到后端服务', 'error');
+    }
+  },
+
+  applyWorkshopUpdates: async (ids) => {
+    try {
+      const body = ids && ids.length > 0 ? { ids } : { all: true };
+      const res = await fetch(`${API_BASE}/api/workshop-updates/apply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        showToast(d.detail || '更新失败', 'error');
+        return;
+      }
+      workshopApplyingBefore = true;
+      scheduleWorkshopUpdatePoll();
+      showToast(
+        ids && ids.length > 0 ? `开始更新 ${ids.length} 个 Mod…` : '开始更新全部可更新的 Mod…',
+        'info'
+      );
+    } catch {
+      showToast('更新失败：无法连接到后端服务', 'error');
+    }
+  },
+
+  setWorkshopUpdateSettings: async (patch) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/workshop-updates/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      set((s) => (s.workshopUpdates ? { workshopUpdates: { ...s.workshopUpdates, ...data } } : {}));
+    } catch {
+      // 保存失败时保持原值，下次进设置页还能看到真实状态
+    }
   },
 }));

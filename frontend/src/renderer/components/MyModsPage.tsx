@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import type { CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { useStore, getApiBase, ModData, ConflictDetail } from '../store/useStore';
+import { useStore, getApiBase, ModData, ConflictDetail, WorkshopUpdateItem } from '../store/useStore';
 import { ToolBar } from './ToolBar';
 import { ThumbImage } from './ThumbImage';
 import { ModSwitch } from './ModSwitch';
@@ -226,7 +226,7 @@ const isPickableTag = (tag: string) =>
   (VPK_CATEGORIES as readonly string[]).includes(tag) || isFineTag(tag);
 
 export function MyModsPage() {
-  const { mods, packs, fetchMods, refreshAll, loading, scanning, scanProgress, toggleMod, addModToPack, addModsToPack, setContextMenu, contextMenu, deleteMod, deleteConfirmMod, setDeleteConfirmMod, confirmDeleteMod, renameModDisplayName, getModDisplayName, setModCategory, setModTags } = useStore();
+  const { mods, packs, fetchMods, refreshAll, loading, scanning, scanProgress, toggleMod, addModToPack, addModsToPack, setContextMenu, contextMenu, deleteMod, deleteConfirmMod, setDeleteConfirmMod, confirmDeleteMod, renameModDisplayName, getModDisplayName, setModCategory, setModTags, workshopUpdates, checkWorkshopUpdates, applyWorkshopUpdates } = useStore();
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('name-asc');
   // 排版：卡片墙 / 单列列表（记在 localStorage，重启后保持上次选择）
@@ -250,6 +250,8 @@ export function MyModsPage() {
   const [conflictFilter, setConflictFilter] = useState<'all' | 'conflict' | 'no-conflict'>('all');
   // 「只看重复安装」：同一个 Mod 同时存在于 addons 根与 workshop
   const [dupFilter, setDupFilter] = useState(false);
+  // 「只看有新版本」：创意工坊条目的 time_updated 超过本地基线（后端判定）
+  const [updateFilter, setUpdateFilter] = useState(false);
   // 重复安装详情弹窗（用路径标识，同名文件可能有两份）
   const [dupDialogPath, setDupDialogPath] = useState<string | null>(null);
   const [vpkCategory, setVpkCategory] = useState<string | null>(null);
@@ -322,6 +324,33 @@ export function MyModsPage() {
     workshop: mods.filter((m) => m.is_workshop).length,
   }), [mods]);
 
+  // ── 创意工坊更新 ──
+  // 用两个键索引：workshop_id（标准订阅路径能找到）和文件名（addons 根目录里的
+  // `2503979832.vpk` 这种包，后端认不出 is_workshop，只能靠文件名对上）。
+  const updateByKey = useMemo(() => {
+    const map = new Map<string, WorkshopUpdateItem>();
+    for (const it of workshopUpdates?.items || []) {
+      if (it.workshop_id) map.set(`id:${it.workshop_id}`, it);
+      if (it.name) map.set(`name:${it.name.toLowerCase()}`, it);
+    }
+    return map;
+  }, [workshopUpdates]);
+
+  const updateFor = useCallback(
+    (mod: ModData): WorkshopUpdateItem | undefined =>
+      (mod.workshop_id ? updateByKey.get(`id:${mod.workshop_id}`) : undefined) ||
+      updateByKey.get(`name:${mod.name.toLowerCase()}`),
+    [updateByKey]
+  );
+
+  const updateCount = useMemo(
+    () => mods.filter((m) => updateFor(m)?.update_available).length,
+    [mods, updateFor]
+  );
+
+  const applyingInfo = workshopUpdates?.applying;
+  const applyingNow = !!applyingInfo?.running;
+
   const vpkCategoryCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const cat of VPK_CATEGORIES) {
@@ -358,7 +387,7 @@ export function MyModsPage() {
     if (!vpkCategory || !(FINE_TAGS[vpkCategory] || []).includes(fineTag)) setFineTag(null);
   }, [vpkCategory, fineTag]);
 
-  const combinedCategoryKey = useMemo(() => `${category}-${vpkCategory || 'all'}-${fineTag || 'all'}-${enabledFilter}-${conflictFilter}-${dupFilter ? 'dup' : 'all'}`, [category, vpkCategory, fineTag, enabledFilter, conflictFilter, dupFilter]);
+  const combinedCategoryKey = useMemo(() => `${category}-${vpkCategory || 'all'}-${fineTag || 'all'}-${enabledFilter}-${conflictFilter}-${dupFilter ? 'dup' : 'all'}-${updateFilter ? 'upd' : 'all'}`, [category, vpkCategory, fineTag, enabledFilter, conflictFilter, dupFilter, updateFilter]);
 
   const enabledCounts = useMemo(() => ({
     enabled: mods.filter((m) => m.enabled).length,
@@ -396,6 +425,10 @@ export function MyModsPage() {
       list = list.filter((m) => (m.duplicates?.length ?? 0) > 0);
     }
 
+    if (updateFilter) {
+      list = list.filter((m) => updateFor(m)?.update_available);
+    }
+
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(
@@ -426,7 +459,7 @@ export function MyModsPage() {
     }
 
     return list;
-  }, [search, sortBy, mods, category, vpkCategory, fineTag, enabledFilter, conflictFilter, dupFilter]);
+  }, [search, sortBy, mods, category, vpkCategory, fineTag, enabledFilter, conflictFilter, dupFilter, updateFilter, updateFor]);
 
   const handleCardClick = (e: React.MouseEvent, mod: ModData) => {
     const modName = mod.name;
@@ -576,7 +609,8 @@ export function MyModsPage() {
     (fineTag ? 1 : 0) +
     (enabledFilter !== 'all' ? 1 : 0) +
     (conflictFilter !== 'all' ? 1 : 0) +
-    (dupFilter ? 1 : 0);
+    (dupFilter ? 1 : 0) +
+    (updateFilter ? 1 : 0);
 
   const resetFilters = useCallback(() => {
     setVpkCategory(null);
@@ -584,6 +618,7 @@ export function MyModsPage() {
     setEnabledFilter('all');
     setConflictFilter('all');
     setDupFilter(false);
+    setUpdateFilter(false);
   }, []);
 
   return (
@@ -627,6 +662,37 @@ export function MyModsPage() {
             </button>
           </div>
           <div className="filter-panel__summary">
+            {applyingNow ? (
+              <span
+                className="filter-panel__updating"
+                title={applyingInfo?.current ? `正在更新：${applyingInfo.current}` : '正在更新创意工坊 Mod'}
+              >
+                更新中 {applyingInfo?.done ?? 0}/{applyingInfo?.total ?? 0}
+                {applyingInfo && applyingInfo.pct > 0 ? ` · ${Math.round(applyingInfo.pct)}%` : ''}
+              </span>
+            ) : updateCount > 0 ? (
+              <button
+                className="filter-panel__update-all"
+                onClick={() => applyWorkshopUpdates()}
+                title="重新下载这些创意工坊 Mod 并覆盖本地旧文件（保留启停状态）"
+              >
+                更新全部 {updateCount}
+              </button>
+            ) : null}
+            {(counts.workshop > 0 || updateCount > 0) && (
+              <button
+                className="filter-panel__check"
+                onClick={checkWorkshopUpdates}
+                disabled={!!workshopUpdates?.checking || applyingNow}
+                title={
+                  workshopUpdates?.checked_at
+                    ? `上次检查：${new Date(workshopUpdates.checked_at * 1000).toLocaleString('zh-CN')}`
+                    : '联网查询创意工坊有没有新版本'
+                }
+              >
+                {workshopUpdates?.checking ? '检查中…' : '检查更新'}
+              </button>
+            )}
             <span className="filter-panel__result">
               筛出 <strong>{filtered.length}</strong> / {mods.length}
             </span>
@@ -718,6 +784,18 @@ export function MyModsPage() {
                 {mods.filter((m) => (m.duplicates?.length ?? 0) > 0).length}
               </span>
             </button>
+            {/* 有更新：没查到就整条不出现，免得每台机器上都挂一个 0 */}
+            {(updateCount > 0 || updateFilter) && (
+              <button
+                className={`filter-chip filter-chip--info ${updateFilter ? 'filter-chip--on' : ''}`}
+                onClick={() => setUpdateFilter(!updateFilter)}
+                title="创意工坊里这些 Mod 发了新版本，可以在这里直接更新"
+              >
+                <i className="filter-chip__dot" />
+                有更新
+                <span className="filter-chip__count">{updateCount}</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -851,8 +929,34 @@ export function MyModsPage() {
                     {formatSize(mod.size_bytes)}
                     {viewMode === 'list' && addedLabel ? ` · ${addedLabel}` : ''}
                   </span>
-                  {((mod.duplicates?.length ?? 0) > 0 || mod.forced_enabled_in_game || (mod.tags && mod.tags.length > 0)) && (
+                  {((mod.duplicates?.length ?? 0) > 0 || mod.forced_enabled_in_game || updateFor(mod)?.update_available || (mod.tags && mod.tags.length > 0)) && (
                     <div className="mod-card__tags" title={mod.tags?.join(' / ')}>
+                      {(() => {
+                        const u = updateFor(mod);
+                        if (!u?.update_available) return null;
+                        const fmt = (ts: number) => new Date(ts * 1000).toLocaleDateString('zh-CN');
+                        return (
+                          <button
+                            className="mod-card__update"
+                            disabled={applyingNow}
+                            title={
+                              `创意工坊在 ${fmt(u.remote_time)} 发布了新版，本地是 ${fmt(u.local_time)} 的版本。\n`
+                              + '点击重新下载并覆盖本地 vpk（启停状态不变）。'
+                              + (applyingNow ? '\n（正在更新其它 Mod，稍等片刻）' : '')
+                            }
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              applyWorkshopUpdates([u.workshop_id]);
+                            }}
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="11" height="11">
+                              <path d="M12 3v12M7 10l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
+                              <path d="M4 20h16" strokeLinecap="round" />
+                            </svg>
+                            可更新
+                          </button>
+                        );
+                      })()}
                       {(mod.duplicates?.length ?? 0) > 0 && (() => {
                         const twin = mod.duplicates![0];
                         const src = twin.is_workshop

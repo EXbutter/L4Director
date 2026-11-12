@@ -57,6 +57,9 @@ export function SettingsPage() {
     fetchGpuAccelerationStatus,
     toggleGpuAcceleration,
     exportLogs,
+    workshopUpdates,
+    checkWorkshopUpdates,
+    setWorkshopUpdateSettings,
   } = useStore();
 
   const [inputPath, setInputPath] = useState(addonsPath || '');
@@ -303,6 +306,78 @@ export function SettingsPage() {
                   </button>
                 );
               })}
+            </div>
+          </div>
+        </div>
+
+        {/* 创意工坊更新 Section */}
+        <div className="content-section" style={{ marginBottom: 20 }}>
+          <div className="section-header">
+            <h2>创意工坊更新</h2>
+          </div>
+          <div className="settings-group">
+            <p className="settings-desc">
+              通过 Steam 的公开接口查已订阅条目有没有新版，和本地文件比时间即可判断，
+              不需要登录，也不需要开着 Steam。发现新版后在「我的 Mod」页会标出「可更新」。
+            </p>
+
+            <div className="settings-toggle-row">
+              <div className="settings-toggle-info">
+                <span className="settings-toggle-label">
+                  {workshopUpdates?.auto_check !== false ? '启动时自动检查：已开启' : '启动时自动检查：已关闭'}
+                </span>
+                <span className="settings-toggle-hint">
+                  打开软件后顺带查一次（后台进行，不影响 Mod 列表加载）；
+                  关掉后只能手动点「检查更新」
+                </span>
+              </div>
+              <button
+                className={`settings-toggle-switch ${workshopUpdates?.auto_check !== false ? 'active' : ''}`}
+                onClick={() => setWorkshopUpdateSettings({ auto_check: workshopUpdates?.auto_check === false })}
+              >
+                <span className="settings-toggle-knob" />
+              </button>
+            </div>
+
+            <div className="settings-toggle-row" style={{ marginTop: 12 }}>
+              <div className="settings-toggle-info">
+                <span className="settings-toggle-label">检查间隔</span>
+                <span className="settings-toggle-hint">
+                  距上次检查超过这么久才会自动再查，避免每次开软件都发请求
+                </span>
+              </div>
+              <div className="settings-scale-group">
+                {[3, 6, 12, 24].map((h) => (
+                  <button
+                    key={h}
+                    className={`settings-scale-btn ${Math.round(workshopUpdates?.interval_hours ?? 6) === h ? 'active' : ''}`}
+                    onClick={() => setWorkshopUpdateSettings({ interval_hours: h })}
+                  >
+                    {h} 小时
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="settings-actions" style={{ marginTop: 12 }}>
+              <button
+                className="settings-btn settings-btn--secondary"
+                onClick={checkWorkshopUpdates}
+                disabled={!!workshopUpdates?.checking}
+              >
+                {workshopUpdates?.checking ? '检查中…' : '立即检查'}
+              </button>
+              <div className="settings-current">
+                <span className="settings-current-label">上次检查：</span>
+                <span className="settings-current-path">
+                  {workshopUpdates?.checked_at
+                    ? new Date(workshopUpdates.checked_at * 1000).toLocaleString('zh-CN')
+                    : '还没有检查过'}
+                  {workshopUpdates && workshopUpdates.update_count > 0
+                    ? ` · ${workshopUpdates.update_count} 个可更新`
+                    : ''}
+                </span>
+              </div>
             </div>
           </div>
         </div>
