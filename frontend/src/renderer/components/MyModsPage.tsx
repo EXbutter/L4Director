@@ -1382,7 +1382,9 @@ export function MyModsPage() {
                             {item.enabled ? '已启用' : '已禁用'}
                           </span>
                         </span>
-                        <span className="dup-row__path" title={item.path}>{item.path}</span>
+                        <span className="dup-row__path" title={item.path}>
+                          {'addons\\' + (item.path.split(/[\\/]addons[\\/]/i).pop() || item.path)}
+                        </span>
                       </div>
                       <div className="dup-row__actions">
                         <button

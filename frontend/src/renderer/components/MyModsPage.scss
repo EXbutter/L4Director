@@ -2243,9 +2243,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     opacity: 0.75;
-    // 路径太长，只保留末尾对用户有用的部分
-    direction: rtl;
-    text-align: left;
   }
 
   &__actions {
