@@ -38,7 +38,20 @@ interface Window {
     clearWorkshopCookies: () => Promise<boolean>;
     showContextMenu: (options: any) => Promise<void>;
     onContextMenuClick: (callback: (result: { action: string; modName: string }) => void) => void;
-    importDroppedVpks: (filePaths: string[], addonsPath: string) => Promise<{ success: boolean; count: number; skipped: number; error?: string }>;
+    importDroppedVpks: (filePaths: string[], addonsPath: string) => Promise<{
+      success: boolean;
+      count: number;
+      skipped: number;
+      /** 一并复制进 addons 的封面图数量 */
+      covers: number;
+      /** 内容相同（改过名的同一个 Mod），已跳过 */
+      duplicates: string[];
+      /** 同名但内容不同，未覆盖 */
+      conflicts: string[];
+      /** addons 里原本就存在的重复组（每组两个文件名） */
+      existingDuplicates: string[][];
+      error?: string;
+    }>;
     onBackendInfo: (callback: (info: { port: number }) => void) => void;
     exportLogs: () => Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }>;
     restartBackend: () => Promise<{ ok: boolean; error?: string }>;
