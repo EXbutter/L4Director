@@ -16,8 +16,7 @@ import * as crypto from 'crypto';
 const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif']);
 
 /** addons 目录最多向下看两层：`addons/xxx.vpk` 与 `addons/workshop/<id>/xxx.vpk` */
-const SCAN_DEPTH = 2;
-/** 单次导入的文件数上限，避免用户误拖整个磁盘 */
+const SCAN_DEPTH = 2;/** 单次导入的文件数上限，避免用户误拖整个磁盘 */
 const MAX_IMPORT_FILES = 2000;
 /** 索引已有 vpk 的数量上限 */
 const MAX_INDEXED_VPKS = 5000;
@@ -77,19 +76,42 @@ function collectImportable(
   }
 }
 
-/** 递归收集 addons 里已有的 vpk（含 workshop 子目录） */
-function collectExistingVpks(dir: string, depth: number, out: string[]): void {
-  if (depth < 0 || out.length >= MAX_INDEXED_VPKS) return;
-  let entries: fs.Dirent[];
+/**
+ * 收集「游戏真正会加载」的 vpk：addons 根目录 + addons/workshop（含 <id> 子目录）。
+ *
+ * 必须和后端 `mod_scanner.iter_mod_files` 用同一套规则。以前这里递归了 addons 下
+ * 所有子目录，于是把用户拖进来的暂存文件夹（例如 `addons/整合包2/`）也算成
+ * 「已安装的 Mod」：导入时每个 vpk 都在索引里遇到自己，体积和内容完全一致，
+ * 几十个包全被判为重复跳过 —— 真正需要导入的文件一个都没进来。
+ */
+function collectExistingVpks(addonsPath: string, out: string[]): void {
+  const pushVpksIn = (dir: string): void => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (out.length >= MAX_INDEXED_VPKS) return;
+      if (entry.isFile() && entry.name.toLowerCase().endsWith('.vpk')) {
+        out.push(path.join(dir, entry.name));
+      }
+    }
+  };
+
+  pushVpksIn(addonsPath);
+
+  // addons/workshop/*.vpk 与 addons/workshop/<id>/*.vpk 都是工坊 Mod 的正式位置
+  const workshop = path.join(addonsPath, 'workshop');
+  let items: fs.Dirent[];
   try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
+    items = fs.readdirSync(workshop, { withFileTypes: true });
   } catch {
     return;
   }
-  for (const entry of entries) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) collectExistingVpks(full, depth - 1, out);
-    else if (entry.isFile() && entry.name.toLowerCase().endsWith('.vpk')) out.push(full);
+  for (const item of items) {
+    if (item.isDirectory()) pushVpksIn(path.join(workshop, item.name));
   }
 }
 
@@ -151,7 +173,11 @@ export function importDroppedVpks(filePaths: string[], addonsPath: string): Impo
     // ── 2. 索引现有 vpk，按体积分组 ──
     //     只有体积相同才值得读内容算哈希，导入一个 Mod 不会把整库读一遍。
     const existingVpks: string[] = [];
-    collectExistingVpks(addonsPath, SCAN_DEPTH, existingVpks);
+    collectExistingVpks(addonsPath, existingVpks);
+
+    // 正在导入的源文件不参与「已存在」比对：用户可能把 addons 里的包再拖一次，
+    // 或者拖的就是 workshop 目录里的包，拿它和自己比必然判定「重复」。
+    const sourcePaths = new Set(vpkPaths.map((p) => path.resolve(p).toLowerCase()));
 
     const bySize = new Map<number, string[]>();
     for (const p of existingVpks) {
@@ -212,6 +238,7 @@ export function importDroppedVpks(filePaths: string[], addonsPath: string): Impo
       if (sameSize && sameSize.length > 0) {
         const h = hashOf(src);
         for (const cand of sameSize) {
+          if (sourcePaths.has(path.resolve(cand).toLowerCase())) continue;
           try {
             if (hashOf(cand) === h) {
               dupOf = cand;
@@ -278,7 +305,11 @@ export function importDroppedVpks(filePaths: string[], addonsPath: string): Impo
         addonsPath,
         path.basename(vpkDest, path.extname(vpkDest)) + ext
       );
-      if (fs.existsSync(coverDest)) continue;
+      if (fs.existsSync(coverDest)) {
+        // 封面已经在了（上一轮导入失败时可能只复制了图片）：同样算「找到了封面」
+        result.covers++;
+        continue;
+      }
       try {
         fs.copyFileSync(img, coverDest);
         result.covers++;
