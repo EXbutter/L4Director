@@ -201,7 +201,7 @@ class OfficialIndex:
         if not pak.exists():
             raise FileNotFoundError(f'找不到游戏本体 VPK: {pak}')
         t0 = time.time()
-        tree = vpk_lib.VPK(str(pak), read_header_only=False).tree or {}
+        tree = open_vpk(pak).tree or {}
         entries: dict[str, tuple[int, int]] = {}
         for key, meta in tree.items():
             if not isinstance(key, str) or not key.strip():
@@ -223,9 +223,24 @@ class OfficialIndex:
         return fp
 
 
+def open_vpk(path, read_header_only: bool = False):
+    """打开 VPK；路径表不是合法 UTF-8 时退回 latin-1 再试一次。
+
+    工坊里有不少老 Mod 的资源路径按 GBK/ANSI 写进去（中文贴图名常见），
+    库默认硬解 utf-8 会抛 UnicodeDecodeError，整棵目录树都读不出来 ——
+    冲突、重复、细分标签随之全部失效，界面上只剩一句「解析失败」。
+    latin-1 是字节→字符的一一映射、永不失败，ASCII 部分（models/、
+    materials/ 这些判定真正依赖的目录名）保持原样，足够继续往下算。
+    """
+    try:
+        return vpk_lib.VPK(str(path), read_header_only=read_header_only)
+    except UnicodeDecodeError:
+        return vpk_lib.VPK(str(path), read_header_only=read_header_only, path_enc='latin-1')
+
+
 def read_index(vpk_path: Path) -> dict[str, tuple[int, int]]:
     """只读目录树：返回 {小写路径: (crc32, 总字节)}，不解压任何内容。"""
-    tree = vpk_lib.VPK(str(vpk_path), read_header_only=False).tree or {}
+    tree = open_vpk(vpk_path).tree or {}
     out: dict[str, tuple[int, int]] = {}
     for key, meta in tree.items():
         if not isinstance(key, str) or not key.strip():
