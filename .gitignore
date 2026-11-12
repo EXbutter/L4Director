@@ -14,6 +14,8 @@ backend/get-pip.py
 frontend/dist/
 # 预裁剪的 Electron 发行版（硬链接，随 node_modules 重建）
 frontend/.cache/
+# 打包输出（electron-builder 的 directories.output）
+frontend/out/
 frontend/release/
 frontend/release*/
 dist/
