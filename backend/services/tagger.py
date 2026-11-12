@@ -120,7 +120,8 @@ _ITEM_FINE_RULES = [
     ('除颤器', ('defib',)),
     ('肾上腺素', ('adrenaline', 'adrenalin')),
     ('止痛药', ('pills', 'pain pill')),
-    ('医疗包', ('medkit', 'med kit', 'firstaid', 'first aid', 'healthkit', 'health kit')),
+    ('医疗包', ('medkit', 'med kit', 'firstaidkit', 'first aid kit', 'firstaid',
+                'first aid', 'healthkit', 'health kit')),
 ]
 
 # 生还者/被感染者只在模型与贴图里认名字：HUD 里的 s_panel_coach.vtf 也很像，
@@ -186,6 +187,8 @@ def _features_from_paths(paths) -> Counter:
             f['infected'] += 1
         if p.startswith(('models/items/', 'models/props')):
             f['item'] += 1
+        if p.startswith('materials/models/items/'):
+            f['item_mat'] += 1
 
         # ── 私有目录兜底：按角色/武器代号识别（只看 models/ 下的文件，
         #    否则 HUD 里的 s_panel_coach.vtf 会被当成「教练皮肤」） ──
@@ -272,7 +275,12 @@ def _decide(f: Counter) -> list[str]:
         targets.append('生还者')
     if f['infected']:
         targets.append('被感染者')
-    if not targets and f['item'] >= 3 and f['item'] / n >= 0.5:
+    # 「物品」以前只数 models/items 与 models/props，可真实的医疗包/药丸皮肤
+    # 大部分文件是 materials/models/items/… 的贴图，永远凑不够门槛 —— 于是
+    # 物品类 Mod 一直被当成「皮肤」。这里把道具贴图也算作证据，并把阈值
+    # 改成「至少 2 个道具文件 + 占比 30%」，仍然要求内容主体确实是道具。
+    item_evidence = f['item'] + f['item_mat']
+    if not targets and item_evidence >= 2 and item_evidence / n >= 0.3:
         targets.append('物品')
 
     visual = f['img'] > 0
