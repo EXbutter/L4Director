@@ -2373,6 +2373,39 @@
   }
 }
 
+/* 「缺 addoninfo」：这个包在游戏里不受管 —— 软件里关掉，游戏照样加载。
+   平时是中性偏黄的风险提示，点一下补 addoninfo。 */
+.mod-card__addoninfo {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 2px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  font-family: var(--font-family);
+  border-radius: 6px;
+  border: 1px solid rgba(234, 179, 8, 0.38);
+  background: rgba(234, 179, 8, 0.12);
+  color: #d97706;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+
+  &:hover {
+    background: rgba(234, 179, 8, 0.2);
+    border-color: rgba(234, 179, 8, 0.65);
+  }
+
+  &:active {
+    transform: scale(0.97);
+  }
+
+  svg {
+    flex: none;
+  }
+}
+
 /* 重复安装详情弹窗 */
 .dup-dialog {
   width: 560px;
