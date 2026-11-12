@@ -55,10 +55,6 @@ export interface ModData {
   duplicates?: DuplicateRef[];
   /** content = 两份内容完全一致；version = 标题相同、内容不同（多半是两个版本） */
   duplicate_kind?: 'content' | 'version' | null;
-  /** 游戏强制启用（本地 Mod 的 VPK 里没有 addoninfo.txt）：
-   *  游戏「附加内容」列表里看不到它，addonlist.txt 里的禁用会被改回启用。
-   *  界面上要提示「游戏里关不掉」，否则用户会以为开关坏了。 */
-  forced_enabled_in_game?: boolean;
 }
 
 export interface DuplicateRef {
