@@ -70,7 +70,7 @@ async def _app_lifespan(_app: FastAPI):
 app = FastAPI(
     title="L4D2 Mod Manager API",
     # 版本号统一由 Electron 主进程通过 L4DIRECTOR_APP_VERSION 传入，避免多处写死不一致
-    version=os.environ.get("L4DIRECTOR_APP_VERSION", "1.0.0"),
+    version=os.environ.get("L4DIRECTOR_APP_VERSION", "1.1.0"),
     description="Left 4 Dead 2 Mod Manager Backend",
     lifespan=_app_lifespan,
 )
@@ -135,7 +135,7 @@ _steam_avatar_cache: dict[str, tuple[float, bytes, str]] = {}
 @app.get("/api/health")
 def health_check():
     """健康检查接口"""
-    return {"status": "ok", "version": os.environ.get("L4DIRECTOR_APP_VERSION", "1.0.0")}
+    return {"status": "ok", "version": os.environ.get("L4DIRECTOR_APP_VERSION", "1.1.0")}
 
 
 @app.get("/api/status")
