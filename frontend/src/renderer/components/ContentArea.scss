@@ -157,7 +157,7 @@
 .content-area > .page-content > .content-section,
 .content-area > .content-section,
 .content-area > .toolbar,
-.content-area > .mod-categories {
+.content-area > .filter-panel {
   animation: sectionRise 0.4s var(--ease-soft) backwards;
 }
 
@@ -165,7 +165,7 @@
   animation-delay: 0ms;
 }
 
-.content-area > .mod-categories {
+.content-area > .filter-panel {
   animation-delay: 45ms;
 }
 

@@ -569,6 +569,23 @@ export function MyModsPage() {
     fetchMods();
   };
 
+  // 二级筛选（类型/状态/问题/细分）里生效的项数：>0 时面板右上角才出现「清除筛选」，
+  // 平时不占位置，也让用户一眼看出「现在到底被几个条件卡着」
+  const activeFilterCount =
+    (vpkCategory ? 1 : 0) +
+    (fineTag ? 1 : 0) +
+    (enabledFilter !== 'all' ? 1 : 0) +
+    (conflictFilter !== 'all' ? 1 : 0) +
+    (dupFilter ? 1 : 0);
+
+  const resetFilters = useCallback(() => {
+    setVpkCategory(null);
+    setFineTag(null);
+    setEnabledFilter('all');
+    setConflictFilter('all');
+    setDupFilter(false);
+  }, []);
+
   return (
     <div className="content-area">
       <ToolBar
@@ -582,120 +599,157 @@ export function MyModsPage() {
         onViewModeChange={changeViewMode}
       />
 
-      <div className="mod-categories">
-        <button
-          className={`mod-categories__tab ${category === 'all' ? 'active' : ''}`}
-          onClick={() => setCategory('all')}
-        >
-          全部
-          <span className="mod-categories__count">{mods.length}</span>
-        </button>
-        <button
-          className={`mod-categories__tab ${category === 'custom' ? 'active' : ''}`}
-          onClick={() => setCategory('custom')}
-        >
-          自定义 Mod
-          <span className="mod-categories__count">{counts.custom}</span>
-        </button>
-        <button
-          className={`mod-categories__tab ${category === 'workshop' ? 'active' : ''}`}
-          onClick={() => setCategory('workshop')}
-        >
-          创意工坊 Mod
-          <span className="mod-categories__count">{counts.workshop}</span>
-        </button>
-      </div>
-
-      <div className="vpk-categories">
-        <div className="vpk-categories__left">
-          <button
-            className={`vpk-categories__tab ${!vpkCategory ? 'active' : ''}`}
-            onClick={() => setVpkCategory(null)}
-          >
-            所有类型
-          </button>
-          {VPK_CATEGORIES.map((cat) => (
+      {/* ── 筛选面板 ──
+          以前是「一堆 Tab 顺着排」，类型标签会自己折成两三行、状态标签又贴在右边，
+          折行后同一个维度被切成两段，看起来就是一锅粥。现在按维度分行：
+          来源（主维度，分段控件）／类型／状态·问题／细分，每行左侧固定一个说明标签，
+          同行内的选项各自成组、互不干扰，折行也只会折在组内。 */}
+      <div className="filter-panel">
+        <div className="filter-panel__row filter-panel__row--source">
+          <div className="filter-seg">
             <button
-              key={cat}
-              data-category={cat}
-              className={`vpk-categories__tab ${vpkCategory === cat ? 'active' : ''}`}
-              onClick={() => setVpkCategory(vpkCategory === cat ? null : cat)}
+              className={`filter-seg__item ${category === 'all' ? 'active' : ''}`}
+              onClick={() => setCategory('all')}
             >
-              {cat}
-              {vpkCategoryCounts[cat] > 0 && (
-                <span className="vpk-categories__count">{vpkCategoryCounts[cat]}</span>
-              )}
+              全部<span className="filter-seg__count">{mods.length}</span>
             </button>
-          ))}
-        </div>
-        <div className="vpk-categories__right">
-          <span className="vpk-categories__divider" />
-          <button
-            className={`vpk-categories__tab vpk-categories__tab--enabled ${enabledFilter === 'enabled' ? 'active' : ''}`}
-            onClick={() => setEnabledFilter(enabledFilter === 'enabled' ? 'all' : 'enabled')}
-          >
-            ✅ 已启用
-            <span className="vpk-categories__count">{enabledCounts.enabled}</span>
-          </button>
-          <button
-            className={`vpk-categories__tab vpk-categories__tab--disabled ${enabledFilter === 'disabled' ? 'active' : ''}`}
-            onClick={() => setEnabledFilter(enabledFilter === 'disabled' ? 'all' : 'disabled')}
-          >
-            🚫 已禁用
-            <span className="vpk-categories__count">{enabledCounts.disabled}</span>
-          </button>
-          <span className="vpk-categories__divider" />
-          <button
-            className={`vpk-categories__tab vpk-categories__tab--conflict ${conflictFilter === 'conflict' ? 'active' : ''}`}
-            onClick={() => setConflictFilter(conflictFilter === 'conflict' ? 'all' : 'conflict')}
-          >
-            ⚠️ 冲突
-            <span className="vpk-categories__count">{mods.filter(m => m.enabled && m.conflicts && m.conflicts.length > 0).length}</span>
-          </button>
-          <button
-            className={`vpk-categories__tab vpk-categories__tab--no-conflict ${conflictFilter === 'no-conflict' ? 'active' : ''}`}
-            onClick={() => setConflictFilter(conflictFilter === 'no-conflict' ? 'all' : 'no-conflict')}
-          >
-            ✅ 无冲突
-            <span className="vpk-categories__count">{mods.filter(m => !m.enabled || !m.conflicts || m.conflicts.length === 0).length}</span>
-          </button>
-          <button
-            className={`vpk-categories__tab vpk-categories__tab--dup ${dupFilter ? 'active' : ''}`}
-            onClick={() => setDupFilter(!dupFilter)}
-            title="同一个 Mod 装了多份：工坊订阅了一份，又把同一个 vpk 拖进了 addons"
-          >
-            🧩 重复安装
-            <span className="vpk-categories__count">{mods.filter(m => (m.duplicates?.length ?? 0) > 0).length}</span>
-          </button>
-        </div>
-      </div>
-
-      {/* 二级细分筛选：选中「武器 / 生还者 / 被感染者 / 物品」时才展开 */}
-      {visibleFineOptions.length > 0 && (
-        <div className="vpk-subtags">
-          <span className="vpk-subtags__label">{vpkCategory}细分</span>
-          <button
-            className={`vpk-subtags__tab ${!fineTag ? 'active' : ''}`}
-            onClick={() => setFineTag(null)}
-          >
-            全部
-          </button>
-          {visibleFineOptions.map((tag) => {
-            const n = fineTagCounts[tag] || 0;
-            return (
-              <button
-                key={tag}
-                className={`vpk-subtags__tab ${fineTag === tag ? 'active' : ''}`}
-                onClick={() => setFineTag(fineTag === tag ? null : tag)}
-                title={`${n} 个`}
-              >
-                {tag}
-                {n > 0 && <span className="vpk-subtags__count">{n}</span>}
+            <button
+              className={`filter-seg__item ${category === 'custom' ? 'active' : ''}`}
+              onClick={() => setCategory('custom')}
+            >
+              自定义 Mod<span className="filter-seg__count">{counts.custom}</span>
+            </button>
+            <button
+              className={`filter-seg__item ${category === 'workshop' ? 'active' : ''}`}
+              onClick={() => setCategory('workshop')}
+            >
+              创意工坊 Mod<span className="filter-seg__count">{counts.workshop}</span>
+            </button>
+          </div>
+          <div className="filter-panel__summary">
+            <span className="filter-panel__result">
+              筛出 <strong>{filtered.length}</strong> / {mods.length}
+            </span>
+            {activeFilterCount > 0 && (
+              <button className="filter-panel__clear" onClick={resetFilters} title="清空类型、状态、问题上的筛选">
+                清除筛选
               </button>
-            );
-          })}
+            )}
+          </div>
         </div>
-      )}
+
+        <div className="filter-panel__row">
+          <span className="filter-panel__label">类型</span>
+          <div className="filter-panel__chips">
+            <button
+              className={`filter-chip ${!vpkCategory ? 'filter-chip--on' : ''}`}
+              onClick={() => setVpkCategory(null)}
+            >
+              所有类型
+            </button>
+            {VPK_CATEGORIES.map((cat) => {
+              const n = vpkCategoryCounts[cat] || 0;
+              return (
+                <button
+                  key={cat}
+                  className={`filter-chip ${vpkCategory === cat ? 'filter-chip--on' : ''} ${n === 0 ? 'filter-chip--empty' : ''}`}
+                  onClick={() => setVpkCategory(vpkCategory === cat ? null : cat)}
+                  title={n === 0 ? `没有「${cat}」类型的 Mod` : `${n} 个 Mod`}
+                >
+                  {cat}
+                  {n > 0 && <span className="filter-chip__count">{n}</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="filter-panel__row">
+          <span className="filter-panel__label">状态</span>
+          <div className="filter-panel__chips">
+            <button
+              className={`filter-chip filter-chip--ok ${enabledFilter === 'enabled' ? 'filter-chip--on' : ''}`}
+              onClick={() => setEnabledFilter(enabledFilter === 'enabled' ? 'all' : 'enabled')}
+            >
+              <i className="filter-chip__dot" />
+              已启用
+              <span className="filter-chip__count">{enabledCounts.enabled}</span>
+            </button>
+            <button
+              className={`filter-chip filter-chip--bad ${enabledFilter === 'disabled' ? 'filter-chip--on' : ''}`}
+              onClick={() => setEnabledFilter(enabledFilter === 'disabled' ? 'all' : 'disabled')}
+            >
+              <i className="filter-chip__dot" />
+              已禁用
+              <span className="filter-chip__count">{enabledCounts.disabled}</span>
+            </button>
+          </div>
+          <span className="filter-panel__vsep" />
+          <span className="filter-panel__label filter-panel__label--inline">问题</span>
+          <div className="filter-panel__chips">
+            <button
+              className={`filter-chip filter-chip--warn ${conflictFilter === 'conflict' ? 'filter-chip--on' : ''}`}
+              onClick={() => setConflictFilter(conflictFilter === 'conflict' ? 'all' : 'conflict')}
+            >
+              <i className="filter-chip__dot" />
+              有冲突
+              <span className="filter-chip__count">
+                {mods.filter((m) => m.enabled && m.conflicts && m.conflicts.length > 0).length}
+              </span>
+            </button>
+            <button
+              className={`filter-chip filter-chip--ok ${conflictFilter === 'no-conflict' ? 'filter-chip--on' : ''}`}
+              onClick={() => setConflictFilter(conflictFilter === 'no-conflict' ? 'all' : 'no-conflict')}
+            >
+              <i className="filter-chip__dot" />
+              无冲突
+              <span className="filter-chip__count">
+                {mods.filter((m) => !m.enabled || !m.conflicts || m.conflicts.length === 0).length}
+              </span>
+            </button>
+            <button
+              className={`filter-chip filter-chip--warn ${dupFilter ? 'filter-chip--on' : ''}`}
+              onClick={() => setDupFilter(!dupFilter)}
+              title="同一个 Mod 装了多份：工坊订阅了一份，又把同一个 vpk 拖进了 addons"
+            >
+              <i className="filter-chip__dot" />
+              重复安装
+              <span className="filter-chip__count">
+                {mods.filter((m) => (m.duplicates?.length ?? 0) > 0).length}
+              </span>
+            </button>
+          </div>
+        </div>
+
+        {/* 二级细分：选中「武器 / 生还者 / 被感染者 / 物品」时才展开 */}
+        {visibleFineOptions.length > 0 && (
+          <div className="filter-panel__row filter-panel__row--sub">
+            <span className="filter-panel__label">细分</span>
+            <div className="filter-panel__chips">
+              <button
+                className={`filter-chip filter-chip--sub ${!fineTag ? 'filter-chip--on' : ''}`}
+                onClick={() => setFineTag(null)}
+              >
+                全部
+              </button>
+              {visibleFineOptions.map((tag) => {
+                const n = fineTagCounts[tag] || 0;
+                return (
+                  <button
+                    key={tag}
+                    className={`filter-chip filter-chip--sub ${fineTag === tag ? 'filter-chip--on' : ''}`}
+                    onClick={() => setFineTag(fineTag === tag ? null : tag)}
+                    title={`${n} 个`}
+                  >
+                    {tag}
+                    {n > 0 && <span className="filter-chip__count">{n}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
 
       {scanning && scanProgress && scanProgress.total ? (
         <div className="my-mods-scanning-bar">
