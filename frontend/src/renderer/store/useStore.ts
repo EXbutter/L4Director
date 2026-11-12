@@ -38,6 +38,9 @@ export interface ModData {
   tags: string[];
   /** 分类标签是手动设置的吗（true = 手动，可通过右键「恢复自动检测」还原） */
   tags_manual?: boolean;
+  /** 本地 Mod 的 VPK 里没有 addoninfo.txt：游戏不收录它，addonlist.txt 里写 "0"
+   *  也会被游戏改回 "1" —— 界面提示风险，并提供「补 addoninfo」修复。 */
+  missing_addoninfo?: boolean;
   thumbnail_url: string | null;
   vpk_title: string | null;
   conflicts: string[];
@@ -241,6 +244,8 @@ interface AppState {
   setAddonsPath: (path: string) => Promise<boolean>;
   autoDetectPath: () => Promise<void>;
   toggleMod: (modName: string, path?: string) => Promise<void>;
+  /** 给缺 addoninfo.txt 的本地 Mod 补一份（会重写该 vpk，重建后逐条目校验）。 */
+  addAddoninfo: (modName: string, path?: string) => Promise<boolean>;
   deleteMod: (modName: string, path?: string) => Promise<void>;
   refreshAll: () => Promise<void>;
   setBackground: (bg: Partial<BackgroundSettings>) => boolean;
@@ -1604,6 +1609,38 @@ export const useStore = create<AppState>((set, get) => ({
       rollback();
       set({ error: '切换 Mod 状态失败' });
       showToast('切换 Mod 状态失败：无法连接到后端服务', 'error');
+    }
+  },
+
+  addAddoninfo: async (modName: string, path?: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/mods/addoninfo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: modName, path }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        showToast(`${(data && data.detail) || '补 addoninfo 失败'}`, 'error');
+        return false;
+      }
+      // 后端返回重打包后重新解析出的 Mod（标题/封面可能都变了），按路径精确覆盖那一条
+      const fresh = data && (data.mod as ModData | null);
+      if (fresh && fresh.path) {
+        set((state) => ({
+          mods: state.mods.map((m) => (m.path === fresh.path ? { ...m, ...fresh, duplicates: m.duplicates, duplicate_kind: m.duplicate_kind } : m)),
+        }));
+      }
+      showToast(
+        data && data.status === 'already'
+          ? '这个包本来就有 addoninfo.txt'
+          : '已补上 addoninfo.txt，现在可以真正关掉它了（进游戏确认一下）',
+        'success'
+      );
+      return true;
+    } catch {
+      showToast('补 addoninfo 失败：无法连接到后端服务', 'error');
+      return false;
     }
   },
 

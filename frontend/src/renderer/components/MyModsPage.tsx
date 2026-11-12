@@ -5,6 +5,7 @@ import { useStore, getApiBase, ModData, ConflictDetail, WorkshopUpdateItem } fro
 import { ToolBar } from './ToolBar';
 import { ThumbImage } from './ThumbImage';
 import { ModSwitch } from './ModSwitch';
+import { showToast } from './Toast';
 import './ContentArea.scss';
 import './MyModsPage.scss';
 
@@ -226,7 +227,7 @@ const isPickableTag = (tag: string) =>
   (VPK_CATEGORIES as readonly string[]).includes(tag) || isFineTag(tag);
 
 export function MyModsPage() {
-  const { mods, packs, fetchMods, refreshAll, loading, scanning, scanProgress, toggleMod, addModToPack, addModsToPack, setContextMenu, contextMenu, deleteMod, deleteConfirmMod, setDeleteConfirmMod, confirmDeleteMod, renameModDisplayName, getModDisplayName, setModCategory, setModTags, workshopUpdates, checkWorkshopUpdates, applyWorkshopUpdates } = useStore();
+  const { mods, packs, fetchMods, refreshAll, loading, scanning, scanProgress, toggleMod, addAddoninfo, addModToPack, addModsToPack, setContextMenu, contextMenu, deleteMod, deleteConfirmMod, setDeleteConfirmMod, confirmDeleteMod, renameModDisplayName, getModDisplayName, setModCategory, setModTags, workshopUpdates, checkWorkshopUpdates, applyWorkshopUpdates } = useStore();
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('name-asc');
   // 排版：卡片墙 / 单列列表（记在 localStorage，重启后保持上次选择）
@@ -461,6 +462,30 @@ export function MyModsPage() {
     return list;
   }, [search, sortBy, mods, category, vpkCategory, fineTag, enabledFilter, conflictFilter, dupFilter, updateFilter, updateFor]);
 
+  /** 关掉一个「缺 addoninfo.txt」的 Mod 时先把风险说清楚：游戏那边多半不会跟着关。 */
+  const warnIfUnmanageable = (mod: ModData) => {
+    if (!mod.missing_addoninfo || !mod.enabled) return;
+    showToast(
+      `「${getModTitle(mod, getModDisplayName(mod.name))}」缺 addoninfo.txt：软件里关掉了，游戏仍可能继续加载它。点卡片上的「补 addoninfo」可修复。`,
+      'warning'
+    );
+  };
+
+  /** 给这个包补 addoninfo.txt（会重写 vpk，先征求同意）。 */
+  const handleFixAddoninfo = async (e: React.MouseEvent, mod: ModData) => {
+    e.stopPropagation();
+    const title = getModTitle(mod, getModDisplayName(mod.name));
+    const ok = window.confirm(
+      `给「${title}」补一份 addoninfo.txt？\n\n`
+      + '这个 VPK 里没有 addoninfo.txt，游戏不会把它当作可管理的附加内容 —— '
+      + '在软件里关掉后，游戏仍会加载它。补上之后游戏才能在「附加内容」里看到并真正关掉。\n\n'
+      + `文件：${mod.path}\n\n`
+      + '注意：这会重建这个 VPK（先在临时文件里写好、逐条目校验一致后才替换原文件）。'
+    );
+    if (!ok) return;
+    await addAddoninfo(mod.name, mod.path);
+  };
+
   const handleCardClick = (e: React.MouseEvent, mod: ModData) => {
     const modName = mod.name;
     if (e.ctrlKey || e.metaKey) {
@@ -479,6 +504,7 @@ export function MyModsPage() {
       if (selectedMods.size > 0) {
         setSelectedMods(new Set());
       }
+      warnIfUnmanageable(mod);
       // 带上路径：同名副本（addons 根 + workshop）不能都按文件名去改
       toggleMod(modName, mod.path);
     }
@@ -913,7 +939,10 @@ export function MyModsPage() {
                       <ModSwitch
                         enabled={enabled}
                         conflict={hasConflicts}
-                        onToggle={() => toggleMod(mod.name, mod.path)}
+                        onToggle={() => {
+                          warnIfUnmanageable(mod);
+                          void toggleMod(mod.name, mod.path);
+                        }}
                       />
                     ) : (
                       <span className={`mod-card__status ${hasConflicts ? 'mod-card__status--conflict' : (enabled ? 'mod-card__status--enabled' : 'mod-card__status--disabled')}`}>
@@ -929,8 +958,25 @@ export function MyModsPage() {
                     {formatSize(mod.size_bytes)}
                     {viewMode === 'list' && addedLabel ? ` · ${addedLabel}` : ''}
                   </span>
-                  {((mod.duplicates?.length ?? 0) > 0 || updateFor(mod)?.update_available || (mod.tags && mod.tags.length > 0)) && (
+                  {((mod.duplicates?.length ?? 0) > 0 || mod.missing_addoninfo || updateFor(mod)?.update_available || (mod.tags && mod.tags.length > 0)) && (
                     <div className="mod-card__tags" title={mod.tags?.join(' / ')}>
+                      {mod.missing_addoninfo && (
+                        <button
+                          className="mod-card__addoninfo"
+                          title={
+                            '这个 VPK 里没有 addoninfo.txt：游戏的「附加内容」列表里看不到它，\n'
+                            + '保存 addonlist.txt 时还会把它的条目写回 "1" —— 在软件里关掉，游戏里照样加载。\n'
+                            + '点击给它补一份 addoninfo.txt（会重建这个 vpk）。'
+                          }
+                          onClick={(e) => void handleFixAddoninfo(e, mod)}
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="11" height="11">
+                            <path d="M12 9v4M12 17v0" strokeLinecap="round" />
+                            <path d="M10.3 3.9 2.4 17.6a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+                          </svg>
+                          缺 addoninfo
+                        </button>
+                      )}
                       {(() => {
                         const u = updateFor(mod);
                         if (!u?.update_available) return null;

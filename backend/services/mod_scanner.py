@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import vpk as vpk_lib
 
 from . import tagger
+from . import vpk_repair
 from .conflict_engine import (
     META_FILES,
     OfficialIndex,
@@ -91,6 +92,9 @@ class ModInfo:
     duplicate_kind: Optional[str] = None
     # 分类标签是用户手动设置的吗（true = 手动，可通过右键「恢复自动检测」还原）
     tags_manual: bool = False
+    # 本地 Mod 的 VPK 里没有 addoninfo.txt → 游戏不收录它，addonlist.txt 里写 "0"
+    # 会被游戏改回 "1"（「附加内容」里也看不到）。界面据此提示风险并提供「补 addoninfo」。
+    missing_addoninfo: bool = False
 
 
 _VPK_COVER_NAMES = [
@@ -720,6 +724,38 @@ def _get_manifest(path: Path) -> set[str]:
     _VPK_MANIFEST_CACHE[path_str] = manifest
     _save_manifest_to_disk(cache_key, manifest)
     return manifest
+
+
+def _has_addoninfo(path: Path) -> Optional[bool]:
+    """VPK 里是否带 addoninfo.txt。读不出目录树时返回 None（未知，不据此报警）。
+
+    这个文件决定了 L4D2 认不认这个 Mod：本地（addons 根目录）Mod 若缺它，
+    游戏「附加内容」列表里不会出现，保存 addonlist.txt 时还会把它的条目
+    无条件写回 "1" —— 软件里点的「禁用」在游戏里不生效。
+    这里只做「告知 + 提供修复入口」，不再据此改写启停行为（见 inject_addoninfo）。
+    """
+    try:
+        manifest = _get_manifest(path)
+    except Exception:
+        return None
+    if not manifest:
+        return None
+    return any(e.rsplit('/', 1)[-1].lower() == 'addoninfo.txt' for e in manifest)
+
+
+def _forget_vpk_caches(path: Path):
+    """丢掉某个 VPK 的内存缓存（文件被重写之后必须调用）。
+
+    磁盘缓存以「文件名+大小+mtime」为键，文件一改就自然失效；
+    内存里这两张表按路径存，不手动清就会一直返回旧数据。
+    """
+    try:
+        path_str = str(Path(path).resolve())
+    except Exception:
+        return
+    _VPK_MANIFEST_CACHE.pop(path_str, None)
+    _VPK_METADATA_CACHE.pop(path_str, None)
+    _SIDECAR_CACHE.clear()
 
 
 def _get_vpk_data(path: Path) -> dict:
@@ -2478,6 +2514,12 @@ class ModScanner:
             if sidecar is not None:
                 thumbnail_url = f'/api/thumbnail?path={quote(str(sidecar.resolve()))}'
             
+            # 「缺 addoninfo.txt」只对本地产包判定：工坊目录里的包由 Steam 侧记录元数据，
+            # 少了这个文件也不会被游戏强行启用（历史数据里 11 个工坊包缺它但表现正常）。
+            missing_addoninfo = False
+            if not is_workshop:
+                missing_addoninfo = _has_addoninfo(file_path) is False
+
             return ModInfo(
                 name=name, display_name=display_name,
                 path=str(file_path.resolve()),
@@ -2492,10 +2534,53 @@ class ModScanner:
                 version=metadata.get('version'),
                 category=(category_tags[0] if category_tags else None),
                 tags_manual=tags_are_manual,
+                missing_addoninfo=missing_addoninfo,
             )
         except Exception as e:
             print(f"[VPK] Error {file_path.name}: {e}")
             return None
+
+    def add_addoninfo(self, mod_name: str, path_hint: Optional[str] = None) -> dict:
+        """给某个本地 Mod 的 VPK 补一份 addoninfo.txt。
+
+        用户点卡片上的「缺 addoninfo」提示时调用。补上之后游戏才会把它列进
+        「附加内容」，addonlist.txt 里的 "0" 也才真正生效。
+
+        只处理本地包：工坊包归 Steam 管，重打包会在下次更新时被覆盖，
+        而且工坊包本来就受 Steam 侧元数据保护，没有这个问题。
+        """
+        if not self._addons_path:
+            raise RuntimeError('还没设置 Addons 目录')
+        found = self._resolve_path_hint(path_hint) or self.find_mod_file(mod_name)
+        if not found:
+            raise RuntimeError('找不到这个 Mod 的文件，可能已被移动或删除')
+        file_path, is_workshop = found
+
+        if is_workshop:
+            raise RuntimeError('创意工坊的 Mod 不能改写：工坊包由 Steam 管理，重打包会在下次更新时被覆盖')
+        state = _has_addoninfo(file_path)
+        if state is True:
+            return {'status': 'already', 'mod': None}
+
+        metadata = {}
+        try:
+            metadata = _get_vpk_data(file_path) or {}
+        except Exception:
+            metadata = {}
+
+        result = vpk_repair.inject_addoninfo(
+            file_path,
+            title=metadata.get('vpk_title') or metadata.get('display_name') or file_path.stem,
+            author=metadata.get('author') or '',
+            description=metadata.get('description') or '',
+        )
+        # 文件被重写：内存缓存必须丢，否则界面还是旧的「缺 addoninfo」
+        _forget_vpk_caches(file_path)
+
+        addonlist = self._read_addonlist()
+        mod = self._parse_vpk_fast(file_path, addonlist, is_workshop, None)
+        print(f"[Repair] addoninfo.txt injected into {file_path.name} ({result.get('status')})")
+        return {'status': result.get('status', 'ok'), 'mod': vars(mod) if mod else None}
 
     def toggle_mod(self, mod_name: str, enable: Optional[bool] = None,
                    path_hint: Optional[str] = None) -> Optional[ModInfo]:

@@ -273,6 +273,28 @@ def toggle_mod(mod_name: str, path: Optional[str] = None):
     return vars(result)
 
 
+@app.post("/api/mods/addoninfo")
+def add_addoninfo(data: dict):
+    """给本地 Mod 的 VPK 补一份 addoninfo.txt（用户点卡片上的提示时调用）。
+
+    没有这个文件的包不会被游戏列为「附加内容」，addonlist.txt 里写 "0" 也会被
+    游戏改回 "1" —— 也就是软件里关掉、游戏里照样加载。补上之后才真正可控。
+    注意：这会重写 vpk 文件（内部先写临时包、逐条目校验、最后原子替换）。
+    """
+    from urllib.parse import unquote
+    name = unquote(str(data.get("name") or ""))
+    path = data.get("path")
+    if not name:
+        raise HTTPException(status_code=400, detail="缺少 Mod 名称")
+    try:
+        return scanner.add_addoninfo(name, path_hint=unquote(path) if path else None)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        # 重建失败/拒绝改写（非 ASCII 路径、包已被占用等）：原文件没动过，如实告知
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.delete("/api/mods/{mod_name}")
 def delete_mod(mod_name: str, path: Optional[str] = None):
     """删除 Mod 文件（`path` 用于在同名副本之间精确指定删哪一个）"""
