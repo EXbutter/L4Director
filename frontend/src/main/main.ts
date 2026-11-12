@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { spawn, ChildProcess } from 'child_process';
 import { createZip, ZipEntry } from './zip';
+import { importDroppedVpks } from './vpkImport';
 
 let mainWindow: BrowserWindow | null = null;
 let backendProcess: ChildProcess | null = null;
@@ -416,47 +417,9 @@ function createWindow() {
   // ========================================
 
   // ============ 拖放导入 .vpk 文件 IPC ============
+  // 实现在 vpkImport.ts：复制 vpk 的同时带上同名封面图，并按内容哈希拦掉重复 Mod。
   ipcMain.handle('file:importDroppedVpks', async (_event, filePaths: string[], addonsPath: string) => {
-    try {
-      // Validate addons path
-      if (!addonsPath || !fs.existsSync(addonsPath)) {
-        return { success: false, count: 0, skipped: 0, error: 'addons 路径无效' };
-      }
-
-      let copied = 0;
-      let skipped = 0;
-
-      for (const filePath of filePaths) {
-        const fileName = path.basename(filePath);
-        
-        // Only copy .vpk files
-        if (!fileName.toLowerCase().endsWith('.vpk')) {
-          skipped++;
-          console.log(`[Import] Skipped non-vpk file: ${fileName}`);
-          continue;
-        }
-
-        const destPath = path.join(addonsPath, fileName);
-
-        // Skip if already exists
-        if (fs.existsSync(destPath)) {
-          console.log(`[Import] File already exists: ${fileName}`);
-          skipped++;
-          continue;
-        }
-
-        // Copy the file
-        fs.copyFileSync(filePath, destPath);
-        copied++;
-        console.log(`[Import] Copied: ${fileName} -> ${destPath}`);
-      }
-
-      console.log(`[Import] Done: ${copied} copied, ${skipped} skipped`);
-      return { success: true, count: copied, skipped };
-    } catch (e: any) {
-      console.error('[Import] Error:', e);
-      return { success: false, count: 0, skipped: 0, error: e.message };
-    }
+    return importDroppedVpks(filePaths, addonsPath);
   });
   // ========================================
 

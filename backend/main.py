@@ -28,7 +28,9 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, FileResponse, StreamingResponse
-from services.mod_scanner import ModScanner, _CACHE_DIR, get_last_scan_perf
+from services.mod_scanner import (
+    ModScanner, _CACHE_DIR, get_last_scan_perf, invalidate_sidecar_cache,
+)
 from services.data_store import (
     get_packs, add_pack, delete_pack, rename_pack,
     add_mod_to_pack, remove_mod_from_pack,
@@ -153,6 +155,19 @@ def list_mods():
         "count": len(mods),
         "mods": [vars(m) for m in mods]
     }
+
+
+@app.post("/api/mods/refresh-covers")
+def refresh_covers():
+    """清掉「同名封面图」的查找缓存。
+
+    拖放导入时会把与 .vpk 同名的封面图片一起复制进 addons 目录。
+    `_find_sidecar_thumbnail` 为了少 stat 几次带了 3 秒 TTL，导入后立刻
+    重新扫描时会命中「之前没有封面」的旧结果，卡片要等一会儿才出图。
+    导入成功后由渲染进程调用这个接口，下次扫描就能立刻识别新图片。
+    """
+    invalidate_sidecar_cache()
+    return {"ok": True}
 
 
 @app.get("/api/mods/stream")

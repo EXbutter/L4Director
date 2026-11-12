@@ -141,6 +141,17 @@ _SIDECAR_CACHE: dict = {}
 _SIDECAR_CACHE_TTL = 3.0
 
 
+def invalidate_sidecar_cache() -> None:
+    """丢弃「同名封面图」的查找缓存。
+
+    导入 .vpk 时会把同名图片一起复制进 addons 目录。如果这张图是在
+    `_SIDECAR_CACHE_TTL` 内被查过一次（结果为空），随后的扫描仍会拿到
+    旧的「没有封面」结论，卡片要等好几秒才显示图片。导入完成后主动
+    调用这里清一次，扫描立刻就能认出新图片。
+    """
+    _SIDECAR_CACHE.clear()
+
+
 def _normalize_mod_key(name: str) -> str:
     """把 mod 名归一化成可比较的 key，容忍历史数据里的各种写法差异：
 
