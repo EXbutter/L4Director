@@ -2,6 +2,7 @@
 Zero external dependencies, uses Python standard library only."""
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -93,6 +94,60 @@ def _get_default_data() -> dict:
     return asdict(AppData())
 
 
+# 上一次「配置文件损坏被隔离」的记录。供 /api/status 汇报给界面，
+# 让用户知道自己的合辑/自定义名没有被静默清空，而是留在旁边的备份里。
+_last_recovery: Optional[dict] = None
+
+
+def get_last_recovery() -> Optional[dict]:
+    """最近一次因为配置文件损坏而回落到默认值的记录（没有则为 None）。"""
+    return dict(_last_recovery) if _last_recovery else None
+
+
+def _quarantine_corrupt_data(reason: str) -> Optional[str]:
+    """把损坏的 data.json 改名留档，返回备份路径。
+
+    以前解析失败直接回落默认值，紧接着任何一次写盘（改个分类、勾一个 Mod）
+    就会拿默认值把原文件 replace 掉 —— 用户的合辑、自定义名称、标签全没，且毫无提示。
+    现在先把原文件挪到 data.json.corrupt-<时间戳>，至少还能手工捞回来。
+    """
+    global _last_recovery
+
+    stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+    target = _DATA_FILE.with_name(f'{_DATA_FILE.name}.corrupt-{stamp}')
+    # 同一秒内连着损坏两次时不要互相覆盖（时间戳精度只有秒）
+    if target.exists():
+        for i in range(2, 100):
+            candidate = _DATA_FILE.with_name(f'{_DATA_FILE.name}.corrupt-{stamp}-{i}')
+            if not candidate.exists():
+                target = candidate
+                break
+    moved = True
+    try:
+        _DATA_FILE.replace(target)
+    except OSError:
+        # 改名失败（被杀软/编辑器占用、权限不足）：退化成复制，原文件先不动
+        moved = False
+        try:
+            target.write_bytes(_DATA_FILE.read_bytes())
+        except OSError:
+            target = None  # type: ignore[assignment]
+
+    _last_recovery = {
+        'backup': str(target) if target else None,
+        'reason': reason,
+        'at': datetime.now().isoformat(),
+        'moved': moved,
+    }
+    if target is not None:
+        try:
+            with open(_CACHE_DIR / 'recovery.log', 'a', encoding='utf-8') as fh:
+                fh.write(f"[{_last_recovery['at']}] {reason} -> {target}\n")
+        except OSError:
+            pass
+    return str(target) if target else None
+
+
 def _read_data_raw() -> dict:
     """Read raw data from disk."""
     global _cache, _cache_timestamp
@@ -102,16 +157,29 @@ def _read_data_raw() -> dict:
         return _cache
 
     if _DATA_FILE.exists():
+        raw_text: Optional[str] = None
         try:
-            data = json.loads(_DATA_FILE.read_text(encoding='utf-8'))
-            # Version migration if needed
-            if data.get('version', 0) < 2:
-                data = _migrate_v1_to_v2(data)
-            _cache = data
-            _cache_timestamp = now
-            return data
-        except (json.JSONDecodeError, OSError):
-            pass
+            raw_text = _DATA_FILE.read_text(encoding='utf-8')
+        except OSError:
+            # 读不到（被占用 / 权限）：先用默认值顶上，但**不要**碰原文件
+            raw_text = None
+
+        if raw_text is not None:
+            data = None
+            try:
+                data = json.loads(raw_text)
+            except json.JSONDecodeError as exc:
+                _quarantine_corrupt_data(f'JSON 解析失败：{exc}')
+            if isinstance(data, dict):
+                # Version migration if needed
+                if data.get('version', 0) < 2:
+                    data = _migrate_v1_to_v2(data)
+                _cache = data
+                _cache_timestamp = now
+                return data
+            if data is not None:
+                # 合法 JSON 但不是对象（例如被写成了数组/字符串）
+                _quarantine_corrupt_data(f'顶层不是对象：{type(data).__name__}')
 
     # File doesn't exist or corrupt
     default = _get_default_data()
@@ -126,12 +194,15 @@ def _write_data_raw(data: dict):
 
     _DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-    # Atomic write: write to temp file, then rename
+    # Atomic write: write to temp file, fsync, then rename.
+    # 少了 fsync 的话数据只是交给 OS 的写缓存，rename 一旦先落盘而内容还没落，
+    # 断电后 data.json 会是 0 字节 —— 下次启动就按「损坏」处理了。
     tmp_file = _DATA_FILE.with_suffix('.tmp')
-    tmp_file.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2, default=str),
-        encoding='utf-8'
-    )
+    payload = json.dumps(data, ensure_ascii=False, indent=2, default=str)
+    with open(tmp_file, 'w', encoding='utf-8') as fh:
+        fh.write(payload)
+        fh.flush()
+        os.fsync(fh.fileno())
     tmp_file.replace(_DATA_FILE)
 
     _cache = data
@@ -294,14 +365,33 @@ def save_packs(packs: list[PackData]):
         _write_data_raw(data)
 
 
-def add_pack(name: str) -> PackData:
-    """Create a new pack."""
+def add_pack(name: str, mod_ids: Optional[list[str]] = None) -> PackData:
+    """Create a new pack, optionally with initial members.
+
+    「把已启用的 Mod 一键导入新整合包」走这条路：先建空包再发一次 PUT 会多一次
+    读写盘，中途失败还会留下一个空包。
+    """
     packs = get_packs()
     now = datetime.now().isoformat()
+
+    seen: set[str] = set()
+    members: list[str] = []
+    for raw in (mod_ids or []):
+        mod_id = str(raw or '').strip()
+        if mod_id and mod_id not in seen:
+            seen.add(mod_id)
+            members.append(mod_id)
+
+    # 毫秒时间戳做 id，同一毫秒内连续创建会撞号（撞了后面那个包就再也选不中）
+    pack_id = str(int(time.time() * 1000))
+    existing_ids = {p.id for p in packs}
+    while pack_id in existing_ids:
+        pack_id = str(int(pack_id) + 1)
+
     new_pack = PackData(
-        id=str(int(time.time() * 1000)),
+        id=pack_id,
         name=name,
-        mod_ids=[],
+        mod_ids=members,
         created_at=now,
         updated_at=now,
     )

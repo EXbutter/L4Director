@@ -160,6 +160,10 @@ export function PacksPage() {
   const [packStatusFilter, setPackStatusFilter] = useState<'all' | 'enabled' | 'disabled' | 'conflict'>('all');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newPackName, setNewPackName] = useState('');
+  // 「把已启用的 Mod 一键导入新整合包」
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importPackName, setImportPackName] = useState('');
+  const [importing, setImporting] = useState(false);
   const [renamePackId, setRenamePackId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [deleteConfirmPackId, setDeleteConfirmPackId] = useState<string | null>(null);
@@ -216,6 +220,47 @@ export function PacksPage() {
       createPack(newPackName.trim());
       setNewPackName('');
       setShowCreateModal(false);
+    }
+  };
+
+  // 当前已启用的 Mod：一键导入的取材范围。
+  // 只认 enabled，不看筛选/搜索 —— 那是「我的 Mod」页面的浏览状态，与整合包无关。
+  const enabledMods = useMemo(() => mods.filter((m) => m.enabled), [mods]);
+
+  const openImportModal = () => {
+    if (enabledMods.length === 0) {
+      showToast('当前没有已启用的 Mod，去「我的 Mod」里先启用一些', 'warning');
+      return;
+    }
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    setImportPackName(`已启用 Mod ${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+    setShowImportModal(true);
+  };
+
+  const handleImportEnabled = async () => {
+    const name = importPackName.trim();
+    if (!name || importing) return;
+    if (enabledMods.length === 0) {
+      showToast('当前没有已启用的 Mod', 'warning');
+      return;
+    }
+    setImporting(true);
+    try {
+      // 一次请求就把成员写进去：先建空包再补一次 PUT 会多一次读写盘，
+      // 中途失败还会留下一个「名字有了但里面是空的」整合包
+      const created = await createPack(name, enabledMods.map((m) => m.name));
+      if (!created) {
+        showToast('创建整合包失败', 'error');
+        return;
+      }
+      setShowImportModal(false);
+      setImportPackName('');
+      showToast(`已创建「${created.name}」，包含 ${created.modNames.length} 个 Mod`, 'success');
+      // 直接进详情页：省得用户建完之后还要在列表里再找一遍
+      selectPack(created);
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -464,12 +509,33 @@ export function PacksPage() {
       
       <div className="packs-header">
         <h2 className="packs-title">整合包列表</h2>
-        <button className="packs-create-btn" onClick={() => setShowCreateModal(true)}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M12 5v14M5 12h14" />
-          </svg>
-          新建整合包
-        </button>
+        <div className="packs-header__actions">
+          <button
+            className="packs-import-btn"
+            onClick={openImportModal}
+            title={
+              enabledMods.length > 0
+                ? `把当前已启用的 ${enabledMods.length} 个 Mod 归入一个新整合包`
+                : '当前没有已启用的 Mod'
+            }
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" />
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+              <line x1="12" y1="22.08" x2="12" y2="12" />
+            </svg>
+            导入已启用 Mod
+            {enabledMods.length > 0 && (
+              <span className="packs-import-btn__count">{enabledMods.length}</span>
+            )}
+          </button>
+          <button className="packs-create-btn" onClick={() => setShowCreateModal(true)}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            新建整合包
+          </button>
+        </div>
       </div>
 
       {selectedPack ? (
@@ -898,6 +964,51 @@ export function PacksPage() {
                 onClick={handleAddModsConfirm}
               >
                 添加{selectedAddMods.size > 0 ? `（${selectedAddMods.size}）` : ''}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showImportModal && (
+        <div
+          className="modal-overlay"
+          onClick={() => {
+            if (importing) return;
+            setShowImportModal(false);
+          }}
+        >
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3>导入已启用 Mod</h3>
+            <p className="packs-import-hint">
+              将当前已启用的 <strong>{enabledMods.length}</strong> 个 Mod 归入一个新整合包。
+              只做归集，<strong>不会改动</strong>这些 Mod 的启用状态；已禁用的 Mod 不包含在内。
+            </p>
+            <input
+              type="text"
+              className="modal-input"
+              placeholder="输入整合包名称..."
+              value={importPackName}
+              onChange={(e) => setImportPackName(e.target.value)}
+              autoFocus
+              onFocus={(e) => e.target.select()}
+              disabled={importing}
+              onKeyDown={(e) => e.key === 'Enter' && handleImportEnabled()}
+            />
+            <div className="modal-actions">
+              <button
+                className="modal-btn modal-btn-cancel"
+                disabled={importing}
+                onClick={() => setShowImportModal(false)}
+              >
+                取消
+              </button>
+              <button
+                className="modal-btn modal-btn-primary"
+                disabled={!importPackName.trim() || importing}
+                onClick={handleImportEnabled}
+              >
+                {importing ? '创建中…' : `创建（${enabledMods.length} 个 Mod）`}
               </button>
             </div>
           </div>

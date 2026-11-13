@@ -434,6 +434,44 @@
         line-height: 1.4;
       }
     }
+
+    // 有新版本：整块变成可点的提示，右侧一个呼吸的小圆点
+    &--update {
+      cursor: pointer;
+      border-radius: 8px;
+      padding: 2px 6px;
+      margin: -2px -6px;
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
+
+      &:hover {
+        background: color-mix(in srgb, var(--accent) 18%, transparent);
+      }
+
+      .sidebar-version__num {
+        color: var(--accent-text);
+      }
+    }
+
+    &__dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+      animation: sidebarUpdatePulse 2s ease-out infinite;
+    }
+  }
+
+  @keyframes sidebarUpdatePulse {
+    0% {
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 50%, transparent);
+    }
+    70% {
+      box-shadow: 0 0 0 6px transparent;
+    }
+    100% {
+      box-shadow: 0 0 0 0 transparent;
+    }
   }
 
   [data-theme='dark'] & {

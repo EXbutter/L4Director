@@ -1,7 +1,7 @@
 {
   "name": "l4d2-mod-manager",
   "productName": "L4Director",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Left 4 Dead 2 Mod Manager",
   "author": "EXbutter",
   "main": "dist/main/main.js",
@@ -14,12 +14,13 @@
     "build": "npm run build:renderer && npm run build:main",
     "electron:dist": "node ../scripts/prepare-electron-dist.mjs",
     "pack": "npm run build && npm run electron:dist && electron-builder --win portable --config.electronDist=.cache/electron-dist",
-    "dist": "npm run build && npm run electron:dist && electron-builder --win --config.electronDist=.cache/electron-dist",
+    "dist": "npm run build && npm run electron:dist && electron-builder --win --publish never --config.electronDist=.cache/electron-dist",
     "postinstall": "electron-builder install-app-deps",
     "start": "electron .",
     "bench:scan": "..\\.venv\\Scripts\\python.exe ../backend/bench_scan.py",
     "bench:scan:quick": "..\\.venv\\Scripts\\python.exe ../backend/bench_scan.py --quick",
-    "bench:startup": "node ../scripts/bench-startup.mjs"
+    "bench:startup": "node ../scripts/bench-startup.mjs",
+    "release": "npm run build && npm run electron:dist && electron-builder --win --publish always --config.electronDist=.cache/electron-dist"
   },
   "build": {
     "appId": "com.l4d2.l4director",
@@ -68,6 +69,14 @@
       "verifyUpdateCodeSignature": false,
       "signAndEditExecutable": false
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "EXbutter",
+        "repo": "L4Director",
+        "releaseType": "release"
+      }
+    ],
     "nsis": {
       "oneClick": false,
       "perMachine": false,
@@ -75,10 +84,14 @@
       "deleteAppDataOnUninstall": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "L4Director"
+      "shortcutName": "L4Director",
+      "differentialPackage": true
     }
   },
-  "dependencies": {},
+  "dependencies": {
+    "builder-util-runtime": "^9.7.0",
+    "electron-updater": "^6.8.11"
+  },
   "devDependencies": {
     "@types/react": "^18.2.48",
     "@types/react-dom": "^18.2.18",

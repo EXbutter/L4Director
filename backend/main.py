@@ -30,6 +30,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, FileResponse, StreamingResponse
 from services.mod_scanner import (
     ModScanner, _CACHE_DIR, get_last_scan_perf, invalidate_sidecar_cache,
+    cache_stats, cache_gc,
 )
 from services.data_store import (
     get_packs, add_pack, delete_pack, rename_pack,
@@ -39,6 +40,7 @@ from services.data_store import (
     get_scan_manifest,
     get_pending_game_reapply, set_pending_game_reapply,
     get_prefs_dirty, set_prefs_dirty,
+    get_last_recovery,
 )
 from services.workshop_downloader import (
     get_manager as get_download_manager,
@@ -135,7 +137,7 @@ _steam_avatar_cache: dict[str, tuple[float, bytes, str]] = {}
 @app.get("/api/health")
 def health_check():
     """健康检查接口"""
-    return {"status": "ok", "version": os.environ.get("L4DIRECTOR_APP_VERSION", "1.1.0")}
+    return {"status": "ok", "version": os.environ.get("L4DIRECTOR_APP_VERSION", "1.2.0")}
 
 
 @app.get("/api/status")
@@ -151,6 +153,8 @@ def get_status():
         "addons_configured": addons_path is not None,
         # 最近一次扫描的性能数据（耗时/吞吐线索），便于前端展示与排障
         "last_scan_perf": get_last_scan_perf(),
+        # 配置文件曾经损坏、已被隔离留档时带上记录，界面据此提示用户去备份里找回
+        "data_recovery": get_last_recovery(),
     }
 
 
@@ -336,6 +340,29 @@ def get_settings():
     return {
         "addons_path": scanner.get_addons_path(),
     }
+
+
+@app.get("/api/cache/stats")
+def get_cache_stats():
+    """本地缓存体积（封面 / 索引 / 元数据 / 清单），供设置页显示。"""
+    return cache_stats()
+
+
+@app.post("/api/cache/gc")
+def run_cache_gc():
+    """清理孤儿缓存：只删「对应 VPK 已经不存在」的那些文件。
+
+    不传任何参数 —— addons 路径从当前配置取，枚举不到 VPK 时后端会拒绝执行，
+    不会出现「路径填错一次，缓存被清空」的情况。
+    清理后前端会重新拉一次 Mod 列表，避免界面上留着已经被删掉的封面名。
+    """
+    result = cache_gc(scanner.get_addons_path())
+    if result.get('ok'):
+        print(f"[Cache] GC removed {result['removed_files']} files, "
+              f"freed {result['freed_bytes']} bytes")
+    else:
+        print(f"[Cache] GC skipped: {result.get('reason')}")
+    return result
 
 
 @app.post("/api/settings/addons-path")
@@ -873,11 +900,17 @@ def list_packs():
 
 @app.post("/api/packs")
 def create_pack(data: dict):
-    """创建新整合包"""
+    """创建新整合包
+
+    `mod_ids` 可选：创建时直接带上成员，供「把已启用的 Mod 一键导入新整合包」使用。
+    带成员创建只需要一次读写盘，也不会出现「包建好了但 Mod 没进去」的半成品。
+    """
     name = data.get("name", "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="整合包名称不能为空")
-    pack = add_pack(name)
+    raw_mods = data.get("mod_ids")
+    mod_ids = [str(m) for m in raw_mods] if isinstance(raw_mods, list) else None
+    pack = add_pack(name, mod_ids)
     return {
         "status": "ok",
         "pack": {
@@ -1497,6 +1530,15 @@ def workshop_updates_check():
     result = _wsu().start_check(path)
     if not result.get("ok"):
         raise HTTPException(status_code=409, detail=result.get("error") or "检查失败")
+    return result
+
+
+@app.post("/api/workshop-updates/cancel")
+def workshop_updates_cancel():
+    """停止正在进行的检查。已查到的结果照常保留，不用等整轮跑完。"""
+    result = _wsu().cancel_check()
+    if not result.get("ok"):
+        raise HTTPException(status_code=409, detail=result.get("error") or "取消失败")
     return result
 
 

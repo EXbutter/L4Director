@@ -15,9 +15,11 @@ const AddonlistSyncDialog = lazy(() =>
 );
 import { DropOverlay } from './components/DropOverlay';
 import { ToastContainer } from './components/Toast';
+import { PerfOverlay } from './components/PerfOverlay';
 import { ConfirmHost } from './components/ConfirmDialog';
 import { WorkshopUpdateDock } from './components/WorkshopUpdateDock';
 import { useStore, setBackendApiBase } from './store/useStore';
+import { useUpdateStore } from './store/useUpdateStore';
 import { useDraggablePill } from './hooks/useDraggablePill';
 import { applyAccent } from './utils/themeColor';
 import { isCampaignMod } from './utils/modRole';
@@ -458,6 +460,12 @@ function App() {
     deferNonCritical(() => useStore.getState().fetchUiScale());
   }, []);
 
+  // 自动更新：订阅主进程推来的状态。检查本身由主进程在启动 15 秒后自己做，
+  // 这里只是把状态接进界面（有新版本时侧边栏亮小点、设置页显示按钮）。
+  useEffect(() => {
+    useUpdateStore.getState().init();
+  }, []);
+
   // 后端连上（或重连）后拉一次「应用」按钮状态：有未应用的改动时会点亮
   useEffect(() => {
     if (!backendConnected) return;
@@ -864,6 +872,9 @@ function App() {
       </Suspense>
 
       <ToastContainer />
+
+      {/* 帧率诊断浮层（Ctrl+Shift+F）：动图播放的耗时/掉帧是否符合 180fps 预算，靠它读 */}
+      <PerfOverlay />
 
       {/* 应用内二次确认弹窗（替代原生 window.confirm） */}
       <ConfirmHost />

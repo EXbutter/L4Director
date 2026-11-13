@@ -1,0 +1,89 @@
+/* 帧率诊断浮层：固定右下角，不参与布局、不吃鼠标事件（按钮除外）。
+   配色固定为深底白字 —— 它跨主题存在，日间主题下也要能看清。 */
+.perf-hud {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 900;
+  width: 216px;
+  padding: 10px 12px 8px;
+  border-radius: 10px;
+  background: rgba(10, 12, 16, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(10px);
+  color: #e8eaf0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  pointer-events: auto;
+
+  &__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+
+  &__title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: #fff;
+  }
+
+  &__btn {
+    padding: 1px 7px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.06);
+    color: #cfd4e0;
+    font-size: 10px;
+    cursor: pointer;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.14);
+      color: #fff;
+    }
+  }
+
+  &__row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    line-height: 18px;
+  }
+
+  &__label {
+    color: rgba(232, 234, 240, 0.62);
+    white-space: nowrap;
+  }
+
+  &__value {
+    font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+    font-size: 11px;
+    color: #e8eaf0;
+
+    &.is-ok {
+      color: #4ade80;
+    }
+
+    &.is-warn {
+      color: #fbbf24;
+    }
+  }
+
+  &__divider {
+    height: 1px;
+    margin: 6px 0;
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  &__note {
+    margin: 6px 0 0;
+    font-size: 10px;
+    line-height: 1.5;
+    color: rgba(232, 234, 240, 0.5);
+  }
+}

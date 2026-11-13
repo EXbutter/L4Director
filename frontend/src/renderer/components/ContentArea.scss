@@ -210,3 +210,29 @@
 .thumb-img {
   animation: thumbIn 0.32s ease-out both;
 }
+
+/* 缩略图外框：静态首帧与动图 canvas 叠在同一块面积上。
+   两者共存而不是互相替换 —— 替换会让静态图重新挂载、淡入动画再跑一遍，
+   鼠标进出卡片时画面就会闪。 */
+.thumb-frame {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.thumb-frame > img,
+.thumb-frame > canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* canvas 也是替换元素，object-fit 同样生效；它只负责显示，
+   不该挡住卡片自身的 hover / 点击（卡片放大、右键菜单都挂在卡片上） */
+.thumb-frame > canvas {
+  pointer-events: none;
+}

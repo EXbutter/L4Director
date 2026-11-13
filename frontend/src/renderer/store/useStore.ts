@@ -97,6 +97,13 @@ export interface StatusData {
   workshop_count: number;
   game_path: string | null;
   addons_configured: boolean;
+  // 配置文件损坏被隔离留档时的记录（后端 data_store.get_last_recovery）
+  data_recovery?: {
+    backup: string | null;
+    reason: string;
+    at: string;
+    moved: boolean;
+  } | null;
 }
 
 export interface DynamicThemeColors {
@@ -166,6 +173,22 @@ export interface WorkshopUpdateItem {
 export interface WorkshopUpdatesState {
   checked_at: number;
   checking: boolean;
+  /** 上一轮检查是被用户取消的（只在这一刻有用，下一轮开始会重置） */
+  cancelled?: boolean;
+  /**
+   * 检查进度。stage 是后端给的阶段：
+   * scan（枚举本地 VPK）→ query（问 Steam，此时 done/total 有意义）→ compare（比对版本）
+   * 一次查询往往一两秒就跑完，光看数字会以为「瞬间完成」，所以文案要跟着阶段走。
+   */
+  check_progress?: {
+    done: number;
+    total: number;
+    failed: number;
+    stage?: '' | 'scan' | 'query' | 'compare';
+    started_at?: number;
+    batch?: number;
+    batches?: number;
+  };
   last_error: string;
   auto_check: boolean;
   interval_hours: number;
@@ -235,6 +258,8 @@ interface AppState {
   fetchWorkshopUpdates: () => Promise<void>;
   /** 让后端联网检查一遍（后台跑，结果靠轮询回来） */
   checkWorkshopUpdates: () => Promise<void>;
+  /** 叫停正在进行的检查（已查到的结果保留），不用等它跑完 */
+  cancelWorkshopCheck: () => Promise<void>;
   /** 更新指定的工坊 Mod（重新下载覆盖），ids 为空 = 更新全部可更新的 */
   applyWorkshopUpdates: (ids?: string[]) => Promise<void>;
   /** 自动检查开关 / 间隔 */
@@ -270,7 +295,12 @@ interface AppState {
   /** 启动游戏状态轮询（幂等）。延迟随状态自适应：启动中 1.2s / 游戏中 3s / 空闲 10s */
   ensureGameStatusPolling: () => void;
 
-  createPack: (name: string) => void;
+  /**
+   * 新建整合包。`modNames` 可选：创建时直接带上成员（「把已启用 Mod 一键导入」用），
+   * 免得先建空包再补一次请求、中间失败留下一个空包。
+   * 返回新建的包（失败返回 null），调用方可以立刻 selectPack 进去看结果。
+   */
+  createPack: (name: string, modNames?: string[]) => Promise<PackData | null>;
   deletePack: (packId: string) => void;
   renamePack: (packId: string, newName: string) => void;
   addModToPack: (modName: string, packId: string) => void;
@@ -532,6 +562,12 @@ function scheduleGamePoll() {
 }
 
 let workshopPollTimer: ReturnType<typeof setTimeout> | null = null;
+/**
+ * 上一次写进 store 的动态字段签名。
+ * 检查/更新期间 1.2 秒轮询一次，如果每轮都 set()，整个「我的 Mod」页（几百张卡）
+ * 会跟着重渲染 —— 检查期间界面发顿就是这么来的。内容没变就不写。
+ */
+let workshopStateSig = '';
 /** 上一次轮询时「是否正在更新」，用来在跑完的那一刻弹一次结果提示 */
 let workshopApplyingBefore = false;
 /** 上一次轮询时「是否正在检查更新」，同样用来在检查结束那一刻给个结果 */
@@ -547,9 +583,15 @@ let workshopCheckIntent: 'manual' | 'auto' | null = null;
 /**
  * 检查/更新过程中的状态轮询。检查要联网、更新要下载，都可能持续几十秒，
  * 全靠后端状态快照驱动界面；一旦两边都空闲就停表，不留空转的定时器。
+ *
+ * 两件事的节奏不一样：一次检查总共才几秒，1.2 秒轮询基本只能采到「开始」和
+ * 「结束」两帧，中间批次全被跳过（界面看起来就是从 0/88 瞬间完成）；
+ * 而更新是下载，进度本来就是连续变化的，1.2 秒足够，问太勤只是白耗 CPU。
  */
 function scheduleWorkshopUpdatePoll() {
   if (workshopPollTimer) clearTimeout(workshopPollTimer);
+  const st0 = useStore.getState().workshopUpdates;
+  const delay = st0?.checking ? 300 : 1200;
   workshopPollTimer = setTimeout(async () => {
     try {
       await useStore.getState().fetchWorkshopUpdates();
@@ -557,7 +599,7 @@ function scheduleWorkshopUpdatePoll() {
       const st = useStore.getState().workshopUpdates;
       if (st && (st.checking || st.applying.running)) scheduleWorkshopUpdatePoll();
     }
-  }, 1200);
+  }, delay);
 }
 
 /** 把「已运行时长」格式化成 mm:ss / h:mm:ss */
@@ -1487,6 +1529,19 @@ export const useStore = create<AppState>((set, get) => ({
       const res = await fetchWithTimeout(`${API_BASE}/api/status`);
       const data = await res.json();
       set({ status: data, error: null });
+      // 配置文件曾经损坏并被隔离留档：提示一次（按备份路径去重，避免每次启动都弹）
+      const recovery = data?.data_recovery;
+      if (recovery?.backup) {
+        try {
+          const seenKey = 'l4d2-data-recovery-seen';
+          if (localStorage.getItem(seenKey) !== recovery.backup) {
+            localStorage.setItem(seenKey, recovery.backup);
+            showToast(`配置文件损坏，已按默认设置启动。原文件备份在：${recovery.backup}`, 'error');
+          }
+        } catch {
+          // localStorage 不可用时宁可不提示，也不要每次刷新都弹
+        }
+      }
     } catch (e) {
       set({ error: '无法连接到后端服务' });
     }
@@ -1705,18 +1760,34 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  createPack: async (name: string) => {
+  createPack: async (name: string, modNames?: string[]) => {
+    const members = Array.from(new Set((modNames || []).filter(Boolean)));
     try {
       const res = await fetch(`${API_BASE}/api/packs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        // 带成员创建走同一个接口：后端一次读写盘就落好盘，不需要再补一次 PUT
+        body: JSON.stringify(members.length > 0 ? { name, mod_ids: members } : { name }),
       });
-      if (res.ok) {
-        await get().fetchPacks();
-      }
+      if (!res.ok) return null;
+      const data = await res.json();
+      await get().fetchPacks();
+      const createdId = data?.pack?.id;
+      // 以刚拉取的列表为准：后端可能对成员做过去重/裁剪
+      const created =
+        (createdId ? get().packs.find((p) => p.id === createdId) : undefined) ||
+        (data?.pack
+          ? {
+              id: data.pack.id,
+              name: data.pack.name,
+              modNames: (data.pack.mod_ids as string[]) || [],
+              createdAt: data.pack.created_at || new Date().toISOString(),
+            }
+          : null);
+      return created;
     } catch (e) {
       console.error('Failed to create pack:', e);
+      return null;
     }
   },
 
@@ -2098,8 +2169,12 @@ export const useStore = create<AppState>((set, get) => ({
       }
       if (wasChecking && !data.checking) {
         const manual = workshopCheckIntent === 'manual';
-        if (data.last_error) {
-          showToast(`检查更新失败：${data.last_error}`, 'error');
+        if (data.cancelled) {
+          showToast('已取消检查（查到的部分已保留）', 'info');
+        } else if (data.last_error) {
+          // 启动时那次自动检查失败不弹窗（断网的用户每次开软件都会被吓一次），
+          // 失败原因留在设置页和按钮的悬浮提示里，手动检查失败才弹
+          if (manual) showToast(`检查更新失败：${data.last_error}`, 'error');
         } else if (data.update_count > 0) {
           showToast(`检查完成：${data.update_count} 个 Mod 有更新`, 'info');
         } else if (manual) {
@@ -2108,20 +2183,52 @@ export const useStore = create<AppState>((set, get) => ({
         workshopCheckIntent = null;
       }
 
-      set({ workshopUpdates: data });
+      // 只把「会变的东西」拼成签名：签名一样就说明界面无需重画，跳过 set
+      const sig = JSON.stringify([
+        data.checking,
+        data.cancelled,
+        data.check_progress,
+        data.checked_at,
+        data.update_count,
+        data.last_error,
+        data.applying?.running,
+        data.applying?.done,
+        data.applying?.pct,
+        data.items.length,
+      ]);
+      if (sig !== workshopStateSig) {
+        workshopStateSig = sig;
+        set({ workshopUpdates: data });
+      }
       if (data.checking || data.applying?.running) scheduleWorkshopUpdatePoll();
     } catch {
       // 后端不可用：保留上次结果，不打扰用户
     }
   },
-
   checkWorkshopUpdates: async () => {
     try {
       workshopCheckIntent = 'manual';
       workshopCheckingBefore = true;
-      set((s) => (s.workshopUpdates ? { workshopUpdates: { ...s.workshopUpdates, checking: true } } : {}));
+      // 先把本地状态打成「检查中」，按钮立刻有反馈；进度由轮询补上
+      set((s) => (s.workshopUpdates
+        ? {
+            workshopUpdates: {
+              ...s.workshopUpdates,
+              checking: true,
+              cancelled: false,
+              last_error: '',
+              check_progress: { done: 0, total: 0, failed: 0 },
+            },
+          }
+        : {}));
       const res = await fetch(`${API_BASE}/api/workshop-updates/check`, { method: 'POST' });
       if (!res.ok) {
+        // 409 = 后端已经在查（多半是刚启动时它自己那次）：接着看进度，不算失败
+        if (res.status === 409) {
+          await get().fetchWorkshopUpdates();
+          scheduleWorkshopUpdatePoll();
+          return;
+        }
         const d = await res.json().catch(() => ({}));
         showToast(d.detail || '检查更新失败', 'error');
         workshopCheckIntent = null;
@@ -2134,6 +2241,20 @@ export const useStore = create<AppState>((set, get) => ({
       workshopCheckIntent = null;
       workshopCheckingBefore = false;
       showToast('检查更新失败：无法连接到后端服务', 'error');
+    }
+  },
+
+  cancelWorkshopCheck: async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/workshop-updates/cancel`, { method: 'POST' });
+      if (!res.ok) {
+        // 刚好已经跑完 / 本来就没在查：刷新一下状态，别弹错吓人
+        await get().fetchWorkshopUpdates();
+        return;
+      }
+      scheduleWorkshopUpdatePoll();
+    } catch {
+      showToast('无法连接到后端服务', 'error');
     }
   },
 

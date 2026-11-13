@@ -16,6 +16,25 @@ export interface ImportVpkResult {
   error?: string;
 }
 
+/** 自动更新状态（字段与主进程 src/main/updater.ts 的 UpdateState 一一对应） */
+export interface UpdateState {
+  phase: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'up-to-date' | 'error' | 'unsupported';
+  currentVersion: string;
+  version: string;
+  releaseDate: string;
+  releaseNotes: string;
+  percent: number;
+  transferred: number;
+  total: number;
+  bytesPerSecond: number;
+  error: string;
+  checkedAt: number;
+  skipped: boolean;
+  supported: boolean;
+  supportHint: string;
+  portable: boolean;
+}
+
 // Type definitions for exposed API
 interface ElectronAPI {
   minimize: () => void;
@@ -47,6 +66,16 @@ interface ElectronAPI {
   reportPerf: (name: string, payload?: Record<string, any>) => void;
   /** 抓取当前窗口画面（主题切换交叉淡入用），返回 JPEG data URL；失败返回 null */
   captureThemeSnapshot: () => Promise<string | null>;
+  // ---- 自动更新 ----
+  /** 当前更新状态（渲染进程挂载时先取一次，之后靠 onUpdateStatus 推送） */
+  getUpdateState: () => Promise<UpdateState>;
+  checkForUpdates: (manual?: boolean) => Promise<UpdateState>;
+  downloadUpdate: () => Promise<UpdateState>;
+  cancelUpdateDownload: () => Promise<UpdateState>;
+  installUpdate: () => Promise<boolean>;
+  skipUpdateVersion: (version?: string) => Promise<UpdateState>;
+  openReleasesPage: () => Promise<void>;
+  onUpdateStatus: (callback: (state: UpdateState) => void) => void;
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -96,4 +125,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 上报启动性能里程碑（主进程会写入 startup-perf.json 并随导出日志打包）
   reportPerf: (name: string, payload?: Record<string, any>) =>
     ipcRenderer.send('perf:mark', name, payload),
+  // ---- 自动更新 ----
+  getUpdateState: () => ipcRenderer.invoke('update:getState'),
+  checkForUpdates: () => ipcRenderer.invoke('update:check'),
+  downloadUpdate: () => ipcRenderer.invoke('update:download'),
+  cancelUpdateDownload: () => ipcRenderer.invoke('update:cancel'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  skipUpdateVersion: (version?: string) => ipcRenderer.invoke('update:skip', version),
+  openReleasesPage: () => ipcRenderer.invoke('update:openReleases'),
+  onUpdateStatus: (callback: (state: UpdateState) => void) => {
+    ipcRenderer.on('update:status', (_event, state: UpdateState) => callback(state));
+  },
 });
