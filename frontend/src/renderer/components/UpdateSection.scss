@@ -1,0 +1,215 @@
+// 「关于」里的自动更新面板。基调跟设置页一致：平时安静，出事才显眼。
+
+.update-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.update-panel__head {
+  // 版本行原本是独立一行，这里多了一个右对齐的按钮
+  gap: 10px;
+}
+
+.update-panel__spacer {
+  flex: 1;
+}
+
+// ---------------- 按钮 ----------------
+
+.update-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-size: 12px;
+  font-family: var(--font-family);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-standard);
+  white-space: nowrap;
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+
+  &--primary {
+    background: var(--accent);
+    color: var(--on-accent);
+
+    &:hover:not(:disabled) {
+      background: var(--accent-hover);
+    }
+  }
+
+  &--ghost {
+    background: transparent;
+    border-color: var(--border-color);
+    color: var(--text-secondary);
+
+    &:hover:not(:disabled) {
+      border-color: color-mix(in srgb, var(--accent) 45%, var(--border-color));
+      color: var(--accent-text);
+      background: color-mix(in srgb, var(--accent) 8%, transparent);
+    }
+  }
+}
+
+.update-link {
+  background: none;
+  border: none;
+  padding: 0;
+  margin-left: 6px;
+  font-size: 12px;
+  font-family: var(--font-family);
+  color: var(--accent-text);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+
+  &:hover {
+    color: var(--accent-hover);
+  }
+
+  &--muted {
+    margin-left: 0;
+    color: var(--text-muted);
+    text-decoration: none;
+
+    &:hover {
+      color: var(--text-secondary);
+      text-decoration: underline;
+    }
+  }
+}
+
+// ---------------- 状态行 ----------------
+
+.update-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+
+  &__dim {
+    color: var(--text-muted);
+  }
+
+  &--new {
+    color: var(--text-primary);
+
+    strong {
+      color: var(--accent-text);
+      font-weight: 700;
+    }
+  }
+
+  &--ok {
+    color: color-mix(in srgb, #22c55e 80%, var(--text-secondary));
+  }
+
+  &--warn {
+    color: color-mix(in srgb, #ef4444 82%, var(--text-secondary));
+    word-break: break-word;
+
+    // 错误文案很长会把链接挤到下一行，缩进反而显得没对齐
+    .update-link {
+      margin-left: 0;
+    }
+  }
+
+  &--actions {
+    align-items: baseline;
+  }
+}
+
+.update-spinner {
+  width: 12px;
+  height: 12px;
+  margin-right: 4px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-top-color: var(--accent);
+  animation: updateSpin 0.8s linear infinite;
+}
+
+@keyframes updateSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+// ---------------- 下载进度 ----------------
+
+.update-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.update-progress__bar {
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+  overflow: hidden;
+}
+
+.update-progress__fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.2s linear;
+}
+
+.update-progress__meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+// ---------------- 更新说明 ----------------
+
+.update-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+
+  .update-link {
+    margin-left: 0;
+  }
+}
+
+.update-notes__body {
+  width: 100%;
+  max-height: 180px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-family: var(--font-family);
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+// 有新版本时给面板一点边框，让「关于」区一眼能看出状态变了
+.update-panel--pending .update-panel__head {
+  padding: 8px 10px;
+  margin: -8px -10px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}

@@ -30,6 +30,14 @@
   }
 }
 
+// 检查失败的提示：红一点，但别做成弹窗那种强度（它常驻在按钮下面）
+.settings-hint--warn {
+  font-size: 12px;
+  line-height: 1.6;
+  color: color-mix(in srgb, #ef4444 82%, var(--text-secondary));
+  word-break: break-word;
+}
+
 .settings-path-row {
   display: flex;
   gap: 10px;
@@ -517,7 +525,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  // 色卡只剩三档，比原来稍有分量感地铺开，免得右半边一大片空白
+  // 色卡六档（三冷三暖），单行铺开约 900px，窗口再窄会自动换行；
+  // 右侧留白比三档时更少，所以内边距保持紧一点就够
   padding: 8px 18px 8px 10px;
   border: 1px solid var(--border-color);
   border-radius: 999px;

@@ -228,7 +228,7 @@ const isPickableTag = (tag: string) =>
   (VPK_CATEGORIES as readonly string[]).includes(tag) || isFineTag(tag);
 
 export function MyModsPage() {
-  const { mods, packs, fetchMods, refreshAll, loading, scanning, scanProgress, toggleMod, addAddoninfo, addModToPack, addModsToPack, setContextMenu, contextMenu, deleteMod, deleteConfirmMod, setDeleteConfirmMod, confirmDeleteMod, renameModDisplayName, getModDisplayName, setModCategory, setModTags, workshopUpdates, checkWorkshopUpdates, applyWorkshopUpdates } = useStore();
+  const { mods, packs, fetchMods, refreshAll, loading, scanning, scanProgress, toggleMod, addAddoninfo, addModToPack, addModsToPack, setContextMenu, contextMenu, deleteMod, deleteConfirmMod, setDeleteConfirmMod, confirmDeleteMod, renameModDisplayName, getModDisplayName, setModCategory, setModTags, workshopUpdates, checkWorkshopUpdates, cancelWorkshopCheck, applyWorkshopUpdates } = useStore();
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('name-asc');
   // 排版：卡片墙 / 单列列表（记在 localStorage，重启后保持上次选择）
@@ -352,6 +352,20 @@ export function MyModsPage() {
 
   const applyingInfo = workshopUpdates?.applying;
   const applyingNow = !!applyingInfo?.running;
+  const checking = !!workshopUpdates?.checking;
+  const checkProgress = workshopUpdates?.check_progress;
+  // 阶段文案：后端把一次检查拆成 scan → query → compare。只显示数字的话，
+  // 一次两秒的检查在界面上就是「0/88 → 完成」两帧，等于没有进度。
+  const checkLabel = useMemo(() => {
+    if (!checking) return '检查更新';
+    if (!checkProgress || !checkProgress.total) return '扫描本地…';
+    if (checkProgress.stage === 'compare') return '比对版本…';
+    return `检查中 ${checkProgress.done}/${checkProgress.total}`;
+  }, [checking, checkProgress]);
+  const checkBatchHint =
+    checkProgress && checkProgress.batches
+      ? `第 ${Math.max(1, checkProgress.batch || 1)}/${checkProgress.batches} 批`
+      : '';
 
   const vpkCategoryCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -717,18 +731,32 @@ export function MyModsPage() {
               </button>
             ) : null}
             {(counts.workshop > 0 || updateCount > 0) && (
-              <button
-                className="filter-panel__check"
-                onClick={checkWorkshopUpdates}
-                disabled={!!workshopUpdates?.checking || applyingNow}
-                title={
-                  workshopUpdates?.checked_at
-                    ? `上次检查：${new Date(workshopUpdates.checked_at * 1000).toLocaleString('zh-CN')}`
-                    : '联网查询创意工坊有没有新版本'
-                }
-              >
-                {workshopUpdates?.checking ? '检查中…' : '检查更新'}
-              </button>
+              checking ? (
+                // 检查在后台跑，这个按钮立刻变成「取消检查」：随时能停，不占着界面
+                <button
+                  className="filter-panel__check filter-panel__check--busy"
+                  onClick={cancelWorkshopCheck}
+                  title={`${checkLabel}${checkBatchHint ? ` · ${checkBatchHint}` : ''}，点一下立刻停止，已经查到的结果会保留`}
+                >
+                  <span className="filter-panel__check-label">{checkLabel}</span>
+                  <span className="filter-panel__check-cancel">取消</span>
+                </button>
+              ) : (
+                <button
+                  className="filter-panel__check"
+                  onClick={checkWorkshopUpdates}
+                  disabled={applyingNow}
+                  title={
+                    workshopUpdates?.last_error
+                      ? `上次检查没成功：${workshopUpdates.last_error}`
+                      : workshopUpdates?.checked_at
+                        ? `上次检查：${new Date(workshopUpdates.checked_at * 1000).toLocaleString('zh-CN')}`
+                        : '联网查询创意工坊有没有新版本'
+                  }
+                >
+                  检查更新
+                </button>
+              )
             )}
             <span className="filter-panel__result">
               筛出 <strong>{filtered.length}</strong> / {mods.length}

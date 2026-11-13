@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { useStore, getApiBase, formatGameElapsed, Page } from '../store/useStore';
 import { VERSION_LABEL, VERSION_DISPLAY, IS_BETA } from '../utils/appVersion';
+import { useUpdateStore, hasPendingUpdate } from '../store/useUpdateStore';
 import './Sidebar.scss';
 
 const navItems: { page: Page; label: string; icon: JSX.Element }[] = [
@@ -125,6 +126,10 @@ export function Sidebar() {
 
   // 「游戏中」的计时行是否显示（布局变化 → 需要重新对齐导航指示器）
   const showLaunchTimer = elapsedText !== null;
+
+  // 有新版本时版本号旁边点一个小圆点，点一下直接跳去设置页
+  const updateInfo = useUpdateStore((s) => s.info);
+  const hasUpdate = hasPendingUpdate(updateInfo ?? null);
 
   const navRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
@@ -331,10 +336,19 @@ export function Sidebar() {
             未连接
           </div>
         )}
-        <div className="sidebar-version" title={`L4Director ${VERSION_LABEL}`}>
+        <div
+          className={`sidebar-version${hasUpdate ? ' sidebar-version--update' : ''}`}
+          title={
+            hasUpdate
+              ? `发现新版本 v${updateInfo?.version}，点击去「设置 → 关于」更新`
+              : `L4Director ${VERSION_LABEL}`
+          }
+          onClick={hasUpdate ? () => handleSetPage('settings') : undefined}
+        >
           <span className={`sidebar-version__num${IS_BETA ? ' sidebar-version__num--beta' : ''}`}>
             {VERSION_DISPLAY}
           </span>
+          {hasUpdate && <span className="sidebar-version__dot" aria-label="有新版本" />}
         </div>
       </div>
     </nav>

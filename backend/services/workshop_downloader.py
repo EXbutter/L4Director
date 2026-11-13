@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import os
@@ -35,7 +36,7 @@ CDN_HOST = "cdn.steamusercontent.com"
 IMG_HOST = "images.steamusercontent.com"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-API_URL = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/"
+# API 地址在下面「元数据」一节定义（那附近解释了直连与走系统解析的取舍）
 
 SSL_CTX = ssl.create_default_context()
 
@@ -111,8 +112,12 @@ def dns_a(name, servers=("223.5.5.5", "119.29.29.29", "8.8.8.8")):
     return []
 
 
-def resolve_ips(host, cache={}):
+_IP_CACHE: dict = {}
+
+
+def resolve_ips(host, cache=None):
     """返回可用的直连 IP 列表（跳过 hosts 里指向 127.0.0.1 的劫持）。"""
+    cache = _IP_CACHE if cache is None else cache
     if host in cache:
         return cache[host]
     ips = []
@@ -131,23 +136,259 @@ def resolve_ips(host, cache={}):
     return ips
 
 
-# ---------------------------------------------------------------- 元数据
+def clear_ip_cache(host=None):
+    """丢弃缓存的解析结果（网络刚恢复 / 加速器开关切换后要重新解析）。"""
+    if host is None:
+        _IP_CACHE.clear()
+    else:
+        _IP_CACHE.pop(host, None)
 
-def _api_post(payload, timeout=20):
-    body = urllib.parse.urlencode(payload).encode()
+
+# ---------------------------------------------------------------- 元数据
+# 调用 Steam API 有两条路，选错就会「不开加速器查不了 / 开了又慢」：
+#
+#   * 加速器（Steam++、Watt Toolkit 之类）在跑时会把 API 域名写进 hosts 指向
+#     127.0.0.1，由它在本地 443 端口起反向代理。这时只能走系统解析（urllib），
+#     直连真实 IP 反而绕过了它的代理。
+#   * 加速器关掉但 hosts 残留 127.0.0.1 时，系统解析直接指向没人监听的端口，
+#     连接立刻被拒 —— 这就是「不开加速器检查更新永远失败」的典型原因。
+#     这时要自己解析真实 IP、带 SNI 直连（dns_a 已经不认 hosts 了）。
+#
+# 所以先探一下 127.0.0.1:443 有没有人监听来决定顺序，两条路都试，且全程有
+# 时间预算：断网时几秒内就报错，而不是卡在 socket 上让界面一直「检查中…」。
+
+API_HOST = "api.steampowered.com"
+API_PATH = "/ISteamRemoteStorage/GetPublishedFileDetails/v1/"
+API_URL = f"https://{API_HOST}{API_PATH}"
+API_CONNECT_TIMEOUT = 3.5     # 单个 IP 建连 + TLS 握手的时间上限
+API_READ_TIMEOUT = 10.0       # 单次请求收响应的时间上限
+API_MAX_IPS = 2               # 每条路最多试几个 IP
+API_TOTAL_BUDGET = 15.0       # 一次 _api_post 的总预算，超了就认输
+
+_PROXY_PROBE = {"at": 0.0, "ok": False}
+
+
+def _proxy_listening(host="127.0.0.1", port=443, ttl=5.0) -> bool:
+    """本机 443 上有没有加速器的反向代理在跑（同一个结论缓存几秒）。"""
+    now = time.time()
+    if now - _PROXY_PROBE["at"] < ttl:
+        return bool(_PROXY_PROBE["ok"])
+    ok = False
+    s = None
+    try:
+        s = socket.create_connection((host, port), timeout=0.25)
+        ok = True
+    except Exception:
+        ok = False
+    finally:
+        if s:
+            try:
+                s.close()
+            except Exception:
+                pass
+    _PROXY_PROBE.update(at=now, ok=ok)
+    return ok
+
+
+_SYS_DNS_CACHE: dict = {}
+
+
+def _system_ips(host) -> list:
+    """系统解析结果（保留 127.x，加速器的本地代理就是靠它工作的）。
+
+    getaddrinfo 没有超时参数，DNS 被劫持/断网时能一直卡住，所以放到线程里
+    等最多 3 秒，卡住就当作没有结果，别让调用方陪着等。
+    """
+    hit = _SYS_DNS_CACHE.get(host)
+    if hit and time.time() - hit[0] < hit[2]:
+        return hit[1]
+    box: list = []
+
+    def run():
+        try:
+            box.extend(ai[4][0] for ai in socket.getaddrinfo(
+                host, 443, proto=socket.IPPROTO_TCP) if ":" not in ai[4][0])
+        except Exception:
+            pass
+
+    t = threading.Thread(target=run, daemon=True, name="api-dns")
+    t.start()
+    t.join(2.5)
+    ips = list(dict.fromkeys(box))
+    # 卡住/失败的结论只记一小会儿，网络恢复后还能再问一次
+    _SYS_DNS_CACHE[host] = (time.time(), ips, 300.0 if ips else 15.0)
+    return ips
+
+
+def _dechunk(data: bytes) -> bytes:
+    """解 HTTP/1.1 的 chunked 编码（Steam 接口一般不用，防个万一）。"""
+    out = bytearray()
+    i, n = 0, len(data)
+    while i < n:
+        j = data.find(b"\r\n", i)
+        if j < 0:
+            break
+        try:
+            size = int(data[i:j].split(b";")[0].strip(), 16)
+        except ValueError:
+            break
+        i = j + 2
+        if size == 0:
+            break
+        out += data[i:i + size]
+        i += size + 2
+    return bytes(out)
+
+
+def _parse_http_response(buf: bytes) -> dict:
+    head, _, payload = buf.partition(b"\r\n\r\n")
+    lines = head.split(b"\r\n")
+    status = lines[0].decode("latin-1", "replace")
+    parts = status.split(" ")
+    if len(parts) < 2 or parts[1] != "200":
+        raise IOError(f"HTTP {status[:60]}")
+    low = head.lower()
+    if b"transfer-encoding:" in low and b"chunked" in low:
+        payload = _dechunk(payload)
+    if b"content-encoding:" in low and b"gzip" in low:
+        payload = gzip.decompress(payload)
+    return json.loads(payload.decode("utf-8", "replace"))
+
+
+def _post_direct(ip, body: bytes, read_timeout: float) -> dict:
+    """直连指定 IP 发 POST（自带 SNI 和 Host 头，证书照样校验）。"""
+    raw = socket.create_connection((ip, 443), timeout=API_CONNECT_TIMEOUT)
+    try:
+        s = SSL_CTX.wrap_socket(raw, server_hostname=API_HOST)
+    except Exception:
+        try:
+            raw.close()
+        except Exception:
+            pass
+        raise
+    try:
+        s.settimeout(read_timeout)
+        req = (f"POST {API_PATH} HTTP/1.1\r\n"
+               f"Host: {API_HOST}\r\n"
+               f"User-Agent: {UA}\r\n"
+               f"Accept: application/json\r\n"
+               f"Content-Type: application/x-www-form-urlencoded\r\n"
+               f"Content-Length: {len(body)}\r\n"
+               f"Connection: close\r\n\r\n")
+        s.sendall(req.encode() + body)
+        buf = bytearray()
+        want = -1          # Content-Length；拿到就按长度收，不硬等服务器断开
+        chunked = False
+        while True:
+            d = s.recv(65536)
+            if not d:
+                break
+            buf += d
+            if want < 0 and not chunked and b"\r\n\r\n" in buf:
+                head = bytes(buf[:buf.index(b"\r\n\r\n")]).lower()
+                for line in head.split(b"\r\n"):
+                    if line.startswith(b"content-length:"):
+                        try:
+                            want = int(line.split(b":", 1)[1].strip())
+                        except ValueError:
+                            want = -1
+                chunked = b"transfer-encoding:" in head and b"chunked" in head
+            if want >= 0:
+                sep = buf.find(b"\r\n\r\n")
+                if sep >= 0 and len(buf) - (sep + 4) >= want:
+                    break
+            elif chunked and bytes(buf).endswith(b"0\r\n\r\n"):
+                # chunked 的结束标记：不必等服务器关连接
+                break
+            if len(buf) > (16 << 20):
+                raise IOError("响应体过大")
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+    return _parse_http_response(bytes(buf))
+
+
+def _post_via_system(body: bytes, read_timeout: float) -> dict:
     req = urllib.request.Request(API_URL, data=body, headers={
         "User-Agent": UA,
         "Content-Type": "application/x-www-form-urlencoded",
     })
-    last = None
-    for attempt in range(3):
-        try:
-            with urllib.request.urlopen(req, timeout=timeout, context=SSL_CTX) as r:
-                return json.loads(r.read().decode("utf-8", "replace"))
-        except Exception as e:
-            last = e
-            time.sleep(1.2 * (attempt + 1))
-    raise ResolveError(f"调用 Steam API 失败: {type(last).__name__}: {last}")
+    with urllib.request.urlopen(req, timeout=read_timeout, context=SSL_CTX) as r:
+        return json.loads(r.read().decode("utf-8", "replace"))
+
+
+def _api_post(payload, timeout=API_READ_TIMEOUT):
+    body = urllib.parse.urlencode(payload).encode()
+    deadline = time.time() + API_TOTAL_BUDGET
+    errs: list = []
+
+    # 先看系统解析长什么样，再决定先走哪条路：
+    #   * 解析结果是 127.x 且本机 443 上确实有加速器的反代在跑 → 走系统路径
+    #     （它自己会连到 127.0.0.1，由加速器转发出去）；
+    #   * 解析结果是 127.x 但 443 没人听（加速器关了、hosts 残留）→ 先直连，
+    #     这正是「不开加速器就查不了」的那种机器；
+    #   * 解析结果正常 → 先走系统路径：最便宜，也顺带吃系统代理设置；
+    #   * 解析不出东西（DNS 被墙/卡死）→ 先直连，用公共 DNS 拿到的真实 IP。
+    sys_ips = _system_ips(API_HOST)
+    hijacked = (not sys_ips) or all(ip.startswith("127.") for ip in sys_ips)
+    if hijacked:
+        prefer_system = _proxy_listening()
+    else:
+        prefer_system = True
+    order = ("system", "direct") if prefer_system else ("direct", "system")
+
+    if hijacked and not sys_ips and not prefer_system:
+        # 系统 DNS 完全废了：直连是唯一出路，先清掉可能已经过期的缓存
+        clear_ip_cache(API_HOST)
+
+    for idx, mode in enumerate(order):
+        remain = deadline - time.time()
+        if remain <= 0:
+            errs.append("超出时间预算")
+            break
+        # 先跑的那条路别把预算吃光：另一条至少要留三分之一的机会
+        mode_deadline = time.time() + (remain * 0.65 if idx == 0 and len(order) > 1 else remain)
+        if mode == "direct":
+            ips = [ip for ip in resolve_ips(API_HOST) if not ip.startswith("127.")]
+            if not ips:
+                errs.append(f"解析不到 {API_HOST}")
+                continue
+            for ip in ips[:API_MAX_IPS]:
+                left = min(mode_deadline, deadline) - time.time()
+                if left <= 0.5:
+                    break
+                try:
+                    # 让单次尝试也别超过剩余预算，否则最后一次会把总时长撑爆
+                    return _post_direct(ip, body, max(1.0, min(timeout, left)))
+                except Exception as e:
+                    errs.append(f"直连 {ip}：{type(e).__name__}")
+        else:
+            try:
+                left = max(1.0, min(mode_deadline, deadline) - time.time())
+                return _post_via_system(body, min(timeout, API_READ_TIMEOUT, left))
+            except Exception as e:
+                errs.append(f"系统解析：{type(e).__name__} {e}")
+
+    clear_ip_cache(API_HOST)   # 下次重新解析，别一直拿坏 IP
+    print(f"[SteamApi] 请求失败（{order}）：" + " | ".join(errs))
+    raise ResolveError(_api_fail_hint(errs))
+
+
+def _api_fail_hint(errs: list) -> str:
+    """把技术性的失败原因翻成一句用户能照做的话。"""
+    joined = " ".join(errs)
+    if "ConnectionRefused" in joined or "RefusedError" in joined or "10061" in joined:
+        return ("连不上 Steam 接口：连接被拒绝。常见原因是加速器关了但 hosts 里还留着 "
+                "api.steampowered.com → 127.0.0.1；重新开一次加速器再退出，或手动清掉这行 hosts")
+    if "TimeoutError" in joined or "timed out" in joined:
+        return ("连不上 Steam 接口：请求超时。网络或加速器有问题时就是这样，"
+                "换网络、开加速器后再点一次「检查更新」")
+    if ("gaierror" in joined or "getaddrinfo" in joined
+            or "Name or service not known" in joined or "解析不到" in joined):
+        return "连不上 Steam 接口：域名解析失败（DNS 有问题），换个 DNS 或开加速器再试"
+    return "连不上 Steam 接口：" + (" | ".join(errs[-2:]) or "未知原因")
 
 
 def fetch_details(ids) -> list[dict]:

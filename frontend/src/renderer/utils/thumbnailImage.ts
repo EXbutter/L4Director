@@ -29,6 +29,12 @@
  *     是 undefined），读尺寸只能自己解析文件头。
  *
  * 卡片预览区实际只有 260×130 px，任何原图都能安全降采样。
+ *
+ * 动图现在的处理分工：
+ *   - **静态层**仍然由本模块转成首帧 WebP（视口外、开关关闭时只看这一层）；
+ *   - **播放层**由 utils/animatedThumbnail.ts 用 WebCodecs 按需逐帧解码，
+ *     卡片进入视口即挂载，帧数与位图都有硬上限。
+ *   换句话说，这里的「冻结」不再是永久行为，而是「不播放时的默认形态」。
  */
 
 /** 缩略图目标上限（按 2× 预览区留足余量，保证高 DPI 下依然清晰） */
@@ -58,6 +64,17 @@ export interface PreparedThumbnail {
   url: string;
   /** 转码后的体积（字节），便于排查 */
   bytes: number;
+  /**
+   * 原图是否为动图（GIF / APNG / 动图 WebP）。
+   *
+   * `url` 里的东西**永远是静态的首帧** —— 动图播放由 AnimatedThumb 用
+   * WebCodecs 逐帧解码另行负责（见 utils/animatedThumbnail.ts）。
+   * 这里带出这个标记，是为了让卡片进入视口时才去解码播放，
+   * 而不是让每个组件自己再探一次文件头（那等于把文件下载两遍）。
+   */
+  animated: boolean;
+  /** 嗅探出的真实 MIME（扩展名与后端 Content-Type 都可能不准） */
+  mime: string;
 }
 
 /**
@@ -75,7 +92,7 @@ const ascii = (bytes: Uint8Array, start: number, len: number) =>
   String.fromCharCode(...bytes.subarray(start, start + len));
 
 /** 按内容判断真实 MIME —— 扩展名和后端给的 Content-Type 都不可信 */
-function sniffMime(head: Uint8Array, fallback: string): string {
+export function sniffMime(head: Uint8Array, fallback: string): string {
   if (ascii(head, 0, 3) === 'GIF') return 'image/gif';
   if (ascii(head, 0, 4) === '\x89PNG') return 'image/png';
   if (ascii(head, 0, 4) === 'RIFF' && ascii(head, 8, 4) === 'WEBP') return 'image/webp';
@@ -85,7 +102,7 @@ function sniffMime(head: Uint8Array, fallback: string): string {
 }
 
 /** APNG / 动图 WebP 需要看 acTL / ANIM 块；GIF 格式本身就可能有多帧 */
-function sniffAnimated(head: Uint8Array, mime: string): boolean {
+export function sniffAnimated(head: Uint8Array, mime: string): boolean {
   if (mime === 'image/gif') return true;
   // 注意只取前一小段：把 64KB 展开进 fromCharCode 会栈溢出
   const text = ascii(head, 0, Math.min(head.length, SNIFF_BYTES));
@@ -285,7 +302,7 @@ async function buildThumbnail(
 
     const out = await encodeCanvas(canvas);
     if (!out) throw new Error('缩略图编码失败');
-    return { url: URL.createObjectURL(out), bytes: out.size };
+    return { url: URL.createObjectURL(out), bytes: out.size, animated, mime };
   } finally {
     decoded.bitmap.close();
   }

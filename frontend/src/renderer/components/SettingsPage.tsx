@@ -1,10 +1,16 @@
 import { useEffect, useState } from 'react';
 import type { ChangeEvent, CSSProperties } from 'react';
-import { useStore } from '../store/useStore';
+import { useStore, getApiBase } from '../store/useStore';
 import { FONT_PRESETS } from '../utils/uiFont';
 import { ACCENT_PRESETS } from '../utils/themeColor';
-import { APP_VERSION, VERSION_DISPLAY, IS_BETA } from '../utils/appVersion';
+import { IS_BETA } from '../utils/appVersion';
+import { UpdateSection } from './UpdateSection';
 import { markBackgroundOptimized, optimizeBackgroundImage } from '../utils/backgroundImage';
+import {
+  cardAnimationEnabled,
+  setCardAnimationEnabled,
+  systemReducedMotion,
+} from '../utils/animationPreference';
 import { showToast } from './Toast';
 // 与 MyModsPage / PacksPage 保持一致：.content-area 的布局（flex:1 + height:100%）定义在这里，
 // 少了它设置页的容器无法撑满主区域，会出现“顶部栏与底部之间一条真空空隙、内容显示不全”的问题
@@ -19,6 +25,13 @@ function formatStepless(value: number): string {
 /** 无级滑杆取值：吸附到 0.1 精度，避免浮点误差写进本地存储 */
 function readStepless(e: ChangeEvent<HTMLInputElement>): number {
   return Math.round(Number(e.target.value) * 10) / 10;
+}
+
+/** 缓存体积：不到 1MB 用 KB，免得显示成 0.0 MB */
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 KB';
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
 /**
@@ -59,12 +72,54 @@ export function SettingsPage() {
     exportLogs,
     workshopUpdates,
     checkWorkshopUpdates,
+    cancelWorkshopCheck,
     setWorkshopUpdateSettings,
   } = useStore();
 
   const [inputPath, setInputPath] = useState(addonsPath || '');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [bgProcessing, setBgProcessing] = useState(false);
+  // 「禁用动图」开关（性能分区）：偏好存在 localStorage 里（见 utils/animationPreference.ts），
+  // 没放进 zustand —— 每张卡片的渲染路径都要读它，走 store 会让整个 Mod 列表重渲染
+  const [cardAnim, setCardAnim] = useState(cardAnimationEnabled);
+
+  // 本地缓存（封面 / VPK 索引 / 元数据 / 清单）的体积与清理
+  const [cacheInfo, setCacheInfo] = useState<{ total_bytes: number; total_files: number } | null>(null);
+  const [cacheCleaning, setCacheCleaning] = useState(false);
+
+  const loadCacheStats = async () => {
+    try {
+      const res = await fetch(`${getApiBase()}/api/cache/stats`);
+      if (res.ok) setCacheInfo(await res.json());
+    } catch {
+      // 统计失败不影响其它设置项；点「清理缓存」时会再报一次明确的原因
+    }
+  };
+
+  useEffect(() => {
+    void loadCacheStats();
+  }, []);
+
+  const handleCleanCache = async () => {
+    setCacheCleaning(true);
+    try {
+      const res = await fetch(`${getApiBase()}/api/cache/gc`, { method: 'POST' });
+      const data = await res.json();
+      if (!data?.ok) {
+        showToast(data?.reason || '清理失败，请稍后重试', 'warning');
+        return;
+      }
+      setCacheInfo(data);
+      showToast(
+        `已清理 ${data.removed_files} 个缓存文件，释放 ${formatBytes(data.freed_bytes)}`,
+        'success',
+      );
+    } catch {
+      showToast('清理失败：无法连接到后端服务', 'error');
+    } finally {
+      setCacheCleaning(false);
+    }
+  };
 
   useEffect(() => {
     fetchSettings();
@@ -360,13 +415,28 @@ export function SettingsPage() {
             </div>
 
             <div className="settings-actions" style={{ marginTop: 12 }}>
-              <button
-                className="settings-btn settings-btn--secondary"
-                onClick={checkWorkshopUpdates}
-                disabled={!!workshopUpdates?.checking}
-              >
-                {workshopUpdates?.checking ? '检查中…' : '立即检查'}
-              </button>
+              {workshopUpdates?.checking ? (
+                // 检查在后台跑，这里给的是「停」而不是禁用：不用等它慢慢超时
+                <button
+                  className="settings-btn settings-btn--secondary"
+                  onClick={cancelWorkshopCheck}
+                  title="点一下立刻停止检查，已经查到的结果会保留"
+                >
+                  取消检查
+                  {workshopUpdates.check_progress?.total
+                    ? ` ${workshopUpdates.check_progress.stage === 'compare'
+                        ? '比对中'
+                        : `${workshopUpdates.check_progress.done}/${workshopUpdates.check_progress.total}`}`
+                    : ' · 扫描本地中'}
+                </button>
+              ) : (
+                <button
+                  className="settings-btn settings-btn--secondary"
+                  onClick={checkWorkshopUpdates}
+                >
+                  立即检查
+                </button>
+              )}
               <div className="settings-current">
                 <span className="settings-current-label">上次检查：</span>
                 <span className="settings-current-path">
@@ -378,6 +448,73 @@ export function SettingsPage() {
                     : ''}
                 </span>
               </div>
+            </div>
+            {workshopUpdates?.last_error && !workshopUpdates.checking ? (
+              <p className="settings-hint settings-hint--warn" style={{ marginTop: 8 }}>
+                上次没查成功：{workshopUpdates.last_error}
+              </p>
+            ) : null}
+          </div>
+        </div>
+
+        {/* 性能 Section */}
+        <div className="content-section" style={{ marginBottom: 20 }}>
+          <div className="section-header">
+            <h2>性能</h2>
+          </div>
+          <div className="settings-group">
+            <p className="settings-desc">
+              界面发顿、风扇转得快时先从这里关。这些开关只改变界面的显示方式，
+              不会改动任何 Mod 的启停状态，也不影响游戏内的实际加载。
+            </p>
+
+            {/* 禁用动图 */}
+            <div className="settings-toggle-row">
+              <div className="settings-toggle-info">
+                <span className="settings-toggle-label">禁用动图</span>
+                <span className="settings-toggle-hint">
+                  {cardAnim
+                    ? '打开后卡片封面只保留一张静态首帧：不再逐帧解码动图、不占额外显存，滚动时的开销降到最低。'
+                    : '已禁用：卡片只显示静态首帧，不下载动图、不逐帧解码，也不占显存。'}
+                  滚出视口的卡片本来就只有静态图，所以差别只在「正在看的那几张」。
+                  {systemReducedMotion() && ' 系统开启了「减少动态效果」，这里默认已打开。'}
+                </span>
+              </div>
+              <button
+                className={`settings-toggle-switch ${cardAnim ? '' : 'active'}`}
+                onClick={() => {
+                  const next = !cardAnim;
+                  setCardAnim(next);
+                  setCardAnimationEnabled(next);
+                }}
+                title={cardAnim ? '点击禁用动图' : '点击恢复动图'}
+              >
+                <span className="settings-toggle-knob" />
+              </button>
+            </div>
+
+            {/* 本地缓存统计与回收 */}
+            <div className="settings-toggle-row">
+              <div className="settings-toggle-info">
+                <span className="settings-toggle-label">本地缓存</span>
+                <span className="settings-toggle-hint">
+                  {cacheInfo
+                    ? `封面图、VPK 索引与元数据共 ${formatBytes(cacheInfo.total_bytes)}（${cacheInfo.total_files} 个文件）。`
+                    : '正在统计占用…'}
+                  Mod 被更新或删除后，旧缓存不会再被读到，但也不会自己从磁盘上消失。
+                  清理只删「对应 Mod 已经不存在」的那部分，不动任何 Mod 文件与启停状态；
+                  还需要的缓存会在下次扫描时重新生成。
+                </span>
+              </div>
+              <button
+                className={`settings-btn settings-btn--secondary ${cacheCleaning ? 'loading' : ''}`}
+                style={{ flexShrink: 0 }}
+                onClick={handleCleanCache}
+                disabled={cacheCleaning}
+                title="删除已经没有对应 Mod 的缓存文件"
+              >
+                {cacheCleaning ? '清理中…' : '清理缓存'}
+              </button>
             </div>
           </div>
         </div>
@@ -408,6 +545,19 @@ export function SettingsPage() {
               >
                 <span className="settings-toggle-knob" />
               </button>
+            </div>
+
+            {/* 帧率诊断浮层入口：标题栏只给一个总帧率，想看动图的开销要看浮层 */}
+            <div className="settings-gpu-note">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="16" x2="12" y2="12" />
+                <line x1="12" y1="8" x2="12.01" y2="8" />
+              </svg>
+              <span>
+                按 <strong>Ctrl + Shift + F</strong> 打开帧率诊断浮层：可看到帧率波动、动图节奏偏差、
+                单帧绘制耗时与长帧计数，并直接对照 180fps 对应的 5.56ms 单帧预算。
+              </span>
             </div>
 
             {/* 主题切换过渡 */}
@@ -660,15 +810,7 @@ export function SettingsPage() {
               L4Director —— Left 4 Dead 2 Mod 管理器
               {IS_BETA && '。当前是预发布版本，功能可能随时调整，遇到问题欢迎导出日志反馈。'}
             </p>
-            <div className="settings-version-row">
-              <span className="settings-version-row__label">版本</span>
-              <code
-                className={`settings-version-row__code${IS_BETA ? ' settings-version-row__code--beta' : ''}`}
-                title={APP_VERSION}
-              >
-                {VERSION_DISPLAY}
-              </code>
-            </div>
+            <UpdateSection />
           </div>
         </div>
 

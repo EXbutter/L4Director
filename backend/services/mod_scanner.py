@@ -117,7 +117,10 @@ _VPK_COVER_NAMES = [
 # 很多工坊 Mod 的预览图放在五花八门的位置，靠上面的固定路径根本找不到，
 # 这里再从清单里挑「看起来就是预览图」的图片（避免误抓游戏本体的普通贴图）。
 _COVER_HINT_KEYWORDS = ('thumb', 'preview', 'logo', 'addonimage', 'addon_logo', 'icon', 'cover')
-_COVER_IMAGE_EXTS = ('.jpg', '.jpeg', '.png')
+# .gif / .webp 一并收进来：一部分 Mod 的封面本来就是动图（GIF / 动图 WebP），
+# 以前只认 jpg/png，这类包的封面只能落到占位图。播放侧由前端逐帧解码并限流，
+# 不会因为「封面会动」就把滚动帧率拖垮。
+_COVER_IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.gif', '.webp')
 
 
 def _cover_candidates_from_manifest(manifest: set) -> list:
@@ -1285,6 +1288,128 @@ def _make_friendly_name(filename: str) -> Optional[str]:
     friendly = stem.replace('_', ' ').replace('-', ' ')
     friendly = re.sub(r'\s+', ' ', friendly).strip()
     return friendly.title() if friendly else None
+
+
+# ── 缓存体积统计与回收 ────────────────────────────────────────────
+# 缓存文件名就是 VPK 指纹（见 _get_vpk_cache_key：名称 + 大小 + mtime + 同名封面指纹）。
+# VPK 一被改写（1.1 起的「一键更新」就是覆盖原文件），mtime 变了 → 指纹变了 → 另写一组缓存，
+# 旧的那组从此不会被读到，也没人删。实测一台机器累积到 178MB / 439 个封面文件。
+# 所以「还活着」的唯一判据是：这个缓存键现在还对得上某个现存 VPK；对不上的就是孤儿。
+_CACHE_KINDS = (
+    ('covers', _VPK_CACHE_DIR),
+    ('index', _INDEX_CACHE_DIR),
+    ('metadata', _METADATA_CACHE_DIR),
+    ('manifests', _MANIFEST_CACHE_DIR),
+)
+
+
+def _iter_addon_vpks(addons_path: str):
+    """枚举 addons 根目录 + addons/workshop（含子目录）下的 VPK，与扫描规则一致。"""
+    root = Path(addons_path)
+    try:
+        for p in root.glob('*.vpk'):
+            if p.is_file():
+                yield p
+    except OSError:
+        pass
+
+    workshop = root / 'workshop'
+    if not workshop.exists():
+        return
+    try:
+        for p in workshop.glob('*.vpk'):
+            if p.is_file():
+                yield p
+        for item in workshop.iterdir():
+            if item.is_dir():
+                for p in item.glob('*.vpk'):
+                    if p.is_file():
+                        yield p
+    except OSError:
+        pass
+
+
+def _cache_dir_usage(path: Path) -> tuple[int, int]:
+    """返回 (文件数, 字节数)，目录不存在按 0 算。"""
+    files = 0
+    total = 0
+    try:
+        with os.scandir(path) as it:
+            for entry in it:
+                try:
+                    if entry.is_file():
+                        files += 1
+                        total += entry.stat().st_size
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return files, total
+
+
+def cache_stats() -> dict:
+    """各缓存目录的体积与文件数（只统计，不删除）。"""
+    dirs: dict[str, dict] = {}
+    total_bytes = 0
+    total_files = 0
+    for name, path in _CACHE_KINDS:
+        files, size = _cache_dir_usage(path)
+        dirs[name] = {'path': str(path), 'files': files, 'bytes': size}
+        total_bytes += size
+        total_files += files
+    return {'total_bytes': total_bytes, 'total_files': total_files, 'dirs': dirs}
+
+
+def cache_gc(addons_path: Optional[str] = None) -> dict:
+    """删掉已经找不到对应 VPK 的缓存文件。
+
+    宁可少删也不误删：addons 路径没配、或在那下面一个 VPK 都没枚举到
+    （盘没挂上 / 游戏被移走 / 路径填错）时直接拒绝，绝不清空整个缓存目录。
+    """
+    stats = cache_stats()
+    if not addons_path:
+        return {'ok': False, 'reason': '还没有配置 addons 目录，已跳过清理',
+                'removed_files': 0, 'freed_bytes': 0, **stats}
+
+    vpk_paths = list(_iter_addon_vpks(addons_path))
+    if not vpk_paths:
+        return {'ok': False, 'reason': f'在 {addons_path} 下一个 VPK 都没找到，已跳过清理',
+                'removed_files': 0, 'freed_bytes': 0, **stats}
+
+    live: set[str] = set()
+    for p in vpk_paths:
+        try:
+            live.add(_get_vpk_cache_key(p))
+        except Exception:
+            continue
+
+    removed_files = 0
+    freed_bytes = 0
+    for _name, path in _CACHE_KINDS:
+        try:
+            entries = list(os.scandir(path))
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                if not entry.is_file():
+                    continue
+                if entry.name.rsplit('.', 1)[0] in live:
+                    continue
+                size = entry.stat().st_size
+                os.remove(entry.path)
+                removed_files += 1
+                freed_bytes += size
+            except OSError:
+                continue
+
+    return {
+        'ok': True,
+        'removed_files': removed_files,
+        'freed_bytes': freed_bytes,
+        'live_keys': len(live),
+        **cache_stats(),
+    }
 
 
 

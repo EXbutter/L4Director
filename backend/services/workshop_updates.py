@@ -43,8 +43,16 @@ DEFAULT_INTERVAL_HOURS = 6
 MIN_INTERVAL_HOURS = 1
 
 SLACK = 120          # 秒：mtime 与远端 time_updated 的容差，防时钟漂移/时区误差
-BATCH = 100          # 单次 Steam API 最多查询的条目数
+BATCH = 100          # 单次 Steam API 最多查询的条目数（接口上限）
+# 进度粒度：批次太小会把一次检查拖成一串 TLS 握手，太大则进度只有 0 和 100%。
+# 折中成「每个批次最多 100 条，但整体切够 4 段」，88 个 Mod → 22/批，210 个 → 53/批。
+PROGRESS_SEGMENTS = 4
 UPDATE_THREADS = 16  # 更新下载的分段线程数（比下载页默认 24 稍保守，避免抢满带宽）
+
+# 检查的「不卡死」参数（这几个数值决定了断网时的体感）
+BATCH_TIMEOUT = 32       # 单批查询最长等待，超时当作网络卡死直接收尾
+CHECK_BUDGET_S = 150     # 整次检查的时间上限，到点无论查到哪都收尾
+NET_FAIL_ABORT = 1       # 连续这么多批网络失败就不查了（_api_post 内部已试过所有落路）
 
 
 # ---------------------------------------------------------------- 条目识别
@@ -146,6 +154,10 @@ def _save_state(checked_at: int, items: dict):
 
 # ---------------------------------------------------------------- 服务
 
+class _CheckCancelled(Exception):
+    """用户点了取消。单独一个类型，免得和网络错误混在一起提示。"""
+
+
 class WorkshopUpdateService:
     """检查与更新的单例。所有对外动作都不阻塞请求线程。"""
 
@@ -153,6 +165,19 @@ class WorkshopUpdateService:
         self._lock = threading.RLock()
         self._checking = False
         self._last_error = ""
+        # 检查进度：前端轮询显示「检查中 3/5」，避免看起来像卡住
+        self._cancel = threading.Event()
+        self._cancelled = False
+        self._check_done = 0
+        self._check_total = 0
+        self._check_failed = 0
+        # 阶段：scan（枚举本地 VPK）→ query（问 Steam）→ compare（比对版本）
+        # 一次查询可能不到 1 秒就结束，光有 done/total 前端会看到「0/88 然后完成」，
+        # 所以阶段文字得单独暴露出去，让界面在数字之外也有东西可以说。
+        self._check_stage = ""
+        self._check_started = 0.0
+        self._check_batch = 0
+        self._check_batches = 0
         # 更新（下载）进度：供前端轮询
         self._running = False
         self._total = 0
@@ -228,6 +253,16 @@ class WorkshopUpdateService:
                 "ok": True,
                 "checked_at": state["checked_at"],
                 "checking": self._checking,
+                "cancelled": self._cancelled,
+                "check_progress": {
+                    "done": self._check_done,
+                    "total": self._check_total,
+                    "failed": self._check_failed,
+                    "stage": self._check_stage,
+                    "started_at": self._check_started,
+                    "batch": self._check_batch,
+                    "batches": self._check_batches,
+                },
                 "last_error": self._last_error,
                 "auto_check": self.auto_check_enabled(),
                 "interval_hours": self.interval_hours(),
@@ -245,14 +280,45 @@ class WorkshopUpdateService:
             }
 
     # ---------- 检查更新 ----------
+    def _reset_check_progress(self):
+        """把检查进度相关字段清干净（进 checked 前后各调一次）。"""
+        self._check_done = 0
+        self._check_total = 0
+        self._check_failed = 0
+        self._check_stage = ""
+        self._check_started = 0.0
+        self._check_batch = 0
+        self._check_batches = 0
+
     def start_check(self, addons_path: str) -> dict:
-        """后台起一次检查，立刻返回；前端轮询 snapshot 看进度。"""
+        """后台起一次检查，立刻返回；前端轮询 snapshot 看进度。
+
+        已经在查的时候不报错，直接挂到正在跑的那一次上（返回 already=True）：
+        启动 8 秒后后端会自己查一次，用户这时点「检查更新」不该弹一句「正在检查中」。
+        """
         with self._lock:
             if self._checking:
-                return {"ok": False, "error": "正在检查中"}
+                return {"ok": True, "already": True, "total": self._check_total}
             self._checking = True
+            self._cancelled = False
+            self._cancel.clear()
+            self._reset_check_progress()
+            self._check_stage = "scan"
+            self._check_started = time.time()
         threading.Thread(target=self._check_worker, args=(addons_path,),
                          daemon=True, name="workshop-update-check").start()
+        return {"ok": True}
+
+    def cancel_check(self) -> dict:
+        """请求停止正在进行的检查。
+
+        只是置一个标志：正在跑的批次会在几毫秒内退出，已经查到的结果照常落盘，
+        用户不用等一次完整的（可能很慢的）检查跑完。
+        """
+        with self._lock:
+            if not self._checking:
+                return {"ok": False, "error": "当前没有正在进行的检查"}
+            self._cancel.set()
         return {"ok": True}
 
     def check_now(self, addons_path: str, log=None) -> dict:
@@ -261,11 +327,18 @@ class WorkshopUpdateService:
             if self._checking:
                 return {"ok": False, "error": "正在检查中"}
             self._checking = True
+            self._cancelled = False
+            self._cancel.clear()
+            self._reset_check_progress()
+            self._check_stage = "scan"
+            self._check_started = time.time()
         try:
             return self._check_impl(addons_path, log=log)
         finally:
             with self._lock:
                 self._checking = False
+                self._check_stage = ""
+                self._check_started = 0.0
 
     def _check_worker(self, addons_path: str):
         try:
@@ -276,30 +349,117 @@ class WorkshopUpdateService:
         finally:
             with self._lock:
                 self._checking = False
+                self._check_stage = ""
+                self._check_started = 0.0
+
+    def _fetch_chunk(self, chunk) -> list:
+        """查一批条目，带超时和取消。
+
+        放到独立线程里等，是因为 socket/DNS 有可能整段卡住（加速器关了但 hosts
+        残留时尤其明显）。有了这层，检查线程永远能按时收尾，「检查中…」不会
+        一直转下去。
+        """
+        box: dict = {"items": None, "error": None}
+
+        def run():
+            try:
+                box["items"] = fetch_details(chunk)
+            except Exception as e:  # noqa: BLE001 —— 原样带回调用线程判断
+                box["error"] = e
+
+        t = threading.Thread(target=run, daemon=True, name="wsapi-batch")
+        t.start()
+        deadline = time.time() + BATCH_TIMEOUT
+        while t.is_alive() and time.time() < deadline:
+            if self._cancel.is_set():
+                raise _CheckCancelled()
+            t.join(0.2)
+        if t.is_alive():
+            raise ResolveError(f"查询超时（{BATCH_TIMEOUT} 秒没有响应）")
+        if box["error"] is not None:
+            e = box["error"]
+            if isinstance(e, ResolveError):
+                raise e
+            raise ResolveError(f"调用 Steam API 失败: {type(e).__name__}: {e}")
+        return box["items"] or []
 
     def _check_impl(self, addons_path: str, log=None) -> dict:
         log = log or (lambda _m: None)
+        with self._lock:
+            self._check_stage = "scan"
         entries = collect_installed(addons_path)
+        with self._lock:
+            self._check_total = len(entries)
+            self._check_done = 0
+            self._check_failed = 0
         if not entries:
             _save_state(int(_load_state().get("checked_at") or 0), {})
             self._last_error = ""
             return {"ok": True, "checked": 0, "update_count": 0}
 
         ids = sorted(entries)
-        log(f"[检查] {len(ids)} 个创意工坊 Mod，分批查询 Steam…")
+        # 批次大小决定进度有几档：一次问 88 个的话界面上只能看到 0/88 然后一下子完成。
+        # 切成 4 段左右，每段又不超过接口上限 100，代价只是多几次请求。
+        batch = min(BATCH, max(20, -(-len(ids) // PROGRESS_SEGMENTS)))
+        with self._lock:
+            self._check_stage = "query"
+            self._check_batches = -(-len(ids) // batch)
+            self._check_batch = 0
+        log(f"[检查] {len(ids)} 个创意工坊 Mod，分 {self._check_batches} 批查询 Steam…")
         remote: dict = {}
+        queried: set = set()   # 真正拿到过响应的条目，用来区分「下架」和「没查成」
         failed_batches = 0
-        for i in range(0, len(ids), BATCH):
-            chunk = ids[i:i + BATCH]
+        consecutive = 0
+        aborted = ""       # 提前收尾的原因：'cancelled' | 'network' | 'budget'
+        started = time.time()
+
+        for i in range(0, len(ids), batch):
+            if self._cancel.is_set():
+                aborted = "cancelled"
+                break
+            if time.time() - started > CHECK_BUDGET_S:
+                aborted = "budget"
+                self._last_error = f"检查超时（超过 {CHECK_BUDGET_S} 秒），已保留查到的部分结果"
+                log(f"[检查] {self._last_error}")
+                break
+            chunk = ids[i:i + batch]
+            with self._lock:
+                self._check_batch = i // batch + 1
             try:
-                for it in fetch_details(chunk):
+                for it in self._fetch_chunk(chunk):
                     remote[str(it.get("publishedfileid"))] = it
+                queried.update(chunk)
+                consecutive = 0
+            except _CheckCancelled:
+                aborted = "cancelled"
+                break
             except ResolveError as e:
+                # _api_post 内部已经把直连和系统解析都试过了，再换一批也不会好，
+                # 断网时立刻收尾，别让用户对着「检查中…」等好几分钟
                 failed_batches += 1
+                consecutive += 1
                 self._last_error = str(e)
-                log(f"[检查] 第 {i // BATCH + 1} 批失败：{e}")
-            if i + BATCH < len(ids):
-                time.sleep(0.2)  # 轻微节流，别把公开接口当自家服务器刷
+                log(f"[检查] 第 {i // batch + 1} 批失败：{e}")
+                if consecutive >= NET_FAIL_ABORT:
+                    aborted = "network"
+                    break
+            with self._lock:
+                self._check_done = min(i + len(chunk), len(ids))
+                self._check_failed = failed_batches
+            if i + batch < len(ids):
+                time.sleep(0.15)  # 轻微节流，别把公开接口当自家服务器刷
+
+        with self._lock:
+            self._check_stage = "compare"
+
+        if aborted == "cancelled":
+            with self._lock:
+                self._cancelled = True
+            self._last_error = ""
+            log(f"[检查] 已取消（已查 {len(remote)} 个条目）")
+        elif aborted == "network":
+            with self._lock:
+                self._cancelled = False
 
         state = _load_state()
         known = state["items"]
@@ -314,10 +474,15 @@ class WorkshopUpdateService:
             r = remote.get(wid)
 
             if not r:
-                # 查不到：下架 / 私有 / 这轮网络失败。保留旧基线，别误报「有更新」
-                if rec:
-                    rec = dict(rec)
-                    rec["unavailable"] = True
+                # 这批真查到了响应、条目却不在里面：下架 / 私有化，标不可用。
+                # 而这批根本没查成（断网、取消、超时）时不能这么标 —— 否则一断网
+                # 所有工坊 Mod 会一起变成「已下架」，比查不出来更吓人。
+                if wid in queried:
+                    if rec:
+                        rec = dict(rec)
+                        rec["unavailable"] = True
+                        new_items[wid] = rec
+                elif rec:
                     new_items[wid] = rec
                 continue
 
@@ -351,10 +516,18 @@ class WorkshopUpdateService:
         # 跳过一个完整周期，用户很久都发现不了自己其实没连上网。
         checked_at = now if (remote or failed_batches == 0) else int(state.get("checked_at") or 0)
         _save_state(checked_at, new_items)
-        if remote:
+        # 只有整轮跑完才清错误：中途断网/超时的提示要留着，用户才知道该去查网络
+        if remote and not aborted:
             self._last_error = ""
-        log(f"[检查] 完成：{update_count} 个可更新（共 {len(ids)} 个工坊 Mod）")
-        return {"ok": True, "checked": len(ids), "update_count": update_count}
+        log(f"[检查] 完成：{update_count} 个可更新（共 {len(ids)} 个工坊 Mod）"
+            + ("，中途停止" if aborted else ""))
+        return {
+            "ok": True,
+            "checked": len(ids),
+            "update_count": update_count,
+            "cancelled": aborted == "cancelled",
+            "partial": bool(aborted),
+        }
 
     # ---------- 更新（覆盖下载）----------
     def start_apply(self, wids: list, addons_path: str) -> dict:

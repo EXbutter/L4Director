@@ -5,6 +5,7 @@ import * as os from 'os';
 import { spawn, ChildProcess } from 'child_process';
 import { createZip, ZipEntry } from './zip';
 import { importDroppedVpks } from './vpkImport';
+import { initUpdater, getUpdateState, getUpdaterLogPath } from './updater';
 
 let mainWindow: BrowserWindow | null = null;
 let backendProcess: ChildProcess | null = null;
@@ -622,6 +623,14 @@ function collectDiagnostics(): ZipEntry[] {
   const cfgData = readTextFileTail(cfg);
   if (cfgData) entries.push({ name: 'config.json', data: cfgData });
 
+  // 自动更新日志（检查/下载卡在哪一步，看这个最快）
+  const updaterLog = readTextFileTail(getUpdaterLogPath());
+  if (updaterLog) entries.push({ name: 'updater.log', data: updaterLog });
+  entries.push({
+    name: 'update_state.json',
+    data: JSON.stringify(getUpdateState(), null, 2),
+  });
+
   // 启动性能数据（加载速度排障：各里程碑耗时 + 前端首屏/首个 Mod/扫描完成时间）
   try {
     const filePerf = readPerfHistory();
@@ -1007,19 +1016,43 @@ async function startBackend() {
   }
 }
 
-app.whenReady().then(() => {
-  markStartup('app-ready');
-  createWindow();
-  
-  // 启动后端 Python 服务
-  startBackend();
+// ============ 单实例 ============
+// data_store 的写盘锁是进程内 threading.Lock，挡不住第二次启动的进程：
+// 两个实例各持一份内存缓存，先后落盘会互相覆盖（A 改完合辑，B 退出时按自己的旧缓存写一遍就抹掉了）。
+// 端口也会打架：8288 被先启动的实例占着，后启动的会切到备用端口，于是两个窗口连着两个后端、
+// 看到的是两份数据 —— 用户会以为「我的改动丢了」。所以第二个实例把已有窗口拉到前面，然后自己退出。
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
       createWindow();
+      return;
     }
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    if (!mainWindow.isVisible()) mainWindow.show();
+    mainWindow.focus();
   });
-});
+
+  app.whenReady().then(() => {
+    markStartup('app-ready');
+    createWindow();
+
+    // 启动后端 Python 服务
+    startBackend();
+
+    // 自动更新：挂好 IPC 与事件，内部会延迟 15 秒才做第一次检查，不抢启动资源
+    initUpdater();
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+      }
+    });
+  });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
@@ -1029,7 +1062,8 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   // 退出前落盘启动性能数据（供加载速度排障/基准测试读取）
-  persistStartupPerf();
+  // 拿不到单实例锁的那个进程只是来「唤起已有窗口」的，不要往性能历史里塞一条空记录
+  if (hasSingleInstanceLock) persistStartupPerf();
   // 结束后端 Python 子进程，避免在系统里残留 python.exe
   // （我们自己 spawn 的才杀；若是复用外部已存在的后端则 backendProcess 为 null）
   if (backendProcess && !backendProcess.killed) {

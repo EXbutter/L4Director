@@ -18,6 +18,25 @@ declare module '*.png' {
   export default src;
 }
 
+/** 自动更新状态（与主进程 src/main/updater.ts 的 UpdateState 对应） */
+interface UpdateStatePayload {
+  phase: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'up-to-date' | 'error' | 'unsupported';
+  currentVersion: string;
+  version: string;
+  releaseDate: string;
+  releaseNotes: string;
+  percent: number;
+  transferred: number;
+  total: number;
+  bytesPerSecond: number;
+  error: string;
+  checkedAt: number;
+  skipped: boolean;
+  supported: boolean;
+  supportHint: string;
+  portable: boolean;
+}
+
 interface Window {
   electronAPI: {
     minimize: () => void;
@@ -61,5 +80,14 @@ interface Window {
     restartBackend: () => Promise<{ ok: boolean; error?: string }>;
     reportPerf: (name: string, payload?: Record<string, any>) => void;
     captureThemeSnapshot: () => Promise<string | null>;
+    // ---- 自动更新 ----
+    getUpdateState: () => Promise<UpdateStatePayload>;
+    checkForUpdates: () => Promise<UpdateStatePayload>;
+    downloadUpdate: () => Promise<UpdateStatePayload>;
+    cancelUpdateDownload: () => Promise<UpdateStatePayload>;
+    installUpdate: () => Promise<boolean>;
+    skipUpdateVersion: (version?: string) => Promise<UpdateStatePayload>;
+    openReleasesPage: () => Promise<void>;
+    onUpdateStatus: (callback: (state: UpdateStatePayload) => void) => void;
   };
 }
