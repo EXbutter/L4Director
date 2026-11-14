@@ -32,6 +32,7 @@
     "directories": {
       "output": "out"
     },
+    "artifactName": "L4Director-Setup-${version}.${ext}",
     "files": [
       "dist/**/*",
       "package.json"
