@@ -1863,7 +1863,8 @@ def workshop_browse(
         return _wb().browse(filters, page, scanner.get_addons_path())
     except _wb().WorkshopError as e:
         # 400 + 一句能照做的话：前端直接把 detail 显示在列表位置，不弹裸异常
-        raise HTTPException(status_code=400, detail=str(e))
+        # redact 是最后一道闸：错误文本里绝不允许出现完整 key
+        raise HTTPException(status_code=400, detail=_wb().redact(str(e)))
 
 
 @app.get("/api/workshop/item/{wid}")
@@ -1872,7 +1873,7 @@ def workshop_item(wid: str):
     try:
         return _wb().item_detail(wid)
     except _wb().WorkshopError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=_wb().redact(str(e)))
 
 
 @app.get("/api/settings/steam-key")
@@ -1892,7 +1893,7 @@ def set_steam_key(payload: dict):
             tested = None
         state = _wb().set_api_key(key)
     except _wb().WorkshopError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=_wb().redact(str(e)))
     _wb().clear_cache()
     return {**state, "test": tested}
 
@@ -1906,7 +1907,7 @@ def test_steam_key(payload: dict):
     try:
         return _wb().verify_key(key)
     except _wb().WorkshopError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=_wb().redact(str(e)))
 
 
 @app.post("/api/workshop-updates/settings")

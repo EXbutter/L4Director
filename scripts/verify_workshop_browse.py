@@ -167,7 +167,13 @@ wb.set_api_key('0123456789ABCDEF0123456789ABCDEF')
 check('保存后状态为已配置', wb.key_status()['configured'])
 check('保存后 get_api_key 能读回', wb.get_api_key() == '0123456789ABCDEF0123456789ABCDEF')
 saved = json.loads(wb._CONFIG_PATH.read_text(encoding='utf-8'))
-check('写盘后 key 与其它字段共存', saved.get('steam_api_key', '').startswith('0123'))
+# v1.3.1 起 key 一律 DPAPI 加密落盘（见 verify_secret_hygiene.py 的详细断言）
+if wb.dpapi_available():
+    check('写盘后走加密字段', str(saved.get('steam_api_key_enc', '')).startswith('dpapi:v1:'))
+    check('写盘后文件里没有明文',
+          '0123456789ABCDEF0123456789ABCDEF' not in wb._CONFIG_PATH.read_text(encoding='utf-8'))
+else:
+    check('非 Windows 平台退化为明文字段', saved.get('steam_api_key', '').startswith('0123'))
 
 # 模拟"另一个模块保存 addons 路径"：不能把 key 冲掉
 before = wb.get_api_key()

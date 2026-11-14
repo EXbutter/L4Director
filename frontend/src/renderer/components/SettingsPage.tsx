@@ -130,8 +130,14 @@ export function SettingsPage() {
   }, []);
 
   // ── Steam API Key ────────────────────────────────────────────────
-  // 只在这里存「是否配置 + 指纹」，后端从不把 key 原文回传。
-  const [keyState, setKeyState] = useState<{ configured: boolean; masked: string }>({
+  // 只在这里存「是否配置 + 指纹 + 存储方式」，后端从不把 key 原文回传。
+  type KeyStorage = 'dpapi' | 'plaintext' | 'env' | 'none';
+  const [keyState, setKeyState] = useState<{
+    configured: boolean;
+    masked: string;
+    storage?: KeyStorage;
+    readable?: boolean;
+  }>({
     configured: false,
     masked: '',
   });
@@ -194,7 +200,12 @@ export function SettingsPage() {
         setKeyMsg({ kind: 'err', text: data.detail || '保存失败' });
         return;
       }
-      setKeyState({ configured: !!data.configured, masked: data.masked || '' });
+      setKeyState({
+        configured: !!data.configured,
+        masked: data.masked || '',
+        storage: data.storage,
+        readable: true,
+      });
       setKeyInput('');
       if (data.configured) {
         showToast('已保存：创意工坊改为走 Steam API（每页 100 条，带评分）', 'success');
@@ -369,6 +380,11 @@ export function SettingsPage() {
               带<strong>好评率</strong>、能显示<strong>精确结果总数</strong>、支持「最近更新」排序。
               不填也能用，只是每页 30 条、慢一点。
             </p>
+            <p className="settings-desc" style={{ marginTop: -4 }}>
+              保存时会用 Windows 凭据（DPAPI）加密，<strong>config.json 里只有密文</strong>，
+              只有当前 Windows 账户能解开；日志和接口一律只显示指纹（首 4 末 4 位）。
+              换电脑或换 Windows 账户后需要重新粘贴一次。
+            </p>
 
             <div className="settings-path-row">
               <input
@@ -431,15 +447,40 @@ export function SettingsPage() {
               </div>
             )}
 
+            {keyState.readable === false && (
+              <div
+                className="settings-current"
+                style={{ color: '#f59e0b', borderColor: 'rgba(245,158,11,.35)' }}
+              >
+                <span className="settings-current-label">注意：</span>
+                <span style={{ whiteSpace: 'normal' }}>
+                  配置文件里有加密过的 key，但当前账户解不开（换过 Windows 账户或电脑）。
+                  重新粘贴保存一次即可。
+                </span>
+              </div>
+            )}
+
             {keyState.configured && !keyMsg && (
               <div className="settings-current">
                 <span className="settings-current-label">当前：</span>
                 <span className="settings-current-path">已配置 {keyState.masked}</span>
+                <span
+                  style={{
+                    marginLeft: 8,
+                    whiteSpace: 'normal',
+                    color: keyState.storage === 'plaintext' ? '#f59e0b' : 'var(--text-secondary)',
+                  }}
+                >
+                  {keyState.storage === 'dpapi' && '· 已用 Windows 凭据加密，仅当前账户可解密'}
+                  {keyState.storage === 'env' && '· 来自环境变量 L4DIRECTOR_STEAM_KEY'}
+                  {keyState.storage === 'plaintext' && '· 明文保存在 config.json，重新保存一次即可加密'}
+                </span>
               </div>
             )}
 
             <p className="settings-desc" style={{ marginTop: 10, fontSize: 11.5, opacity: 0.78 }}>
-              Key 只写在本机 <code>~/.l4d2-manager/config.json</code>，不会上传、不进仓库、日志里只留指纹。
+              Key 用 Windows 凭据加密后写在本机 <code>~/.l4d2-manager/config.json</code>，
+              文件里只有密文；不会上传、不进仓库、日志与接口里只留指纹。
               申请要求：Steam 账号、在商店消费满 5 美元（受限账号无法使用 Web API）、域名随便填。
               Steam 使用条款要求 key 必须本人保管，所以它只能你自己填，不能随软件分发。
             </p>

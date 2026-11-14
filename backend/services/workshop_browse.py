@@ -22,13 +22,20 @@
 * HTML 列表里每个条目出现**两次**（封面链接 + 标题链接），
   只认「链接内直接跟 img」的那次才恰好 30 条。
 
-API Key 只存在用户数据目录 `~/.l4d2-manager/config.json`，不进仓库、不上传、
-日志里只打指纹。Steam 使用条款明确要求 key 保密且不得分享给第三方，
-所以它只能由用户自己填，绝不能内置进发行包。
+API Key 只存在用户数据目录 `~/.l4d2-manager/config.json`，**而且是加密的**：
+Windows 下用 DPAPI（`CryptProtectData`）以当前用户凭据加密，密文只能被同一个
+Windows 账户解密 —— 别的程序读到文件、云盘同步走了文件、或者用户把 config.json
+贴到 issue 里，都拿不到 key。旧版本留下的明文字段会在第一次读取时自动迁移。
+
+其它几条不变：不进仓库、不上传、日志和接口里只出现指纹（首 4 末 4 位）。
+Steam 使用条款明确要求 key 保密且不得分享给第三方，所以它只能由用户自己填，
+绝不能内置进发行包。
 """
 
 from __future__ import annotations
 
+import base64
+import ctypes
 import gzip
 import json
 import os
@@ -183,6 +190,82 @@ def clear_cache():
 
 # ---------------------------------------------------------------- API Key
 
+# 明文字段只用于「读旧配置」，新写入一律走加密字段。
+_KEY_FIELD = 'steam_api_key'
+_KEY_ENC_FIELD = 'steam_api_key_enc'
+_KEY_ENV = 'L4DIRECTOR_STEAM_KEY'
+_ENC_PREFIX = 'dpapi:v1:'
+# 附加熵：即使同一账户下别的程序也调 CryptProtectData，密文也不能互换取用
+_KEY_ENTROPY = b'L4Director/steam_api_key/v1'
+_HEX32 = re.compile(r'[0-9A-Fa-f]{32}')
+
+
+class _DataBlob(ctypes.Structure):
+    """DPAPI 的 DATA_BLOB。pbData 是 LocalAlloc 出来的，用完必须 LocalFree。"""
+    _fields_ = [
+        ('cbData', ctypes.c_uint32),
+        ('pbData', ctypes.POINTER(ctypes.c_char)),
+    ]
+
+
+def dpapi_available() -> bool:
+    return os.name == 'nt'
+
+
+def _dpapi(protect: bool, data: bytes) -> bytes:
+    """调 Windows DPAPI。加密/解密的参数结构相同，只是函数不同。"""
+    if not dpapi_available():
+        raise OSError('当前平台没有 DPAPI')
+    crypt32 = ctypes.WinDLL('crypt32', use_last_error=True)
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+
+    fn = crypt32.CryptProtectData if protect else crypt32.CryptUnprotectData
+    fn.restype = ctypes.c_int
+    CRYPTPROTECT_UI_FORBIDDEN = 0x1   # 后台服务里绝不能弹凭据框
+
+    in_buf = ctypes.create_string_buffer(data, len(data))
+    blob_in = _DataBlob(len(data), ctypes.cast(in_buf, ctypes.POINTER(ctypes.c_char)))
+    ent_buf = ctypes.create_string_buffer(_KEY_ENTROPY, len(_KEY_ENTROPY))
+    blob_ent = _DataBlob(len(_KEY_ENTROPY), ctypes.cast(ent_buf, ctypes.POINTER(ctypes.c_char)))
+    blob_out = _DataBlob()
+
+    ok = fn(ctypes.byref(blob_in), None, ctypes.byref(blob_ent), None, None,
+            CRYPTPROTECT_UI_FORBIDDEN, ctypes.byref(blob_out))
+    if not ok:
+        raise OSError(ctypes.get_last_error(), 'DPAPI 调用失败')
+    try:
+        return ctypes.string_at(blob_out.pbData, blob_out.cbData)
+    finally:
+        kernel32.LocalFree(ctypes.cast(blob_out.pbData, ctypes.c_void_p))
+
+
+def _seal(plain: str) -> str:
+    """加密成可直接写进 JSON 的字符串。平台不支持时返回空串。"""
+    if not dpapi_available():
+        return ''
+    try:
+        return _ENC_PREFIX + base64.b64encode(_dpapi(True, plain.encode('utf-8'))).decode('ascii')
+    except OSError as e:
+        print(f"[Workshop] 加密 key 失败，本次不落盘：{e}")
+        return ''
+
+
+def _unseal(sealed: str) -> str:
+    """解不开就返回空串 —— 换 Windows 账户 / 换机器 / 文件损坏都会走到这。"""
+    if not sealed.startswith(_ENC_PREFIX):
+        return ''
+    try:
+        raw = base64.b64decode(sealed[len(_ENC_PREFIX):].encode('ascii'), validate=True)
+        return _dpapi(False, raw).decode('utf-8', 'strict')
+    except Exception:
+        return ''
+
+
+def redact(text: str) -> str:
+    """把任何 32 位十六进制串打成 ****。错误信息、日志出口统一过它。"""
+    return _HEX32.sub('****', text or '')
+
+
 def _read_config() -> dict:
     if not _CONFIG_PATH.exists():
         return {}
@@ -194,10 +277,16 @@ def _read_config() -> dict:
         return {}
 
 
-def _write_config(patch: dict):
-    """只改指定键，其余原样保留；原子写，避免半个 JSON 把 addons 路径也带走。"""
+def _write_config(patch: dict, drop: tuple[str, ...] = ()):
+    """只改指定键，其余原样保留；原子写，避免半个 JSON 把 addons 路径也带走。
+
+    drop 用于真正删掉某个键 —— 只在值置空不够的场景用（比如要把旧明文 key 抹掉，
+    而不是留下一个空字符串继续躺在文件里）。
+    """
     data = _read_config()
     data.update(patch)
+    for k in drop:
+        data.pop(k, None)
     data['updated_at'] = datetime.now().isoformat()
     _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(data, ensure_ascii=False, indent=2)
@@ -208,6 +297,12 @@ def _write_config(patch: dict):
             fh.flush()
             os.fsync(fh.fileno())
         tmp.replace(_CONFIG_PATH)
+        # 文件的机密性靠 DPAPI（密文），这里 chmod 只是尽量收紧只读位。
+        # Windows 上 chmod 改不了 ACL，别指望它挡住同账户的其它程序。
+        try:
+            os.chmod(_CONFIG_PATH, 0o600)
+        except OSError:
+            pass
     except OSError as e:
         print(f"[Workshop] 写入 {_CONFIG_PATH} 失败：{e}")
         try:
@@ -217,8 +312,30 @@ def _write_config(patch: dict):
 
 
 def get_api_key() -> str:
-    key = str(_read_config().get('steam_api_key') or '').strip()
-    return key if _looks_like_key(key) else ''
+    """取 key。顺序：环境变量 → 加密字段 → 旧明文字段（并顺手迁移）。
+
+    环境变量优先级最高，方便高级用户完全不落盘；代价是它在进程环境里，
+    同账户的其它进程能读到，所以只在用户显式设置时才走这条路。
+    """
+    env = str(os.environ.get(_KEY_ENV) or '').strip()
+    if env and _looks_like_key(env):
+        return env
+
+    cfg = _read_config()
+    sealed = str(cfg.get(_KEY_ENC_FIELD) or '').strip()
+    if sealed:
+        key = _unseal(sealed)
+        return key if _looks_like_key(key) else ''
+
+    # 旧版本留下的明文：读到就迁移成密文，并把明文字段删掉
+    legacy = str(cfg.get(_KEY_FIELD) or '').strip()
+    if _looks_like_key(legacy):
+        sealed = _seal(legacy)
+        if sealed:
+            _write_config({_KEY_ENC_FIELD: sealed}, drop=(_KEY_FIELD,))
+            print(f"[Workshop] 已把明文 API Key 迁移为 DPAPI 加密存储（{mask_key(legacy)}）")
+        return legacy
+    return ''
 
 
 def _looks_like_key(key: str) -> bool:
@@ -232,25 +349,59 @@ def mask_key(key: str) -> str:
     return f"{key[:4]}…{key[-4:]}" if len(key) > 8 else '…'
 
 
+def key_storage() -> str:
+    """key 现在以什么形式存在：env / dpapi / plaintext / none。"""
+    env = str(os.environ.get(_KEY_ENV) or '').strip()
+    if env and _looks_like_key(env):
+        return 'env'
+    cfg = _read_config()
+    if str(cfg.get(_KEY_ENC_FIELD) or '').strip().startswith(_ENC_PREFIX):
+        return 'dpapi'
+    if _looks_like_key(str(cfg.get(_KEY_FIELD) or '').strip()):
+        return 'plaintext'
+    return 'none'
+
+
 def set_api_key(key: str) -> dict:
-    """保存或清除 key。空字符串 = 清除。"""
+    """保存或清除 key。空字符串 = 清除。落盘一律走加密字段。"""
     key = (key or '').strip()
     if not key:
-        _write_config({'steam_api_key': ''})
+        _write_config({}, drop=(_KEY_FIELD, _KEY_ENC_FIELD))
         clear_cache()
-        return {'configured': False, 'masked': ''}
+        return {'configured': False, 'masked': '', 'storage': key_storage()}
     if not _looks_like_key(key):
         raise WorkshopError(
             'Key 格式不对：应该是 32 位十六进制字符（0-9、A-F），'
             '别把前面的「密钥:」一起粘进来')
-    _write_config({'steam_api_key': key})
+
+    sealed = _seal(key)
+    if sealed:
+        # 加密成功：写密文 + 删掉可能存在的明文，文件里不会再有可读的 key
+        _write_config({_KEY_ENC_FIELD: sealed}, drop=(_KEY_FIELD,))
+    else:
+        # 只在 DPAPI 不可用的平台（非 Windows 开发环境）才退化为明文
+        _write_config({_KEY_FIELD: key}, drop=(_KEY_ENC_FIELD,))
     clear_cache()
-    return {'configured': True, 'masked': mask_key(key)}
+    return {'configured': True, 'masked': mask_key(key), 'storage': key_storage()}
 
 
 def key_status() -> dict:
+    """给界面看的完整状态。永远不含 key 原文。
+
+    `readable=False` 表示密文存在但解不开（换了 Windows 账户或换机器）——
+    这种情况必须让用户知道，否则界面显示「未配置」而他明明填过。
+    """
+    env = str(os.environ.get(_KEY_ENV) or '').strip()
+    cfg = _read_config()
+    sealed = str(cfg.get(_KEY_ENC_FIELD) or '').strip()
     key = get_api_key()
-    return {'configured': bool(key), 'masked': mask_key(key)}
+    return {
+        'configured': bool(key),
+        'masked': mask_key(key),
+        'storage': key_storage(),
+        'readable': bool(key) or not sealed,
+        'from_env': bool(env) and _looks_like_key(env),
+    }
 
 
 # ---------------------------------------------------------------- HTTP
@@ -418,7 +569,9 @@ def _query_files(key: str, *, page_size: int, cursor: str, filters: dict) -> tup
         except Exception as e:
             errs.append(f'{host}：{type(e).__name__}')
 
-    raise WorkshopError('搜索接口连不上：' + '；'.join(errs[-2:]))
+    # errs 里只放主机名和异常类型名，不放完整 URL（URL 的 query 里带 key）；
+    # 出口再过一遍 redact，防止将来有人往这里塞原始异常文本。
+    raise WorkshopError(redact('搜索接口连不上：' + '；'.join(errs[-2:])))
 
 
 # ---------------------------------------------------------------- HTML 路径
