@@ -95,6 +95,25 @@
 
 ---
 
+## Steam API Key 改为加密存储
+
+上一版的 key 是**明文**写在 `~/.l4d2-manager/config.json` 里的。它能被任何读文件的
+程序拿到，也会跟着云同步盘、备份目录、排障时贴出去的配置文件一起走。Steam Web API Key
+是账号级凭证，可以被刷配额、被判滥用，泄漏了用户还不会察觉 —— 所以这一版把它换掉了：
+
+| | 改前 | 改后 |
+|---|---|---|
+| `config.json` 里长什么样 | `"steam_api_key": "60BA…"` | `"steam_api_key_enc": "dpapi:v1:AQAAAN…"` |
+| 别人拿到这个文件 | 直接能用 | 解不开（密文绑定当前 Windows 账户） |
+| 换 Windows 账户 / 换机器 | 照常可用 | 提示「解不开，请重填」，不会假装你没填过 |
+| 完全不想落盘 | 没有这条路 | 设 `L4DIRECTOR_STEAM_KEY` 环境变量即可 |
+
+旧版本留下的明文会在首次读取时**自动迁移**成密文，并把明文字段删掉 —— 升级不需要
+你做任何事，也不用重新粘贴 key。错误信息、日志里的 key 形态字符串现在统一打码，
+界面只显示首尾各 4 位指纹（如 `60BA…749E`）。
+
+---
+
 ## 安装
 
 下载 `L4Director-Setup-1.3.1.exe` 直接安装，或在旧版本上自动更新（客户端先读
@@ -111,7 +130,7 @@
 
 ## 校验
 
-`scripts/run_all_verify.py` 跑全部白盒断言：**18/19 通过**，其中新增
+`scripts/run_all_verify.py` 跑全部白盒断言：**19/20 通过**，其中新增
 `verify_workshop_browse.py`（59 项）、`verify_workshop_views.py`（44 项）、
-`verify_workshop_thumb_perf.py`（23 项）。唯一失败的是 `verify_tags_and_conflicts.py`
-的 3 项陈旧断言，改动前即如此。
+`verify_workshop_thumb_perf.py`（23 项）、`verify_secret_hygiene.py`（42 项）。
+唯一失败的是 `verify_tags_and_conflicts.py` 的 3 项陈旧断言，改动前即如此。
