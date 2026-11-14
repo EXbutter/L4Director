@@ -1,206 +1,342 @@
-import { useRef, useState, useCallback } from 'react';
-import { useStore } from '../store/useStore';
-// 与其它页面一致：.content-area 的布局由 ContentArea.scss 提供（否则容器撑不满主区域，webview 高度会塌陷）
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { getApiBase } from '../store/useStore';
+import { showToast } from './Toast';
+import { WorkshopCard } from './workshop/WorkshopCard';
+import { WorkshopRow } from './workshop/WorkshopRow';
+import { WorkshopDetail } from './workshop/WorkshopDetail';
+import { WorkshopFilters } from './workshop/WorkshopFilters';
+import type { WorkshopBrowseResult, WorkshopItem, WorkshopMeta } from './workshop/types';
 import './ContentArea.scss';
+import './Workshop.scss';
 
-// Declare webview type for Electron
-declare global {
-  interface HTMLWebViewElement extends HTMLElement {
-    src: string;
-    reload: () => void;
-    canGoBack: () => boolean;
-    canGoForward: () => boolean;
-    goBack: () => void;
-    goForward: () => void;
-    addEventListener: (event: string, callback: (...args: any[]) => void) => void;
-    removeEventListener: (event: string, callback: (...args: any[]) => void) => void;
-  }
-  interface HTMLElementTagNameMap {
-    'webview': HTMLWebViewElement;
-  }
-}
+const SEARCH_DEBOUNCE_MS = 400;
 
 export function WorkshopPage() {
-  const { steamUser } = useStore();
-  const [navUrl, setNavUrl] = useState('https://steamcommunity.com/app/550/workshop/');
-  const [addressInput, setAddressInput] = useState(navUrl);
-  const [isLoading, setIsLoading] = useState(false);
+  const api = getApiBase();
 
-  const handleNavigate = () => {
-    let url = addressInput.trim();
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      url = 'https://' + url;
-    }
-    setNavUrl(url);
-    setAddressInput(url);
-  };
+  const [meta, setMeta] = useState<WorkshopMeta | null>(null);
+  const [metaError, setMetaError] = useState('');
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handleNavigate();
-    }
-  };
+  // 输入框里正在打的字 vs 真正生效的关键词：不加这道防抖，每敲一个字都会打一次接口
+  const [qInput, setQInput] = useState('');
+  const [q, setQ] = useState('');
+  const [tags, setTags] = useState<string[]>([]);
+  const [matchAll, setMatchAll] = useState(false);
+  const [sort, setSort] = useState('trend');
+  const [days, setDays] = useState(0);
+  const [onlyNew, setOnlyNew] = useState(false);
 
-  const handleRefresh = () => {
-    const webview = document.querySelector('webview');
-    if (webview) webview.reload();
-  };
+  const [items, setItems] = useState<WorkshopItem[]>([]);
+  const [cursor, setCursor] = useState('');
+  const [hasMore, setHasMore] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [source, setSource] = useState<'api' | 'html'>('html');
+  const [note, setNote] = useState('');
 
-  const handleGoBack = () => {
-    const webview = document.querySelector('webview');
-    if (webview && webview.canGoBack()) webview.goBack();
-  };
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState('');
 
-  const handleGoForward = () => {
-    const webview = document.querySelector('webview');
-    if (webview && webview.canGoForward()) webview.goForward();
-  };
+  const [detail, setDetail] = useState<WorkshopItem | null>(null);
+  const [queued, setQueued] = useState<Record<string, boolean>>({});
+  const [queueing, setQueueing] = useState(false);
 
-  const handleOpenInBrowser = useCallback(() => {
-    // Use Electron IPC to open in default browser
-    const url = navUrl;
-    // Try the exposed API from preload
+  // 排版：卡片墙 / 单列列表。与「我的 Mod」同一个做法，记在 localStorage 里，
+  // 重启后保持上次选择（但键名分开，两个页面的密度偏好互不影响）。
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>(() => {
     try {
-      (window as any).openExternal?.(url);
+      return localStorage.getItem('l4d2-workshop-view') === 'list' ? 'list' : 'grid';
     } catch {
-      window.open(url, '_blank');
+      return 'grid';
     }
-  }, [navUrl]);
+  });
+  const changeViewMode = useCallback((mode: 'grid' | 'list') => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem('l4d2-workshop-view', mode);
+    } catch {
+      /* 隐私模式写不进去，忽略 */
+    }
+  }, []);
+
+  // 每次请求带一个自增号：筛选连点时只认最后一次，避免旧结果盖掉新结果
+  const reqSeq = useRef(0);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setQ(qInput.trim()), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(t);
+  }, [qInput]);
+
+  useEffect(() => {
+    let alive = true;
+    fetch(`${api}/api/workshop/meta`)
+      .then((r) => r.json())
+      .then((d: WorkshopMeta) => { if (alive) { setMeta(d); setSort((s) => (d.sorts.some((x) => x.id === s) ? s : 'trend')); } })
+      .catch((e) => { if (alive) setMetaError(String(e)); });
+    return () => { alive = false; };
+  }, [api]);
+
+  const buildParams = useCallback((next: string) => {
+    const p = new URLSearchParams();
+    p.set('sort', sort);
+    if (q) p.set('q', q);
+    if (tags.length) p.set('tags', tags.join(','));
+    if (matchAll) p.set('match_all', 'true');
+    if (days) p.set('days', String(days));
+    if (next) p.set('page', next);
+    return p;
+  }, [sort, q, tags, matchAll, days]);
+
+  const load = useCallback(async (reset: boolean) => {
+    const seq = ++reqSeq.current;
+    if (reset) { setLoading(true); setError(''); } else { setLoadingMore(true); }
+    try {
+      const p = buildParams(reset ? '' : cursor);
+      const res = await fetch(`${api}/api/workshop/browse?${p.toString()}`);
+      const data = await res.json().catch(() => ({}));
+      if (seq !== reqSeq.current) return;          // 已被更新的请求取代
+      if (!res.ok) {
+        setError(data.detail || `请求失败（HTTP ${res.status}）`);
+        if (reset) { setItems([]); setCursor(''); setHasMore(false); }
+        return;
+      }
+      const d = data as WorkshopBrowseResult;
+      setItems((prev) => (reset ? d.items : [...prev, ...d.items]));
+      setCursor(d.next || '');
+      setHasMore(!!d.has_more);
+      setTotal(d.total || 0);
+      setSource(d.source);
+      setNote(d.note || '');
+      setError('');
+    } catch (e) {
+      if (seq === reqSeq.current) {
+        setError(`连不上本地服务：${(e as Error).message}`);
+        if (reset) setItems([]);
+      }
+    } finally {
+      if (seq === reqSeq.current) { setLoading(false); setLoadingMore(false); }
+    }
+  }, [api, buildParams, cursor]);
+
+  // 筛选条件一变就回到第一页：否则会出现「第 5 页 + 新条件 = 空页」
+  useEffect(() => { void load(true); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [sort, q, tags.join(','), matchAll, days]);
+
+  const toggleTag = (tag: string) => {
+    setTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
+  };
+
+  const shown = useMemo(
+    () => (onlyNew ? items.filter((it) => !it.downloaded) : items),
+    [items, onlyNew],
+  );
+
+  const openDetail = (item: WorkshopItem) => setDetail(item);
+
+  const openInBrowser = useCallback((item: WorkshopItem) => {
+    const url = `https://steamcommunity.com/sharedfiles/filedetails/?id=${item.id}`;
+    const el = window.electronAPI as { openExternal?: (u: string) => Promise<void> } | undefined;
+    void el?.openExternal?.(url);
+  }, []);
+
+  const queue = useCallback(async (item: WorkshopItem) => {
+    setQueueing(true);
+    try {
+      const res = await fetch(`${api}/api/download/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: item.id }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        // 这个接口连「解析失败」都是 200 + error 字段返回的，所以两个都要看
+        showToast(data.detail || data.error || '加入队列失败', 'error');
+        return;
+      }
+      const added = (data.added || []).length;
+      const ignored = (data.ignored || []).length;
+      if (added > 0) {
+        setQueued((s) => ({ ...s, [item.id]: true }));
+        showToast(`已加入下载队列：${item.title || item.id}`, 'success');
+      } else {
+        // 已经在队列里 / 已在本地：这不是错，但要说清为什么没进去
+        showToast(ignored ? '这个 Mod 已经在下载队列里，或本地已有' : '没有加入任何任务', 'warning');
+      }
+    } catch (e) {
+      showToast(`加入队列失败：${(e as Error).message}`, 'error');
+    } finally {
+      setQueueing(false);
+    }
+  }, [api]);
+
+  const headerHint = meta?.has_key
+    ? `已启用 API（每页 ${meta.page_size} 条，带评分）`
+    : '未配置 API Key：走工坊网页，每页 30 条';
 
   return (
-    <div className="content-area" style={{ display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
-      {/* Toolbar */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '4px',
-        padding: '8px 12px',
-        borderBottom: '1px solid var(--border-color)',
-        background: 'var(--bg-primary-solid)',
-        flexShrink: 0,
-      }}>
-        {/* Login indicator + open in browser */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '6px',
-          marginRight: '4px',
-          flexShrink: 0,
-        }}>
-          {steamUser && (
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              fontSize: '12px',
-              color: 'var(--text-secondary)',
-            }}>
-              <img
-                src={`/api/auth/steam/avatar?t=${Date.now()}`}
-                alt=""
-                style={{ width: 22, height: 22, borderRadius: '50%', objectFit: 'cover' }}
-              />
-              <span style={{ maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{steamUser.nickname}</span>
+    <div className="content-area wk-page">
+      <div className="wk-top">
+        <div className="wk-top__row">
+          <input
+            className="wk-search"
+            value={qInput}
+            onChange={(e) => setQInput(e.target.value)}
+            placeholder="搜索工坊 Mod 标题或描述（中文也行）…"
+          />
+          <select className="wk-select" value={sort} onChange={(e) => setSort(e.target.value)} title="排序">
+            {(meta?.sorts || [{ id: 'trend', label: '趋势', requires_key: false }]).map((s) => {
+              const blocked = s.requires_key && !meta?.has_key;
+              return (
+                <option key={s.id} value={s.id} disabled={blocked}>
+                  {s.label}{blocked ? '（需 API Key）' : ''}
+                </option>
+              );
+            })}
+          </select>
+          <select className="wk-select" value={days} onChange={(e) => setDays(Number(e.target.value))} title="时间范围">
+            <option value={0}>不限时间</option>
+            <option value={7}>最近 7 天热门</option>
+            <option value={30}>最近 30 天热门</option>
+          </select>
+          <label className="wk-toggle" title="只显示还没下载的（仅过滤已加载的部分）">
+            <input type="checkbox" checked={onlyNew} onChange={(e) => setOnlyNew(e.target.checked)} />
+            只看未下载
+          </label>
+          <button className="wk-btn wk-btn--ghost" onClick={() => void load(true)} disabled={loading}>
+            {loading ? '加载中…' : '刷新'}
+          </button>
+
+          {/* 排版切换：卡片墙 / 单列列表。图标与「我的 Mod」工具栏那组保持一致，
+              免得同一个功能在两个页面长得不一样。 */}
+          <div className="wk-view" role="group" aria-label="布局方式">
+            <button
+              type="button"
+              className={`wk-view__btn ${viewMode === 'grid' ? 'active' : ''}`}
+              onClick={() => changeViewMode('grid')}
+              title="卡片视图"
+              aria-pressed={viewMode === 'grid'}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="3" width="7" height="7" rx="1.5" />
+                <rect x="14" y="3" width="7" height="7" rx="1.5" />
+                <rect x="3" y="14" width="7" height="7" rx="1.5" />
+                <rect x="14" y="14" width="7" height="7" rx="1.5" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className={`wk-view__btn ${viewMode === 'list' ? 'active' : ''}`}
+              onClick={() => changeViewMode('list')}
+              title="列表视图"
+              aria-pressed={viewMode === 'list'}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="4" width="5" height="5" rx="1" />
+                <line x1="11" y1="6.5" x2="21" y2="6.5" strokeLinecap="round" />
+                <rect x="3" y="15" width="5" height="5" rx="1" />
+                <line x1="11" y1="17.5" x2="21" y2="17.5" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div className="wk-top__sub">
+          <span className={`wk-source wk-source--${source}`}>
+            {source === 'api' ? 'Steam API' : '工坊网页'}
+          </span>
+          <span>
+            {total > 0 ? `共 ${total.toLocaleString()} 个结果 · ` : ''}
+            已加载 {shown.length} 个
+            {onlyNew && items.length !== shown.length ? `（本地已有 ${items.length - shown.length} 个已隐藏）` : ''}
+          </span>
+          <span className="wk-top__hint" title={headerHint}>{headerHint}</span>
+        </div>
+      </div>
+
+      <div className="wk-main">
+        {meta && (
+          <aside className="wk-side">
+            <WorkshopFilters
+              groups={meta.tag_groups}
+              selected={tags}
+              matchAll={matchAll}
+              onToggleTag={toggleTag}
+              onClear={() => setTags([])}
+              onMatchAllChange={setMatchAll}
+            />
+          </aside>
+        )}
+
+        <div className="wk-content">
+          {note && !error && <div className="wk-note">{note}</div>}
+
+          {metaError && (
+            <div className="wk-state wk-state--err">
+              <b>读不到筛选项</b>
+              <p>{metaError}</p>
+              <button className="wk-btn" onClick={() => window.location.reload()}>重新加载</button>
             </div>
           )}
-          <button
-            onClick={handleOpenInBrowser}
-            title="在浏览器中打开（使用已登录的账号）"
-            style={{
-              border: '1px solid var(--border-color)',
-              background: 'transparent',
-              cursor: 'pointer',
-              color: 'var(--accent-text)',
-              padding: '4px 8px',
-              borderRadius: '6px',
-              fontSize: '12px',
-              whiteSpace: 'nowrap',
-              fontFamily: 'var(--font-family)',
-            }}
-          >
-            在浏览器打开 ↗
-          </button>
+
+          {error ? (
+            <div className="wk-state wk-state--err">
+              <b>没取到列表</b>
+              <p>{error}</p>
+              <button className="wk-btn wk-btn--primary" onClick={() => void load(true)}>重试</button>
+            </div>
+          ) : loading && items.length === 0 ? (
+            <div className={viewMode === 'list' ? 'wk-list' : 'wk-grid'}>
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i} className={`wk-skeleton${viewMode === 'list' ? ' wk-skeleton--row' : ''}`} />
+              ))}
+            </div>
+          ) : shown.length === 0 ? (
+            <div className="wk-state">
+              <b>{items.length > 0 ? '当前页的 Mod 都已下载' : '没有匹配的 Mod'}</b>
+              <p>
+                {items.length > 0
+                  ? '关掉「只看未下载」，或者点「加载更多」继续往后翻。'
+                  : '换几个标签试试，或者清空筛选条件。工坊里同一个 Mod 的标签可能和你猜的不一样（比如「音效」的内部名是 Sounds）。'}
+              </p>
+              {(tags.length > 0 || q) && (
+                <button className="wk-btn" onClick={() => { setTags([]); setQInput(''); setDays(0); }}>清空条件</button>
+              )}
+            </div>
+          ) : (
+            <>
+              {/* key 里带上 viewMode：切换排版时重建容器，新的一批卡片/行会重新
+                  错峰入场一次，切换这个动作本身有明确反馈（与本地 Mod 列表同理）。 */}
+              <div className={viewMode === 'list' ? 'wk-list' : 'wk-grid'} key={viewMode}>
+                {viewMode === 'list'
+                  ? shown.map((it, i) => (
+                      <WorkshopRow key={it.id} item={it} api={api} index={i} onClick={openDetail} />
+                    ))
+                  : shown.map((it, i) => (
+                      <WorkshopCard key={it.id} item={it} api={api} index={i} onClick={openDetail} />
+                    ))}
+              </div>
+              {hasMore && (
+                <div className="wk-more">
+                  <button className="wk-btn" onClick={() => void load(false)} disabled={loadingMore}>
+                    {loadingMore ? '加载中…' : '加载更多'}
+                  </button>
+                </div>
+              )}
+            </>
+          )}
         </div>
-
-        {/* Nav buttons */}
-        <button
-          onClick={handleGoBack}
-          style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px' }}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <polyline points="15 18 9 12 15 6" />
-          </svg>
-        </button>
-        <button
-          onClick={handleGoForward}
-          style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px' }}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <polyline points="9 18 15 12 9 6" />
-          </svg>
-        </button>
-        <button
-          onClick={handleRefresh}
-          style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px' }}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <polyline points="23 4 23 10 17 10" />
-            <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10" />
-          </svg>
-        </button>
-
-        {/* Address bar */}
-        <div style={{ flex: 1, display: 'flex', gap: '6px' }}>
-          <input
-            type="text"
-            value={addressInput}
-            onChange={(e) => setAddressInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            style={{
-              flex: 1,
-              padding: '6px 12px',
-              border: '1px solid var(--border-color)',
-              borderRadius: '8px',
-              background: 'var(--bg-card-hover)',
-              color: 'var(--text-primary)',
-              fontSize: '13px',
-              outline: 'none',
-              fontFamily: 'var(--font-family)',
-            }}
-            placeholder="输入网址..."
-          />
-          <button
-            onClick={handleNavigate}
-            style={{
-              padding: '6px 12px',
-              border: 'none',
-              borderRadius: '8px',
-              background: 'var(--accent)',
-              color: 'var(--on-accent)',
-              cursor: 'pointer',
-              fontSize: '12px',
-              fontWeight: 600,
-              fontFamily: 'var(--font-family)',
-            }}
-          >
-            前往
-          </button>
-        </div>
-
-        {isLoading && (
-          <div className="workshop-spinner" />
-        )}
       </div>
 
-      {/* Browser area - always show webview} */}
-      <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        <webview
-          id="workshop-webview"
-          src={navUrl}
-          partition="persist:steamworkshop"
-          style={{ width: '100%', height: '100%', border: 'none' }}
+      {detail && (
+        <WorkshopDetail
+          item={detail}
+          api={api}
+          onClose={() => setDetail(null)}
+          onQueue={queue}
+          onOpenInBrowser={openInBrowser}
+          queued={!!queued[detail.id]}
+          busy={queueing}
         />
-      </div>
+      )}
     </div>
   );
 }

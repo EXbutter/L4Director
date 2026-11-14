@@ -9,9 +9,11 @@ if _backend_dir not in sys.path:
     print(f"[Startup] Added backend dir to sys.path: {_backend_dir}")
 
 # Fix Unicode encoding for Windows console (GBK can't handle emoji/special chars)
-if sys.stdout.encoding and sys.stdout.encoding.upper() in ('GBK', 'GB2312', 'GB18032'):
+# 注意是 GB18030（不是 GB18032）：GB18030 是 Windows 中文环境的完整字符集，
+# 之前写错的这个名字永远匹配不上，等于这段兜底从来没生效过。
+if sys.stdout.encoding and sys.stdout.encoding.upper() in ('GBK', 'GB2312', 'GB18030'):
     sys.stdout.reconfigure(errors='replace')  # type: ignore
-if sys.stderr.encoding and sys.stderr.encoding.upper() in ('GBK', 'GB2312', 'GB18032'):
+if sys.stderr.encoding and sys.stderr.encoding.upper() in ('GBK', 'GB2312', 'GB18030'):
     sys.stderr.reconfigure(errors='replace')  # type: ignore
 import argparse
 import re
@@ -69,10 +71,17 @@ async def _app_lifespan(_app: FastAPI):
     yield
 
 
+# 版本号统一由 Electron 主进程通过 L4DIRECTOR_APP_VERSION 传入。
+# 这里的默认值只在「直接 python main.py 跑后端」时用到，但必须是**唯一一份** ——
+# 以前 FastAPI 与 /api/health 各写一个默认值（1.1.0 / 1.2.0），两边长期不一致，
+# 排查线上问题时没法确认对面到底是哪个版本。
+_DEFAULT_APP_VERSION = "1.3.1"
+APP_VERSION = os.environ.get("L4DIRECTOR_APP_VERSION", _DEFAULT_APP_VERSION)
+
+
 app = FastAPI(
     title="L4D2 Mod Manager API",
-    # 版本号统一由 Electron 主进程通过 L4DIRECTOR_APP_VERSION 传入，避免多处写死不一致
-    version=os.environ.get("L4DIRECTOR_APP_VERSION", "1.1.0"),
+    version=APP_VERSION,
     description="Left 4 Dead 2 Mod Manager Backend",
     lifespan=_app_lifespan,
 )
@@ -137,7 +146,7 @@ _steam_avatar_cache: dict[str, tuple[float, bytes, str]] = {}
 @app.get("/api/health")
 def health_check():
     """健康检查接口"""
-    return {"status": "ok", "version": os.environ.get("L4DIRECTOR_APP_VERSION", "1.2.0")}
+    return {"status": "ok", "version": APP_VERSION}
 
 
 @app.get("/api/status")
@@ -231,6 +240,14 @@ def apply_mod_prefs_endpoint():
         raise HTTPException(status_code=400, detail="请先配置 Addons 目录")
 
     count = scanner.apply_mod_prefs_to_addonlist()
+    # count == 0 有两种可能：本来就没有需要写的条目，或者写失败了。
+    # 后者必须报出来 —— 否则用户点完「应用」看到成功，进游戏发现设置没变。
+    write_error = scanner.last_addonlist_error()
+    if write_error and count == 0:
+        raise HTTPException(
+            status_code=500,
+            detail=f"设置已保存在软件里，但写入 addonlist.txt 失败：{write_error}",
+        )
     game_running = _game_is_running_cached()
     if not game_running:
         # 游戏没在运行：文件就是最终状态，不需要再纠正
@@ -274,7 +291,13 @@ def toggle_mod(mod_name: str, path: Optional[str] = None):
     # 游戏正在运行时改的启停只是「写进文件」，游戏内存里仍是旧状态，
     # 退出时会把旧状态写回、覆盖掉这次改动；标记一下，等游戏退出后自动重新应用。
     _mark_pending_reapply_if_game_running()
-    return vars(result)
+    payload = vars(result)
+    # addonlist.txt 没写成（只读 / 被占用）：卡片的勾选已经在软件里生效，
+    # 但游戏读到的还是旧文件 —— 必须如实告诉界面，别让它显示成完全成功。
+    write_error = scanner.last_addonlist_error()
+    if write_error:
+        payload['addonlist_write_error'] = write_error
+    return payload
 
 
 @app.post("/api/mods/addoninfo")
@@ -365,6 +388,19 @@ def run_cache_gc():
     return result
 
 
+def _count_vpks(addons_dir: Path) -> int:
+    """数一下目录里有多少个 VPK（含 workshop 两层）。用来说明「这个目录到底对不对」。"""
+    total = 0
+    try:
+        total += sum(1 for _ in addons_dir.glob('*.vpk'))
+        ws = addons_dir / 'workshop'
+        if ws.is_dir():
+            total += sum(1 for _ in ws.rglob('*.vpk'))
+    except OSError:
+        pass
+    return total
+
+
 @app.post("/api/settings/addons-path")
 def set_addons_path(data: dict):
     """设置 addons 路径"""
@@ -388,7 +424,13 @@ def set_addons_path(data: dict):
     except Exception as _e:
         print(f"[WsUpdate] auto check after path set failed: {_e}")
 
-    return {"status": "ok", "addons_path": normalized_path}
+    # 带回 VPK 数量：路径合法但一个包都没有时（选错层级、选了空目录），
+    # 界面要能说「已保存，但这个目录里没有 Mod」，而不是干巴巴的「已保存 ✓」。
+    return {
+        "status": "ok",
+        "addons_path": normalized_path,
+        "vpk_count": _count_vpks(Path(normalized_path)),
+    }
 
 
 @app.post("/api/settings/auto-detect")
@@ -396,8 +438,11 @@ def auto_detect_path():
     """自动检测 addons 路径"""
     path = scanner.auto_detect_addons_path()
     if path:
-        return {"status": "ok", "addons_path": path}
-    raise HTTPException(status_code=404, detail="Could not auto-detect addons path")
+        return {"status": "ok", "addons_path": path, "vpk_count": _count_vpks(Path(path))}
+    raise HTTPException(
+        status_code=404,
+        detail="没找到《求生之路 2》的 addons 目录，请在下面手动选择一次",
+    )
 
 
 # ── 游戏进程检测 ──────────────────────────────────────────────────────
@@ -407,6 +452,9 @@ _GAME_PROCESS_NAME = "left4dead2.exe"
 _GAME_STATUS_CACHE_TTL = 2.0
 _game_status_cache: dict = {"time": 0.0, "running": False, "pid": None}
 _game_status_lock = threading.Lock()
+# 只用于「同一时刻只有一个线程在拉 tasklist」，不保护状态；
+# 状态由 _game_status_lock 保护（两者顺序固定：先 probe 后 status，不会互等）。
+_game_probe_lock = threading.Lock()
 
 
 def _detect_game_process() -> tuple[bool, Optional[int]]:
@@ -467,19 +515,31 @@ def get_game_status():
     reapplied: Optional[int] = None
     with _game_status_lock:
         cached = now - _game_status_cache["time"] < _GAME_STATUS_CACHE_TTL
-        if not cached:
-            running, pid = _detect_game_process()
-            _game_status_cache.update({"time": now, "running": running, "pid": pid})
-            if not running:
-                # 游戏不在运行：只要还留着「运行期间改过设置」的标记就纠正一次。
-                # 这样既覆盖「游戏退出时软件正开着」的情况，也覆盖「软件没开着、
-                # 游戏退出把旧状态写回了文件」的情况（标记会保留到下次启动软件）。
-                reapplied = _reapply_prefs_after_game_exit()
+    if not cached:
+        # ⚠️ 子进程调用与写盘都在锁外做。
+        # 以前整段（tasklist 最长 6 秒 + 重写 addonlist.txt + 写 data.json）都握着
+        # _game_status_lock，而每次 Mod 启停都会走 _game_is_running_cached ——
+        # 表现就是「点开关要愣好几秒」。现在锁只保护那几行内存赋值。
+        # _game_probe_lock 只负责「同一时刻只有一个线程在拉 tasklist」，不阻塞读缓存。
+        with _game_probe_lock:
+            with _game_status_lock:
+                still_fresh = time.time() - _game_status_cache["time"] < _GAME_STATUS_CACHE_TTL
+            if not still_fresh:
+                running, pid = _detect_game_process()
+                if not running:
+                    # 游戏不在运行：只要还留着「运行期间改过设置」的标记就纠正一次。
+                    # 这样既覆盖「游戏退出时软件正开着」的情况，也覆盖「软件没开着、
+                    # 游戏退出把旧状态写回了文件」的情况（标记会保留到下次启动软件）。
+                    reapplied = _reapply_prefs_after_game_exit()
+                with _game_status_lock:
+                    _game_status_cache.update({"time": time.time(), "running": running, "pid": pid})
+    with _game_status_lock:
+        snapshot = dict(_game_status_cache)
     response = {
-        "running": _game_status_cache["running"],
-        "pid": _game_status_cache["pid"],
+        "running": snapshot["running"],
+        "pid": snapshot["pid"],
         "process": _GAME_PROCESS_NAME,
-        "checked_at": _game_status_cache["time"],
+        "checked_at": snapshot["time"],
     }
     if reapplied is not None:
         # 仅在「刚检测到游戏退出并做了纠正」的那一次响应里带上，供界面提示
@@ -493,13 +553,21 @@ def get_game_status():
 
 
 def _game_is_running_cached() -> bool:
-    """游戏是否在运行（复用上面的 2 秒缓存，避免每次启停都额外拉一次 tasklist）。"""
-    now = time.time()
+    """游戏是否在运行（复用上面的 2 秒缓存，避免每次启停都额外拉一次 tasklist）。
+
+    缓存命中时只碰一次内存，不持锁做子进程调用 —— 这条会被每一次 Mod 启停调到。
+    """
     with _game_status_lock:
-        if now - _game_status_cache["time"] >= _GAME_STATUS_CACHE_TTL:
-            running, pid = _detect_game_process()
-            _game_status_cache.update({"time": now, "running": running, "pid": pid})
-    return bool(_game_status_cache["running"])
+        if time.time() - _game_status_cache["time"] < _GAME_STATUS_CACHE_TTL:
+            return bool(_game_status_cache["running"])
+    with _game_probe_lock:
+        with _game_status_lock:
+            if time.time() - _game_status_cache["time"] < _GAME_STATUS_CACHE_TTL:
+                return bool(_game_status_cache["running"])
+        running, pid = _detect_game_process()
+        with _game_status_lock:
+            _game_status_cache.update({"time": time.time(), "running": running, "pid": pid})
+        return running
 
 
 def _mark_pending_reapply_if_game_running():
@@ -736,12 +804,53 @@ def _image_media_type(path: Path) -> str:
     return _IMAGE_MEDIA_TYPES.get(path.suffix.lower(), 'image/jpeg')
 
 
+def _allowed_media_roots() -> list[Path]:
+    """允许通过缩略图接口读取的根目录。
+
+    这个接口原本直接 `FileResponse(Path(path))`，等于把「读本机任意文件」暴露给了
+    渲染进程 —— 只要有人能让它发一个请求（页面注入、恶意 Mod 里的 HTML 封面），
+    就能把 `data.json`、`loginusers.vdf` 之类的东西读出来。媒体类型标错不影响内容返回。
+    所以除了限定根目录，还要限定扩展名（见 `_is_readable_media`）。
+    """
+    roots: list[Path] = [_CACHE_DIR]
+    addons = scanner.get_addons_path()
+    if addons:
+        roots.append(Path(addons))
+    try:
+        outdir = _dl().outdir
+        if outdir:
+            roots.append(Path(outdir))
+    except Exception:
+        pass
+    return roots
+
+
+def _is_readable_media(file_path: Path) -> bool:
+    """缩略图接口只允许读图片，且必须落在已知目录内。"""
+    if file_path.suffix.lower() not in _IMAGE_MEDIA_TYPES:
+        return False
+    try:
+        resolved = file_path.resolve()
+    except OSError:
+        return False
+    for root in _allowed_media_roots():
+        try:
+            resolved.relative_to(root.resolve())
+            return True
+        except (ValueError, OSError):
+            continue
+    return False
+
+
 @app.get("/api/thumbnail/workshop/{filename}")
 def get_workshop_thumbnail(filename: str):
     """获取创意工坊缩略图"""
     addons_path = scanner.get_addons_path()
     if not addons_path:
         raise HTTPException(status_code=404, detail="Addons path not configured")
+    if Path(filename).name != filename:
+        # 与上面两个接口同一类问题：不允许带目录成分
+        raise HTTPException(status_code=400, detail="文件名不合法")
     thumb_path = Path(addons_path) / 'workshop' / filename
     if not thumb_path.exists():
         raise HTTPException(status_code=404, detail="Thumbnail not found")
@@ -751,6 +860,7 @@ def get_workshop_thumbnail(filename: str):
 @app.post("/api/packs/export")
 def export_pack(data: dict):
     """导出整合包为 ZIP 文件"""
+    import tempfile
     import zipfile
     import json
     
@@ -836,35 +946,39 @@ def export_pack(data: dict):
                 name_map[f"mod_{i}_thumb{thumb_path.suffix}"] = thumb_path.name
                 break
     
-    # Streaming ZIP generation using io.BytesIO buffer
-    async def stream_zip():
-        buffer = io.BytesIO()
-        with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-            # Write name mapping
-            zf.writestr('_name_map.json', json.dumps(name_map, ensure_ascii=False, indent=2))
-            
-            # Write each VPK file
-            for i, file_path in enumerate(files_to_add, 1):
-                archive_name = f"mod_{i}{file_path.suffix}"
-                print(f"[Export] Streaming {file_path.name} -> {archive_name}")
-                with open(file_path, 'rb') as f:
-                    zf.writestr(archive_name, f.read())
-            
-            # Write companion thumbnails
-            for thumb_path in companion_thumbs:
-                # Find archive name for this thumbnail
-                archive_thumb_name = None
-                for i, vpk_path in enumerate(files_to_add, 1):
-                    if vpk_path.stem == thumb_path.stem:
-                        archive_thumb_name = f"mod_{i}_thumb{thumb_path.suffix}"
-                        break
-                if archive_thumb_name:
-                    print(f"[Export] Streaming thumbnail {thumb_path.name} -> {archive_thumb_name}")
-                    with open(thumb_path, 'rb') as f:
-                        zf.writestr(archive_thumb_name, f.read())
-        
-        buffer.seek(0)
-        yield buffer.read()
+    # 同步生成器（不是 async）：压缩是 CPU 密集 + 磁盘读取，交给 FastAPI 的
+    # 线程池迭代，不会堵住事件循环。
+    def stream_zip():
+        # SpooledTemporaryFile：小于 64MB 时只占内存，超过就自动落到临时文件。
+        # 以前是 io.BytesIO + zf.writestr(name, f.read()) —— 每个 VPK 整个读进内存，
+        # 一个 3GB 的整合包峰值要 6GB（原文件 + zip 各一份），Electron 直接 OOM。
+        with tempfile.SpooledTemporaryFile(max_size=64 * 1024 * 1024) as spool:
+            with zipfile.ZipFile(spool, 'w', zipfile.ZIP_DEFLATED) as zf:
+                # Write name mapping
+                zf.writestr('_name_map.json', json.dumps(name_map, ensure_ascii=False, indent=2))
+
+                # Write each VPK file（zf.write 由 zipfile 自己分块读源文件）
+                for i, file_path in enumerate(files_to_add, 1):
+                    archive_name = f"mod_{i}{file_path.suffix}"
+                    print(f"[Export] Adding {file_path.name} -> {archive_name}")
+                    zf.write(file_path, arcname=archive_name)
+
+                # Write companion thumbnails
+                for thumb_path in companion_thumbs:
+                    archive_thumb_name = None
+                    for i, vpk_path in enumerate(files_to_add, 1):
+                        if vpk_path.stem == thumb_path.stem:
+                            archive_thumb_name = f"mod_{i}_thumb{thumb_path.suffix}"
+                            break
+                    if archive_thumb_name:
+                        zf.write(thumb_path, arcname=archive_thumb_name)
+
+            spool.seek(0)
+            while True:
+                chunk = spool.read(1024 * 1024)
+                if not chunk:
+                    break
+                yield chunk
     
     encoded_filename = urllib.parse.quote(f"{pack_name}.zip", safe='')
     
@@ -1110,6 +1224,93 @@ def list_mods_delta(since: Optional[str] = None):
     }
 
 
+_SCAN_STATUS_FAST_TTL = 60.0
+_scan_status_sig = {'sig': None, 'at': 0.0}
+_scan_status_lock = threading.Lock()
+
+
+def _addons_signature(addons_dir: Path):
+    """addons 目录的轻量指纹：(目录 mtime, 顶层 vpk 数, 顶层最大 mtime, 顶层总字节,
+    workshop mtime, workshop vpk 数, workshop 最大 mtime, workshop 总字节)。
+
+    用途是**快速负判定**：前端每 5 秒轮询一次 scan-status，而完整比对要 glob 三次
+    再给每个 VPK 单独 stat。1000 个包的机器上那是持续的抖动。
+
+    为什么不能只看目录 mtime：目录 mtime 只在「增删条目」时变，**原地改写文件内容
+    不会**（下载器覆盖、手动替换同名文件都可能发生在同一秒内）。所以指纹里必须带
+    上文件本身的 mtime 与大小，否则会出现「文件确实变了但 scan-status 说没变」。
+    Windows 上 os.scandir 返回的 entry 自带 stat 信息，取它不会多一次系统调用。
+    """
+    def _walk(dir_path: Path, collect_top_vpk: bool):
+        """返回 (vpk 数, 最大 mtime, 总字节, [子目录路径])。"""
+        count = 0
+        newest = 0.0
+        total = 0
+        subdirs: list[Path] = []
+        try:
+            with os.scandir(dir_path) as it:
+                for entry in it:
+                    try:
+                        st = entry.stat(follow_symlinks=False)
+                    except OSError:
+                        continue
+                    total += st.st_size
+                    newest = max(newest, st.st_mtime)
+                    if entry.name.lower().endswith('.vpk'):
+                        if collect_top_vpk or entry.is_file(follow_symlinks=False):
+                            count += 1
+                    elif collect_top_vpk and entry.is_dir(follow_symlinks=False):
+                        subdirs.append(Path(entry.path))
+        except OSError:
+            return None
+        return count, newest, total, subdirs
+
+    try:
+        dir_stat = addons_dir.stat()
+    except OSError:
+        return None
+
+    root = _walk(addons_dir, collect_top_vpk=True)
+    if root is None:
+        return None
+    root_count, root_newest, root_total, subdirs = root
+
+    ws_mtime = None
+    ws_count = 0
+    ws_newest = 0.0
+    ws_total = 0
+    for sub in subdirs:
+        if sub.name.lower() != 'workshop':
+            continue
+        try:
+            ws_mtime = sub.stat().st_mtime
+        except OSError:
+            continue
+        # workshop 下两种落法：workshop/*.vpk 与 workshop/<id>/*.vpk
+        ws_root = _walk(sub, collect_top_vpk=True)
+        if ws_root:
+            ws_count += ws_root[0]
+            ws_newest = max(ws_newest, ws_root[1])
+            ws_total += ws_root[2]
+            for inner in ws_root[3]:
+                got = _walk(inner, collect_top_vpk=False)
+                if got:
+                    ws_count += got[0]
+                    ws_newest = max(ws_newest, got[1])
+                    ws_total += got[2]
+
+    return (
+        dir_stat.st_mtime, root_count, root_newest, root_total,
+        ws_mtime, ws_count, ws_newest, ws_total,
+    )
+
+
+def _remember_scan_signature(sig):
+    with _scan_status_lock:
+        _scan_status_sig['sig'] = sig
+        _scan_status_sig['at'] = time.time()
+
+
 @app.get("/api/mods/scan-status")
 def scan_status():
     """获取扫描状态 — 检查 Mod 文件是否有变更，不用返回全部 Mod。
@@ -1125,13 +1326,29 @@ def scan_status():
     addons_path = scanner.get_addons_path()
     if not addons_path:
         return {"changed": False, "reason": "not_configured"}
-    
+
+    addons_dir = Path(addons_path)
+    if not addons_dir.is_dir():
+        # 路径还在配置里，但目录没了（盘没挂上 / 被删 / 改名）。
+        # 以前会一路走到"文件全被删光"的比对结果，把界面刷成空列表。
+        return {"changed": False, "reason": "addons_missing"}
+
     from services.data_store import get_scan_manifest
     manifest = get_scan_manifest()
-    if not manifest.files:
+    # 只有"从没扫过"才需要报 changed 逼前端扫一次。
+    # 扫过、但目录确实是空的（last_scan 有值且 files 为空）是正常状态，
+    # 不能每次都回 changed —— 那会让前端的静默刷新永久空转。
+    if not manifest.files and not manifest.last_scan:
         return {"changed": True, "reason": "no_previous_scan"}
-    
-    addons_dir = Path(addons_path)
+
+    signature = _addons_signature(addons_dir)
+    with _scan_status_lock:
+        cached_sig = _scan_status_sig['sig']
+        cached_at = _scan_status_sig['at']
+    if (signature is not None and signature == cached_sig
+            and (time.time() - cached_at) < _SCAN_STATUS_FAST_TTL):
+        return {"changed": False, "reason": "no_changes"}
+
     current_files = {}
     
     # Collect all VPK files with their mtimes（键的写法必须与 scan_manifest 完全一致：
@@ -1163,13 +1380,15 @@ def scan_status():
     # Compare with manifest
     old_files = manifest.files
     if current_files == old_files:
+        _remember_scan_signature(signature)
         return {"changed": False, "reason": "no_changes"}
-    
+
     # Compute differences
     added = [k for k in current_files if k not in old_files]
     removed = [k for k in old_files if k not in current_files]
     modified = [k for k in current_files if k in old_files and current_files[k] != old_files[k]]
-    
+
+    _remember_scan_signature(signature)
     return {
         "changed": True,
         "reason": "files_changed",
@@ -1215,6 +1434,9 @@ def get_thumbnail(path: Optional[str] = None, vpk_cover: Optional[str] = None):
         file_path = Path(path)
         if not file_path.exists() or not file_path.is_file():
             raise HTTPException(status_code=404, detail="Thumbnail not found")
+        if not _is_readable_media(file_path):
+            # 不在 addons / 缓存 / 下载目录内，或不是图片扩展名：拒绝
+            raise HTTPException(status_code=403, detail="这个路径不允许读取")
         return FileResponse(str(file_path), media_type=_image_media_type(file_path), headers=cache_headers)
     elif vpk_cover:
         cover_path = _resolve_cover_path(vpk_cover)
@@ -1497,13 +1719,36 @@ def _dl():
 
 
 def _image_mime_from_bytes(data: bytes) -> str:
+    """按**文件头**判格式，不看扩展名。
+
+    工坊封面统一存成 `<id>.jpg`，但里面经常是 GIF（真的动图）或 PNG。
+    以前这里缺 GIF 分支，于是动图被标成 image/jpeg 发出去 —— 浏览器靠嗅探
+    还能显示，可 `fetch()` + `createImageBitmap()` 这条路会按 Blob 的 type
+    选解码器，标错就直接解不出来，卡片只能回退到原图（于是又开始全速播动图）。
+    """
     if data[:8] == b"\x89PNG\r\n\x1a\n":
         return "image/png"
     if data[:3] == b"\xff\xd8\xff":
         return "image/jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
     if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "image/webp"
+    if data[:2] == b"BM":
+        return "image/bmp"
     return "image/jpeg"
+
+
+def _sniff_file_mime(path: Path) -> str:
+    """读文件头判 MIME；读不到就按扩展名兜底。"""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(16)
+    except OSError:
+        return _image_media_type(path)
+    guessed = _image_mime_from_bytes(head)
+    # 全是兜底值（image/jpeg）时也可能真是 jpeg，直接返回即可
+    return guessed
 
 
 # ── 创意工坊更新检查 ──────────────────────────────────────────────────
@@ -1557,6 +1802,111 @@ def workshop_updates_apply(payload: dict):
     if not result.get("ok"):
         raise HTTPException(status_code=409, detail=result.get("error") or "更新失败")
     return result
+
+
+@app.post("/api/workshop-updates/apply/cancel")
+def workshop_updates_apply_cancel():
+    """停止正在进行的更新。
+
+    已下载完成的包保留（它们本来就是新版本），当前这个在下一个分块边界退出，
+    不会留下半个 vpk —— download_one 的取消路径会丢弃临时文件。
+    """
+    result = _wsu().cancel_apply()
+    if not result.get("ok"):
+        raise HTTPException(status_code=409, detail=result.get("error") or "取消失败")
+    return result
+
+
+# ── 创意工坊浏览器（自写，不再依赖内嵌网页）──────────────────────────────
+# 两条数据路径由 services/workshop_browse.py 内部决定：
+#   * 没填 Steam API Key → 抓工坊网页拿 ID，再用免 key 的详情接口补字段（30 条/页）
+#   * 填了 key          → QueryFiles，100 条/页、带评分、有精确总数
+# 界面不关心走哪条，只按返回里的 source/page_size 显示。
+
+def _wb():
+    from services import workshop_browse as _mod
+    return _mod
+
+
+@app.get("/api/workshop/meta")
+def workshop_meta():
+    """筛选项、排序项、当前是否配了 key（前端首次渲染用）。"""
+    return _wb().meta()
+
+
+@app.get("/api/workshop/browse")
+def workshop_browse(
+    q: str = "",
+    sort: str = "trend",
+    days: int = 0,
+    match_all: bool = False,
+    page: str = "",
+    tags: str = "",
+    excluded: str = "",
+):
+    """一页工坊列表。
+
+    `tags` / `excluded` 用逗号分隔（标签里可能带空格，例如 `Special Infected`，
+    所以不用重复 query 参数，直接整体逗号切）。
+    `page` 是上一页返回的 `next` 原样传回：API 路径是 cursor 字符串，HTML 路径是页码。
+    """
+    split = lambda s: [t.strip() for t in (s or "").split(",") if t.strip()]
+    filters = {
+        "q": q,
+        "sort": sort,
+        "days": days,
+        "match_all": bool(match_all),
+        "tags": split(tags),
+        "excluded_tags": split(excluded),
+    }
+    try:
+        return _wb().browse(filters, page, scanner.get_addons_path())
+    except _wb().WorkshopError as e:
+        # 400 + 一句能照做的话：前端直接把 detail 显示在列表位置，不弹裸异常
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/workshop/item/{wid}")
+def workshop_item(wid: str):
+    """单个条目的完整描述（卡片上不显示描述，抽屉里才要）。"""
+    try:
+        return _wb().item_detail(wid)
+    except _wb().WorkshopError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/settings/steam-key")
+def get_steam_key():
+    """只返回是否配置 + 指纹，永远不把 key 原样回传给界面。"""
+    return _wb().key_status()
+
+
+@app.post("/api/settings/steam-key")
+def set_steam_key(payload: dict):
+    """保存 key（空字符串 = 清除）。保存前先验一次，避免存进去一个无效 key。"""
+    key = ((payload or {}).get("key") or "").strip()
+    try:
+        if key:
+            tested = _wb().verify_key(key)
+        else:
+            tested = None
+        state = _wb().set_api_key(key)
+    except _wb().WorkshopError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    _wb().clear_cache()
+    return {**state, "test": tested}
+
+
+@app.post("/api/settings/steam-key/test")
+def test_steam_key(payload: dict):
+    """试一下这把 key 能不能用（不保存）。返回实测耗时，用户能看到「能用且多快」。"""
+    key = ((payload or {}).get("key") or "").strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="先填一个 key 再测试")
+    try:
+        return _wb().verify_key(key)
+    except _wb().WorkshopError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/api/workshop-updates/settings")
@@ -1630,32 +1980,113 @@ def download_open_dir(payload: dict = None):
     return {"ok": True}
 
 
+_THUMB_CACHE_LIMIT = 256 * 1024 * 1024   # 封面缓存上限，超了按最久未访问淘汰
+_THUMB_CACHE_MAX_FILE = 4 * 1024 * 1024  # 单张超过这个大小就不落盘（GIF 动图居多）
+_LAST_PRUNE = 0.0                        # 上次扫描缓存的时间戳（节流用）
+
+
+def _preview_variant_url(url: str, width: int, height: int) -> str:
+    """给 Steam 图床地址加上「按尺寸取图」参数。
+
+    L4D2 工坊里有一批封面是几万像素的竖长条 / 二十多 MB 的 GIF 动图，原样抓下来
+    既费流量又费显存。Steam 图床支持 `imw/imh/ima/impolicy` 做服务端缩放，
+    典型收益：11.8 MB 的 600×600 动图 → 463 KB。
+
+    注意两点：
+      * 只有 steamusercontent 这类图床认这些参数，别的域名原样返回；
+      * **并非所有文件都生效**（实测有个 24.7 MB 的 GIF 完全无视参数），
+        所以客户端仍然必须做本地降采样兜底，参数只是省流量，不是正确性依赖。
+    """
+    if not url or width <= 0 or height <= 0:
+        return url
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    if "steamusercontent" not in host and "akamai" not in host:
+        return url
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}imw={width}&imh={height}&ima=fit&impolicy=Letterbox"
+
+
+def _prune_thumb_cache(limit: int = _THUMB_CACHE_LIMIT) -> None:
+    """把封面缓存压到限额以内（按最后访问时间淘汰最旧的）。
+
+    这不是用户数据，是随时可重建的派生缓存；不设上限时实测跑一趟工坊就能
+    堆到 500 MB（一张 28 MB 的动图比比皆是）。删不掉的文件（正被读取/占用）
+    直接跳过，下次再收。
+
+    每 60 秒最多扫一次：卡片是一张张加载的，每写一张就 glob 一遍目录，
+    缓存上万文件时光这一项就够拖慢响应。
+    """
+    global _LAST_PRUNE
+    now = time.time()
+    if now - _LAST_PRUNE < 60:
+        return
+    _LAST_PRUNE = now
+    try:
+        files = [p for p in _DL_THUMB_DIR.glob("*") if p.is_file()]
+    except OSError:
+        return
+    total = sum(p.stat().st_size for p in files if p.exists())
+    if total <= limit:
+        return
+    files.sort(key=lambda p: p.stat().st_mtime)
+    for p in files:
+        if total <= limit * 0.8:      # 一次收到 80%，避免每次写盘都触发一轮扫描
+            break
+        try:
+            size = p.stat().st_size
+            p.unlink()
+            total -= size
+        except OSError:
+            continue
+
+
 @app.get("/api/download/thumbnail")
-def download_thumbnail(wid: str, url: Optional[str] = None):
-    """工坊封面：优先读本地已下载的 <id>.jpg，其次走同一套直连逻辑抓取并缓存。"""
+def download_thumbnail(wid: str, url: Optional[str] = None,
+                       w: Optional[int] = None, h: Optional[int] = None):
+    """工坊封面：优先读本地已下载的 <id>.jpg，其次走同一套直连逻辑抓取并缓存。
+
+    `w` / `h` 是**卡片显示尺寸**（不是原图尺寸）：传了就让图床把图缩到这个
+    大小再抓，缓存也按尺寸分开存（`<id>_320x180.jpg`）。不传则保持原行为，
+    已下载的 Mod 目录里那份封面仍然优先。
+    """
     if not wid:
         raise HTTPException(status_code=400, detail="wid is required")
+    # 工坊 ID 一定是纯数字。以前直接 f"{wid}.jpg" 拼路径，传 ../../ 就能读到目录外的东西。
+    if not re.fullmatch(r'[0-9]{1,20}', wid):
+        raise HTTPException(status_code=400, detail="wid 必须是纯数字的创意工坊 ID")
 
     cache_headers = {"Cache-Control": "public, max-age=86400"}
     local = Path(_dl().outdir) / f"{wid}.jpg"
-    if local.is_file() and local.stat().st_size > 512:
-        return FileResponse(str(local), media_type=_image_media_type(local), headers=cache_headers)
+    # 本地这份是 Steam 客户端下载时附带的封面，好坏都得认（用户已经装了这个 Mod），
+    # 但只有请求原图时才用它 —— 卡片要小图时必须走下面的缩放分支。
+    if not w and not h and local.is_file() and local.stat().st_size > 512:
+        return FileResponse(str(local), media_type=_sniff_file_mime(local), headers=cache_headers)
 
-    cached = _DL_THUMB_DIR / f"{wid}.jpg"
+    variant = f"_{w}x{h}" if w and h else ""
+    cached = _DL_THUMB_DIR / f"{wid}{variant}.jpg"
     if cached.is_file() and cached.stat().st_size > 512:
-        return FileResponse(str(cached), media_type=_image_media_type(cached), headers=cache_headers)
+        try:
+            os.utime(cached, None)      # 记一次访问，LRU 淘汰时不会被误杀
+        except OSError:
+            pass
+        return FileResponse(str(cached), media_type=_sniff_file_mime(cached), headers=cache_headers)
 
     if not url:
         raise HTTPException(status_code=404, detail="no preview")
 
-    data = download_fetch_bytes(url)
+    data = download_fetch_bytes(_preview_variant_url(url, w or 0, h or 0))
     if not data:
         raise HTTPException(status_code=404, detail="preview fetch failed")
-    try:
-        _DL_THUMB_DIR.mkdir(parents=True, exist_ok=True)
-        cached.write_bytes(data)
-    except Exception:
-        pass
+    # 超大封面不落盘：工坊里既有 28 MB 的 GIF，也有 11 MB 的竖长条，缓存它们
+    # 等于让磁盘替 CDN 背锅（实测跑几趟就 500 MB）。这些图本来就来自边缘缓存、
+    # 重取只要 0.2 秒，不缓存反而更好；常见尺寸（几百 KB）照常缓存。
+    if len(data) <= _THUMB_CACHE_MAX_FILE:
+        try:
+            _DL_THUMB_DIR.mkdir(parents=True, exist_ok=True)
+            cached.write_bytes(data)
+        except Exception:
+            pass
+    _prune_thumb_cache()
     return Response(content=data, media_type=_image_mime_from_bytes(data), headers=cache_headers)
 
 

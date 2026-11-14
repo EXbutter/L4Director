@@ -19,8 +19,10 @@ import './WorkshopUpdateDock.scss';
  */
 export function WorkshopUpdateDock() {
   const workshopUpdates = useStore((s) => s.workshopUpdates);
+  const cancelWorkshopApply = useStore((s) => s.cancelWorkshopApply);
   const applying = workshopUpdates?.applying;
   const running = !!applying?.running;
+  const cancelling = !!applying?.cancelling;
   const checking = !!workshopUpdates?.checking && !running;
 
   // 进度的单调值：只在比上一次大时更新，任务结束再清零
@@ -143,10 +145,24 @@ export function WorkshopUpdateDock() {
 
         {(running || finished) && (
           <div className="ws-dock__current" title={running ? applying?.current || '' : ''}>
-            {running ? applying?.current || '准备中…' : '文件已覆盖到原位置，启停状态保持不变'}
+            {running
+              ? (cancelling ? '正在停止…（当前文件下完后停下）' : applying?.current || '准备中…')
+              : '文件已覆盖到原位置，启停状态保持不变'}
           </div>
         )}
       </div>
+
+      {/* 更新没有取消入口时，一个 2GB 的包点下去只能干等。已下完的保留，当前这个在分块边界退出 */}
+      {running && (
+        <button
+          className="ws-dock__stop"
+          onClick={() => void cancelWorkshopApply()}
+          disabled={cancelling}
+          title="停止更新（已下载完成的保留，当前文件会在下载到下一个分块时停下）"
+        >
+          {cancelling ? '停止中' : '停止'}
+        </button>
+      )}
 
       <button
         className="ws-dock__close"

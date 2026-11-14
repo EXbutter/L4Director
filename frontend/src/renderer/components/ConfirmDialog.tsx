@@ -91,8 +91,12 @@ export function ConfirmHost() {
         e.preventDefault();
         settle(false);
       } else if (e.key === 'Enter') {
+        // 焦点停在「取消」上时按 Enter 必须取消。以前这里是无条件 settle(true)，
+        // 于是「删除 Mod」这种不可撤销的操作，用户按 Esc 前手一抖敲个回车就执行了。
+        const active = document.activeElement as HTMLElement | null;
+        const onCancel = !!active && active.classList.contains('modal-btn-cancel');
         e.preventDefault();
-        settle(true);
+        settle(!onCancel);
       }
     };
     window.addEventListener('keydown', onKeyDown);

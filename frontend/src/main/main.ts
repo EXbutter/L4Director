@@ -10,6 +10,14 @@ import { initUpdater, getUpdateState, getUpdaterLogPath } from './updater';
 let mainWindow: BrowserWindow | null = null;
 let backendProcess: ChildProcess | null = null;
 
+// 开发模式开 CDP（127.0.0.1:9222）：核对布局/动效时可以直接读 DOM 的实时计算样式，
+// 不必靠截图猜坐标去点。只在未打包时生效 —— 安装版不会开放这个端口。
+// 用法：curl http://127.0.0.1:9222/json 拿 ws 地址，再走 Runtime.evaluate。
+if (!app.isPackaged) {
+  app.commandLine.appendSwitch('remote-debugging-port', '9222');
+  app.commandLine.appendSwitch('remote-allow-origins', '*');
+}
+
 // ============ 启动性能计时（加载速度基准 / 排障） ============
 // 记录 Electron 主进程从启动到各关键里程碑的耗时，写入
 // userData/startup-perf.json（保留最近 20 次），并随「导出日志」一起打包。
@@ -311,6 +319,22 @@ function createWindow() {
   // 打开外部链接（用于 Steam 登录）
   ipcMain.handle('shell:openExternal', async (_event, url: string) => {
     await shell.openExternal(url);
+  });
+
+  // 在资源管理器里选中某个文件（「解析失败的 VPK」提示条上的「打开所在目录」）
+  // 传的是文件路径而不是目录：选中文件比只打开目录更容易让用户找到那一个包。
+  ipcMain.handle('shell:showItemInFolder', (_event, filePath: string) => {
+    if (typeof filePath !== 'string' || !filePath.trim()) return false;
+    // 文件可能已经被删掉或改名了（提示条里的路径来自上一次扫描）。这种情况下
+    // showItemInFolder 什么也不做，界面看起来就是「点了没反应」—— 所以先判存在，
+    // 不存在就返回 false，让渲染层退化到「打开所在目录」。
+    try {
+      if (!fs.existsSync(filePath)) return false;
+    } catch {
+      return false;
+    }
+    shell.showItemInFolder(filePath);
+    return true;
   });
 
   // 文件夹选择对话框

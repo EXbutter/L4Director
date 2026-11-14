@@ -43,6 +43,8 @@ interface ElectronAPI {
   onMaximized: (callback: (isMaximized: boolean) => void) => void;
   selectFolder: () => Promise<string | null>;
   openExternal: (url: string) => Promise<void>;
+  /** 在资源管理器里定位文件（坏包提示条的「打开所在目录」） */
+  showItemInFolder: (filePath: string) => Promise<boolean>;
   setProxy: (host: string, port: string) => Promise<boolean>;
   getGpuAccelerationStatus: () => Promise<{ gpuAccelerationDisabled: boolean }>;
   setGpuAcceleration: (disabled: boolean) => Promise<{ success: boolean; error?: string }>;
@@ -89,6 +91,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   selectFolder: () => ipcRenderer.invoke('dialog:selectFolder'),
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+  showItemInFolder: (filePath: string) => ipcRenderer.invoke('shell:showItemInFolder', filePath),
   setProxy: (host: string, port: string) => ipcRenderer.invoke('proxy:set', host, port),
   // GPU 硬件加速
   getGpuAccelerationStatus: () => ipcRenderer.invoke('gpu:getStatus'),

@@ -7,10 +7,14 @@ import { ThumbImage } from './ThumbImage';
 import { ModSwitch } from './ModSwitch';
 import { showToast } from './Toast';
 import { confirmDialog } from './ConfirmDialog';
+import { UnreadableNotice } from './UnreadableNotice';
+import { useModalA11y } from '../hooks/useModalA11y';
 import './ContentArea.scss';
 import './MyModsPage.scss';
 
 /// ── Virtualized list constants ──
+// 说明：这两个常量目前没有参与渲染（列表靠 CSS content-visibility 跳过屏外绘制），
+// 保留是因为做真正的虚拟化时要按它们算窗口。别再新增依赖它们的死代码。
 const ITEM_HEIGHT = 120;        // approximate card height in px
 const OVERSCAN_ITEMS = 10;      // extra items to render above/below viewport
 const SCROLL_THROTTLE_MS = 80;  // throttle scroll handler
@@ -228,7 +232,7 @@ const isPickableTag = (tag: string) =>
   (VPK_CATEGORIES as readonly string[]).includes(tag) || isFineTag(tag);
 
 export function MyModsPage() {
-  const { mods, packs, fetchMods, refreshAll, loading, scanning, scanProgress, toggleMod, addAddoninfo, addModToPack, addModsToPack, setContextMenu, contextMenu, deleteMod, deleteConfirmMod, setDeleteConfirmMod, confirmDeleteMod, renameModDisplayName, getModDisplayName, setModCategory, setModTags, workshopUpdates, checkWorkshopUpdates, cancelWorkshopCheck, applyWorkshopUpdates } = useStore();
+  const { mods, packs, fetchMods, refreshAll, loading, scanning, scanProgress, toggleMod, addAddoninfo, addModToPack, addModsToPack, setContextMenu, contextMenu, deleteMod, deleteMods, deleteConfirmMod, setDeleteConfirmMod, confirmDeleteMod, renameModDisplayName, getModDisplayName, setModCategory, setModTags, workshopUpdates, checkWorkshopUpdates, cancelWorkshopCheck, applyWorkshopUpdates } = useStore();
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('name-asc');
   // 排版：卡片墙 / 单列列表（记在 localStorage，重启后保持上次选择）
@@ -285,6 +289,16 @@ export function MyModsPage() {
   const [conflictDialogMod, setConflictDialogMod] = useState<string | null>(null);
   // Snapshot of conflicts when dialog opens - prevents list from updating during interaction
   const [conflictSnapshot, setConflictSnapshot] = useState<ConflictDetail[]>([]);
+
+  // 弹窗的 Esc 关闭 + Tab 焦点陷阱。这几个弹窗以前只能用鼠标点遮罩关掉，
+  // 而且 Tab 一路按下去焦点会跑到背景页的卡片上。
+  const deleteModalRef = useModalA11y(!!deleteConfirmMod, () => setDeleteConfirmMod(null));
+  const renameModalRef = useModalA11y(!!renameModName, () => {
+    setRenameModName(null);
+    setRenameValue('');
+  });
+  const dupModalRef = useModalA11y(!!dupDialogPath, () => setDupDialogPath(null));
+  const conflictModalRef = useModalA11y(!!conflictDialogMod, () => setConflictDialogMod(null));
   const [hintSnapshot, setHintSnapshot] = useState<ConflictDetail[]>([]);
 
   useEffect(() => {
@@ -321,10 +335,23 @@ export function MyModsPage() {
     if (activeSubmenu !== 'category') setCatParent(null);
   }, [activeSubmenu]);
 
+  /**
+   * 列表里**展示**的 Mod。
+   *
+   * 解析失败的 VPK 不进列表：它的内容读不出来，标签、分类、冲突、封面全都是空的，
+   * 在网格里就是一张几乎信息量为零的卡，还会混进「全部 / 自定义 / 工坊」的计数里，
+   * 让用户以为多了个能用的包。这类文件的去处是列表下方那条提示（文件名 + 错误原因
+   * + 处理办法 + 打开目录 / 删除），而不是和正常 Mod 排在一起。
+   *
+   * 注意：只在**展示层**过滤 —— 后端仍然保留记录，启停状态、addonlist 的对应行
+   * 都不受影响，修好文件后下次扫描会自动回到列表。
+   */
+  const visibleMods = useMemo(() => mods.filter((m) => !m.unreadable), [mods]);
+
   const counts = useMemo(() => ({
-    custom: mods.filter((m) => !m.is_workshop).length,
-    workshop: mods.filter((m) => m.is_workshop).length,
-  }), [mods]);
+    custom: visibleMods.filter((m) => !m.is_workshop).length,
+    workshop: visibleMods.filter((m) => m.is_workshop).length,
+  }), [visibleMods]);
 
   // ── 创意工坊更新 ──
   // 用两个键索引：workshop_id（标准订阅路径能找到）和文件名（addons 根目录里的
@@ -346,8 +373,8 @@ export function MyModsPage() {
   );
 
   const updateCount = useMemo(
-    () => mods.filter((m) => updateFor(m)?.update_available).length,
-    [mods, updateFor]
+    () => visibleMods.filter((m) => updateFor(m)?.update_available).length,
+    [visibleMods, updateFor]
   );
 
   const applyingInfo = workshopUpdates?.applying;
@@ -370,20 +397,20 @@ export function MyModsPage() {
   const vpkCategoryCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const cat of VPK_CATEGORIES) {
-      counts[cat] = mods.filter((m) => m.tags.includes(cat)).length;
+      counts[cat] = visibleMods.filter((m) => m.tags.includes(cat)).length;
     }
     return counts;
-  }, [mods]);
+  }, [visibleMods]);
 
   // 细分标签计数：口径跟着「当前大类」走，点进去才知道每一类有几个
   const fineTagCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     if (!vpkCategory) return counts;
     for (const tag of FINE_TAGS[vpkCategory] || []) {
-      counts[tag] = mods.filter((m) => m.tags.includes(vpkCategory) && m.tags.includes(tag)).length;
+      counts[tag] = visibleMods.filter((m) => m.tags.includes(vpkCategory) && m.tags.includes(tag)).length;
     }
     return counts;
-  }, [mods, vpkCategory]);
+  }, [visibleMods, vpkCategory]);
 
   // 细分标签从 9 个涨到 34 个（具体到每把枪）后全列出来太吵：
   // 只保留有 Mod 的，外加当前选中的那个，避免把筛选行撑成三行
@@ -406,12 +433,12 @@ export function MyModsPage() {
   const combinedCategoryKey = useMemo(() => `${category}-${vpkCategory || 'all'}-${fineTag || 'all'}-${enabledFilter}-${conflictFilter}-${dupFilter ? 'dup' : 'all'}-${updateFilter ? 'upd' : 'all'}`, [category, vpkCategory, fineTag, enabledFilter, conflictFilter, dupFilter, updateFilter]);
 
   const enabledCounts = useMemo(() => ({
-    enabled: mods.filter((m) => m.enabled).length,
-    disabled: mods.filter((m) => !m.enabled).length,
-  }), [mods]);
+    enabled: visibleMods.filter((m) => m.enabled).length,
+    disabled: visibleMods.filter((m) => !m.enabled).length,
+  }), [visibleMods]);
 
   const filtered = useMemo(() => {
-    let list = [...mods];
+    let list = [...visibleMods];
 
     if (category === 'custom') {
       list = list.filter((m) => !m.is_workshop);
@@ -475,7 +502,25 @@ export function MyModsPage() {
     }
 
     return list;
-  }, [search, sortBy, mods, category, vpkCategory, fineTag, enabledFilter, conflictFilter, dupFilter, updateFilter, updateFor]);
+  }, [search, sortBy, visibleMods, category, vpkCategory, fineTag, enabledFilter, conflictFilter, dupFilter, updateFilter, updateFor]);
+
+  /** 解析失败的 VPK：不入列表，只在下方提示条里逐条说明（文件名 / 原因 / 处理办法） */
+  const unreadableMods = useMemo(() => mods.filter((m) => m.unreadable), [mods]);
+
+  // 扫出新坏包时弹一次 toast 引导用户看下方提示条；同一批坏包不重复弹
+  //（前端每 5 秒轮询扫描状态，不加这道判断会变成每轮一次）
+  const unreadableKey = unreadableMods.map((m) => m.name).sort().join('|');
+  const notifiedUnreadableRef = useRef('');
+  useEffect(() => {
+    if (!unreadableKey || unreadableKey === notifiedUnreadableRef.current) return;
+    notifiedUnreadableRef.current = unreadableKey;
+    showToast(
+      unreadableMods.length === 1
+        ? `「${unreadableMods[0].name}」解析失败，已从列表隐藏，下方有错误原因与处理办法`
+        : `${unreadableMods.length} 个 VPK 解析失败，已从列表隐藏，下方有错误原因与处理办法`,
+      'warning'
+    );
+  }, [unreadableKey, unreadableMods]);
 
   /** 关掉一个「缺 addoninfo.txt」的 Mod 时先把风险说清楚：游戏那边多半不会跟着关。 */
   const warnIfUnmanageable = (mod: ModData) => {
@@ -697,7 +742,7 @@ export function MyModsPage() {
               className={`filter-seg__item ${category === 'all' ? 'active' : ''}`}
               onClick={() => setCategory('all')}
             >
-              全部<span className="filter-seg__count">{mods.length}</span>
+              全部<span className="filter-seg__count">{visibleMods.length}</span>
             </button>
             <button
               className={`filter-seg__item ${category === 'custom' ? 'active' : ''}`}
@@ -759,7 +804,7 @@ export function MyModsPage() {
               )
             )}
             <span className="filter-panel__result">
-              筛出 <strong>{filtered.length}</strong> / {mods.length}
+              筛出 <strong>{filtered.length}</strong> / {visibleMods.length}
             </span>
             {activeFilterCount > 0 && (
               <button className="filter-panel__clear" onClick={resetFilters} title="清空类型、状态、问题上的筛选">
@@ -825,7 +870,7 @@ export function MyModsPage() {
               <i className="filter-chip__dot" />
               有冲突
               <span className="filter-chip__count">
-                {mods.filter((m) => m.enabled && m.conflicts && m.conflicts.length > 0).length}
+                {visibleMods.filter((m) => m.enabled && m.conflicts && m.conflicts.length > 0).length}
               </span>
             </button>
             <button
@@ -835,7 +880,7 @@ export function MyModsPage() {
               <i className="filter-chip__dot" />
               无冲突
               <span className="filter-chip__count">
-                {mods.filter((m) => !m.enabled || !m.conflicts || m.conflicts.length === 0).length}
+                {visibleMods.filter((m) => !m.enabled || !m.conflicts || m.conflicts.length === 0).length}
               </span>
             </button>
             <button
@@ -846,7 +891,7 @@ export function MyModsPage() {
               <i className="filter-chip__dot" />
               重复安装
               <span className="filter-chip__count">
-                {mods.filter((m) => (m.duplicates?.length ?? 0) > 0).length}
+                {visibleMods.filter((m) => (m.duplicates?.length ?? 0) > 0).length}
               </span>
             </button>
             {/* 有更新：没查到就整条不出现，免得每台机器上都挂一个 0 */}
@@ -1096,9 +1141,19 @@ export function MyModsPage() {
             <circle cx="11" cy="11" r="8" />
             <path d="M21 21l-4.35-4.35" />
           </svg>
-          <span>{mods.length === 0 ? '暂无 Mod，请先设置 Addons 目录' : '未找到匹配的 Mod'}</span>
+          <span>
+            {visibleMods.length === 0
+              ? (mods.length === 0
+                  ? '暂无 Mod，请先设置 Addons 目录'
+                  : '没有可以正常读取的 Mod，原因见下方说明')
+              : '未找到匹配的 Mod'}
+          </span>
         </div>
       )}
+
+      {/* 解析失败的 VPK：**不进列表**，只贴在列表下方，写明「哪个文件 / 为什么 / 怎么处理」。
+          不放进 toast —— 3.5 秒就消失，用户来不及照着做。 */}
+      <UnreadableNotice mods={unreadableMods} />
 
       {/* Right-click context menu for mod cards */}
       {contextMenu && createPortal(
@@ -1182,7 +1237,10 @@ export function MyModsPage() {
                     confirmText: '删除',
                   });
                   if (!ok) return;
-                  targets.forEach((modName) => deleteMod(modName));
+                  // 批量删除走专门的串行入口：以前是 targets.forEach(deleteMod)，
+                  // 每个 deleteMod 内部都会 fetchMods + fetchStatus + fetchPacks，
+                  // 选 10 个就等于 10 次全量扫描 —— 界面会卡十几秒。
+                  void deleteMods(targets);
                   setSelectedMods(new Set());
                 }}
               >
@@ -1505,7 +1563,7 @@ export function MyModsPage() {
       {/* Delete confirmation modal */}
       {deleteConfirmMod && (
         <div className="modal-overlay" onClick={() => setDeleteConfirmMod(null)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-content" ref={deleteModalRef} onClick={(e) => e.stopPropagation()}>
             <h3>确认删除</h3>
             <p className="modal-delete-text">
               确定要删除 Mod <strong>「{deleteConfirmMod}」</strong> 吗？
@@ -1530,7 +1588,7 @@ export function MyModsPage() {
       {/* Rename modal */}
       {renameModName && (
         <div className="modal-overlay" onClick={() => { setRenameModName(null); setRenameValue(''); }}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-content" ref={renameModalRef} onClick={(e) => e.stopPropagation()}>
             <h3>重命名显示名称</h3>
             <p style={{ color: 'var(--text-secondary)', fontSize: '12px', marginBottom: '12px' }}>
               此操作仅修改显示名称，不会修改 VPK 文件名。
@@ -1662,7 +1720,7 @@ export function MyModsPage() {
 
         return createPortal(
           <div className="modal-overlay" onClick={() => closeConflictDialog()}>
-            <div className={`conflict-dialog ${isMap ? 'conflict-dialog--map' : ''}`} onClick={(e) => e.stopPropagation()}>
+            <div className={`conflict-dialog ${isMap ? 'conflict-dialog--map' : ''}`} ref={conflictModalRef} onClick={(e) => e.stopPropagation()}>
               <div className="conflict-dialog__header">
                 <h3>{isMap ? '地图内置资源冲突' : '冲突 Mod 详情'}</h3>
                 <button className="conflict-dialog__close" onClick={() => closeConflictDialog()}>
@@ -1764,7 +1822,7 @@ export function MyModsPage() {
 
         return createPortal(
           <div className="modal-overlay" onClick={() => setDupDialogPath(null)}>
-            <div className="conflict-dialog dup-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="conflict-dialog dup-dialog" ref={dupModalRef} onClick={(e) => e.stopPropagation()}>
               <div className="conflict-dialog__header">
                 <h3>重复安装</h3>
                 <button className="conflict-dialog__close" onClick={() => setDupDialogPath(null)}>

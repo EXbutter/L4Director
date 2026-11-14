@@ -82,19 +82,37 @@ function formatSize(bytes: number): string {
 function useSmoothBytes(bytes: number): number {
   const [smoothed, setSmoothed] = useState(bytes);
   const rafRef = useRef<number | null>(null);
+  const targetRef = useRef(bytes);
+  // 用 ref 记当前值而不是在 setState 的 updater 里算：React 的 updater 执行时机
+  // 不确定（渲染阶段才跑），在里面判断"是否到位"会漏掉最后一步。
+  const currentRef = useRef(bytes);
+  targetRef.current = bytes;
 
   useEffect(() => {
+    // 到位就停帧。以前 animate() 无条件续 rAF，而这个 Hook 由常驻的 <UsageBar />
+    // 使用 —— 等于整个应用生命周期里挂了一条 60fps 的空转循环，数字不变也在
+    // 每秒触发 60 次 React 更新（会 bail out，但回调与调度一直在跑）。
     const animate = () => {
-      setSmoothed((prev) => {
-        const diff = bytes - prev;
-        if (Math.abs(diff) < 1) return bytes;
-        return prev + diff * 0.12;
-      });
+      const prev = currentRef.current;
+      const diff = targetRef.current - prev;
+      if (Math.abs(diff) < 0.5) {
+        if (prev !== targetRef.current) {
+          currentRef.current = targetRef.current;
+          setSmoothed(targetRef.current);
+        }
+        rafRef.current = null;
+        return;
+      }
+      const next = prev + diff * 0.12;
+      currentRef.current = next;
+      setSmoothed(next);
       rafRef.current = requestAnimationFrame(animate);
     };
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(animate);
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
     };
   }, [bytes]);
 
@@ -419,6 +437,21 @@ function BackendErrorOverlay() {
         disabled={connecting}
       >
         {connecting ? '...' : '重试'}
+      </button>
+    </div>
+  );
+}
+
+function ErrorBanner() {
+  const error = useStore((s) => s.error);
+  const clearError = useStore((s) => s.clearError);
+  if (!error) return null;
+  return (
+    <div className="app-error-banner" role="alert">
+      <span className="app-error-banner__icon">!</span>
+      <span className="app-error-banner__text">{error}</span>
+      <button className="app-error-banner__btn" onClick={clearError}>
+        知道了
       </button>
     </div>
   );
@@ -863,6 +896,9 @@ function App() {
       )}
 
       {!backendConnected && <BackendErrorOverlay />}
+
+      {/* 所有「写进 store.error」的失败都从这里露出来（以前这个字段没人读） */}
+      <ErrorBanner />
 
       <DropOverlay addonsPath={addonsPath} />
 

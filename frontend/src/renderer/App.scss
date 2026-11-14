@@ -799,3 +799,72 @@
     transform: translateX(-50%) translateY(0);
   }
 }
+
+/* 全局错误条：useStore.error 的唯一出口。
+   这个字段以前只写不读 —— 设置保存失败、合辑切换失败、删除失败全都静默过去，
+   用户只看到「点了没反应」。放在顶部而不是底部：底部已经有「应用」按钮、
+   容量条、冲突角标和工坊进度条，再加一条会互相压住。 */
+.app-error-banner {
+  position: fixed;
+  top: 54px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9998;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  max-width: min(760px, 86vw);
+  // 不能写 var(--bg-card-solid)：这个变量只在「有背景图」的 .app--has-bg 里存在，
+  // 浅色主题下取不到值会落到深色 fallback —— 深底配深字，整条提示等于看不见。
+  background: color-mix(in srgb, var(--bg-secondary) 94%, #ef4444);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  animation: toastSlideDownFade 0.24s ease both;
+
+  &__icon {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
+    border-radius: 50%;
+    background: #ef4444;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 16px;
+    text-align: center;
+  }
+
+  &__text {
+    flex: 1;
+    min-width: 0;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--text-primary, #fff);
+    word-break: break-word;
+  }
+
+  &__btn {
+    flex-shrink: 0;
+    padding: 4px 10px;
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.16));
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text-primary, #fff);
+    font-size: 11.5px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.3);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+  }
+}

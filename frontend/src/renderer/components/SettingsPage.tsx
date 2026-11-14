@@ -129,6 +129,85 @@ export function SettingsPage() {
     fetchUiScale();
   }, []);
 
+  // ── Steam API Key ────────────────────────────────────────────────
+  // 只在这里存「是否配置 + 指纹」，后端从不把 key 原文回传。
+  const [keyState, setKeyState] = useState<{ configured: boolean; masked: string }>({
+    configured: false,
+    masked: '',
+  });
+  const [keyInput, setKeyInput] = useState('');
+  const [keyBusy, setKeyBusy] = useState<'idle' | 'testing' | 'saving'>('idle');
+  const [keyMsg, setKeyMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  const loadKeyState = async () => {
+    try {
+      const res = await fetch(`${getApiBase()}/api/settings/steam-key`);
+      if (res.ok) setKeyState(await res.json());
+    } catch {
+      // 读不到不影响页面其它部分；点保存时会再报一次
+    }
+  };
+
+  useEffect(() => { void loadKeyState(); }, []);
+
+  const keyBody = (key: string) => JSON.stringify({ key });
+
+  const handleTestKey = async () => {
+    const key = keyInput.trim();
+    if (!key) { setKeyMsg({ kind: 'err', text: '先把 key 粘进来' }); return; }
+    setKeyBusy('testing');
+    setKeyMsg(null);
+    try {
+      const res = await fetch(`${getApiBase()}/api/settings/steam-key/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: keyBody(key),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setKeyMsg({ kind: 'err', text: data.detail || '测试失败' });
+        return;
+      }
+      setKeyMsg({
+        kind: 'ok',
+        text: `可以用：${data.host} 响应 ${data.elapsed_ms}ms，工坊共 ${Number(data.total || 0).toLocaleString()} 个条目`,
+      });
+    } catch (e) {
+      setKeyMsg({ kind: 'err', text: `测试失败：${(e as Error).message}` });
+    } finally {
+      setKeyBusy('idle');
+    }
+  };
+
+  const handleSaveKey = async () => {
+    const key = keyInput.trim();
+    setKeyBusy('saving');
+    setKeyMsg(null);
+    try {
+      const res = await fetch(`${getApiBase()}/api/settings/steam-key`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: keyBody(key),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setKeyMsg({ kind: 'err', text: data.detail || '保存失败' });
+        return;
+      }
+      setKeyState({ configured: !!data.configured, masked: data.masked || '' });
+      setKeyInput('');
+      if (data.configured) {
+        showToast('已保存：创意工坊改为走 Steam API（每页 100 条，带评分）', 'success');
+      } else {
+        showToast('已清除 API Key，创意工坊回到网页模式', 'info');
+      }
+    } catch (e) {
+      setKeyMsg({ kind: 'err', text: `保存失败：${(e as Error).message}` });
+    } finally {
+      setKeyBusy('idle');
+    }
+  };
+
   useEffect(() => {
     setInputPath(addonsPath || '');
   }, [addonsPath]);
@@ -149,9 +228,11 @@ export function SettingsPage() {
 
   const handleAutoDetect = async () => {
     setSaveStatus('saving');
-    await autoDetectPath();
-    setSaveStatus('saved');
-    setTimeout(() => setSaveStatus('idle'), 2000);
+    const ok = await autoDetectPath();
+    // 以前无论成败都显示「已保存 ✓」：检测失败（没装游戏、装在别的盘）时
+    // 用户完全看不出来，只会觉得点了没反应。
+    setSaveStatus(ok ? 'saved' : 'error');
+    setTimeout(() => setSaveStatus('idle'), ok ? 2000 : 3000);
   };
 
   const handleBrowse = () => {
@@ -274,6 +355,94 @@ export function SettingsPage() {
                 <span className="settings-current-path">{addonsPath}</span>
               </div>
             )}
+          </div>
+        </div>
+
+        {/* Steam API Key Section */}
+        <div className="content-section" style={{ marginBottom: 20 }}>
+          <div className="section-header">
+            <h2>Steam API Key（可选）</h2>
+          </div>
+          <div className="settings-group">
+            <p className="settings-desc">
+              填了它，创意工坊就从「抓网页」切到「官方搜索接口」：每页 <strong>100 条</strong>（原 30 条）、
+              带<strong>好评率</strong>、能显示<strong>精确结果总数</strong>、支持「最近更新」排序。
+              不填也能用，只是每页 30 条、慢一点。
+            </p>
+
+            <div className="settings-path-row">
+              <input
+                type="password"
+                className="settings-path-input"
+                placeholder={keyState.configured ? `已保存：${keyState.masked}（重新粘贴可替换）` : '粘贴 32 位十六进制 key'}
+                value={keyInput}
+                onChange={(e) => { setKeyInput(e.target.value); setKeyMsg(null); }}
+                spellCheck={false}
+                autoComplete="off"
+              />
+              <button
+                className="settings-btn settings-btn--secondary"
+                onClick={() => void handleTestKey()}
+                disabled={keyBusy !== 'idle' || !keyInput.trim()}
+              >
+                {keyBusy === 'testing' ? '测试中…' : '测试'}
+              </button>
+            </div>
+
+            <div className="settings-actions">
+              <button
+                className="settings-btn settings-btn--primary"
+                onClick={() => void handleSaveKey()}
+                disabled={keyBusy !== 'idle' || (!keyInput.trim() && !keyState.configured)}
+              >
+                {keyBusy === 'saving' ? '保存中…' : '保存'}
+              </button>
+              {keyState.configured && (
+                <button
+                  className="settings-btn settings-btn--ghost"
+                  onClick={() => { setKeyInput(''); void handleSaveKey(); }}
+                  disabled={keyBusy !== 'idle'}
+                >
+                  清除
+                </button>
+              )}
+              <a
+                className="settings-btn settings-btn--ghost"
+                style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
+                onClick={() => {
+                  const el = window.electronAPI as { openExternal?: (u: string) => Promise<void> } | undefined;
+                  void el?.openExternal?.('https://steamcommunity.com/dev/apikey');
+                }}
+              >
+                申请地址 ↗
+              </a>
+            </div>
+
+            {keyMsg && (
+              <div
+                className="settings-current"
+                style={{
+                  color: keyMsg.kind === 'err' ? '#ef4444' : '#10b981',
+                  borderColor: keyMsg.kind === 'err' ? 'rgba(239,68,68,.35)' : 'rgba(16,185,129,.35)',
+                }}
+              >
+                <span className="settings-current-label">结果：</span>
+                <span style={{ whiteSpace: 'normal' }}>{keyMsg.text}</span>
+              </div>
+            )}
+
+            {keyState.configured && !keyMsg && (
+              <div className="settings-current">
+                <span className="settings-current-label">当前：</span>
+                <span className="settings-current-path">已配置 {keyState.masked}</span>
+              </div>
+            )}
+
+            <p className="settings-desc" style={{ marginTop: 10, fontSize: 11.5, opacity: 0.78 }}>
+              Key 只写在本机 <code>~/.l4d2-manager/config.json</code>，不会上传、不进仓库、日志里只留指纹。
+              申请要求：Steam 账号、在商店消费满 5 美元（受限账号无法使用 Web API）、域名随便填。
+              Steam 使用条款要求 key 必须本人保管，所以它只能你自己填，不能随软件分发。
+            </p>
           </div>
         </div>
 

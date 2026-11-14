@@ -98,6 +98,21 @@ def _get_default_data() -> dict:
 # 让用户知道自己的合辑/自定义名没有被静默清空，而是留在旁边的备份里。
 _last_recovery: Optional[dict] = None
 
+# 「data.json 存在但读不出来」的原因（被占用 / 权限不足 / 盘掉线）。
+# 一旦置位，本进程进入**只读模式**：所有写盘都被拒绝。
+# 为什么必须这么做：以前读失败会回落到默认值并写进缓存，紧接着任何一次写盘
+# （改个标签、勾一个 Mod）就会拿这份空默认值 replace 掉原文件 —— 用户的合辑、
+# 自定义名、标签全没。宁可这一轮不让改，也不能把还能救回来的文件覆盖成空的。
+_read_only_reason: Optional[str] = None
+
+
+class DataStoreReadOnlyError(RuntimeError):
+    """数据文件读不出来时，拒绝一切写操作。"""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(f'数据文件当前不可写：{reason}')
+
 
 def get_last_recovery() -> Optional[dict]:
     """最近一次因为配置文件损坏而回落到默认值的记录（没有则为 None）。"""
@@ -150,7 +165,7 @@ def _quarantine_corrupt_data(reason: str) -> Optional[str]:
 
 def _read_data_raw() -> dict:
     """Read raw data from disk."""
-    global _cache, _cache_timestamp
+    global _cache, _cache_timestamp, _read_only_reason
 
     now = time.time()
     if _cache is not None and (now - _cache_timestamp) < _CACHE_TTL:
@@ -160,11 +175,16 @@ def _read_data_raw() -> dict:
         raw_text: Optional[str] = None
         try:
             raw_text = _DATA_FILE.read_text(encoding='utf-8')
-        except OSError:
-            # 读不到（被占用 / 权限）：先用默认值顶上，但**不要**碰原文件
-            raw_text = None
+        except OSError as exc:
+            # 读不到（被占用 / 权限 / 盘掉线）：进入只读模式，**绝不**拿默认值顶替。
+            # 一旦把默认值写进缓存，下一次写盘就会把原文件覆盖成空文件，
+            # 而这恰恰发生在"用户最需要原数据还在"的时候。
+            _read_only_reason = f'无法读取 {_DATA_FILE}：{exc.strerror or exc}'
+            print(f'[DataStore] {_read_only_reason}（进入只读模式，不会覆盖原文件）')
+            return _get_default_data()
 
         if raw_text is not None:
+            _read_only_reason = None
             data = None
             try:
                 data = json.loads(raw_text)
@@ -182,15 +202,41 @@ def _read_data_raw() -> dict:
                 _quarantine_corrupt_data(f'顶层不是对象：{type(data).__name__}')
 
     # File doesn't exist or corrupt
+    _read_only_reason = None
     default = _get_default_data()
     _cache = default
     _cache_timestamp = now
     return default
 
 
+def get_read_only_reason() -> Optional[str]:
+    """当前是否处于只读模式（data.json 存在但读不出来）。没有则为 None。"""
+    return _read_only_reason
+
+
+def _backup_previous_data():
+    """写盘前把上一版留成 data.json.bak（只留一份，不滚动）。
+
+    损坏隔离（data.json.corrupt-*）只处理"JSON 解析失败"，而一次逻辑 bug 或
+    误操作把数据改乱了，文件本身是合法 JSON，隔离逻辑不会介入 —— 那时用户
+    没有任何回滚手段。这里在正常写盘路径上补一份上一版快照。
+    """
+    try:
+        if not _DATA_FILE.exists():
+            return
+        backup = _DATA_FILE.with_name(_DATA_FILE.name + '.bak')
+        backup.write_bytes(_DATA_FILE.read_bytes())
+    except OSError as exc:
+        # 备份失败不该阻断主流程（磁盘满时用户更需要的是把新数据写下去）
+        print(f'[DataStore] 备份上一版失败（不影响本次写入）：{exc}')
+
+
 def _write_data_raw(data: dict):
     """Write data to disk atomically."""
     global _cache, _cache_timestamp
+
+    if _read_only_reason:
+        raise DataStoreReadOnlyError(_read_only_reason)
 
     _DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -203,7 +249,22 @@ def _write_data_raw(data: dict):
         fh.write(payload)
         fh.flush()
         os.fsync(fh.fileno())
-    tmp_file.replace(_DATA_FILE)
+
+    # 新内容已经安全落在临时文件里了，此时才动旧文件（备份 → 替换）
+    try:
+        _backup_previous_data()
+        tmp_file.replace(_DATA_FILE)
+    except OSError:
+        # 写盘失败，但调用方已经就地改过 `_cache`（它的引用就是缓存本身），
+        # 内存与磁盘此刻不一致。先把缓存作废，下次读取回到磁盘上的真实内容，
+        # 避免出现"这次看着改成功了，重启又变回去"。
+        _cache = None
+        _cache_timestamp = 0
+        try:
+            tmp_file.unlink()
+        except OSError:
+            pass
+        raise
 
     _cache = data
     _cache_timestamp = time.time()

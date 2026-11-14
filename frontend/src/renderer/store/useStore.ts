@@ -54,6 +54,8 @@ export interface ModData {
   role_tags?: string[];
   /** VPK 解析失败（坏包 / 非标准编码），这类包不参与冲突判定 */
   unreadable?: boolean;
+  /** 解析失败的具体原因（后端给出，例如 'JSONDecodeError: ...'），展示在卡片与底部提示里 */
+  unreadable_reason?: string | null;
   /** 同一个 Mod 装在另一处的副本（工坊订阅 + 手动拖进 addons 的同一个包） */
   duplicates?: DuplicateRef[];
   /** content = 两份内容完全一致；version = 标题相同、内容不同（多半是两个版本） */
@@ -202,6 +204,10 @@ export interface WorkshopUpdatesState {
     pct: number;
     errors: string[];
     finished_at: number;
+    /** 已请求停止，正在等当前分块下载退出 */
+    cancelling?: boolean;
+    /** 上一轮是被取消结束的 */
+    cancelled?: boolean;
   };
 }
 
@@ -225,7 +231,14 @@ interface AppState {
   workshopUpdates: WorkshopUpdatesState | null;
   addonsPath: string | null;
   loading: boolean;
+  /**
+   * 上一次操作的错误（已经是给人看的中文句子）。
+   * 以前这里只有写入没有读取 —— 合辑切换失败、删除失败、设置保存失败全都静默
+   * 过去了，用户只会觉得「点了没反应」。现在由 App 里的 ErrorBanner 统一展示。
+   */
   error: string | null;
+  /** 关掉错误提示（用户点「知道了」，或下一次操作成功时自动清） */
+  clearError: () => void;
   background: BackgroundSettings;
   showMascot: boolean;
   /** 主题切换是否播放过渡动画 */
@@ -260,6 +273,8 @@ interface AppState {
   checkWorkshopUpdates: () => Promise<void>;
   /** 叫停正在进行的检查（已查到的结果保留），不用等它跑完 */
   cancelWorkshopCheck: () => Promise<void>;
+  /** 停止正在进行的工坊更新（还没下完的那些保持原样，已下完的保留） */
+  cancelWorkshopApply: () => Promise<void>;
   /** 更新指定的工坊 Mod（重新下载覆盖），ids 为空 = 更新全部可更新的 */
   applyWorkshopUpdates: (ids?: string[]) => Promise<void>;
   /** 自动检查开关 / 间隔 */
@@ -267,11 +282,13 @@ interface AppState {
   fetchStatus: () => Promise<void>;
   fetchSettings: () => Promise<void>;
   setAddonsPath: (path: string) => Promise<boolean>;
-  autoDetectPath: () => Promise<void>;
+  autoDetectPath: () => Promise<boolean>;
   toggleMod: (modName: string, path?: string) => Promise<void>;
   /** 给缺 addoninfo.txt 的本地 Mod 补一份（会重写该 vpk，重建后逐条目校验）。 */
   addAddoninfo: (modName: string, path?: string) => Promise<boolean>;
   deleteMod: (modName: string, path?: string) => Promise<void>;
+  /** 批量删除：串行执行，结束后只刷新一次（以前逐个 deleteMod，选 10 个 = 30 次请求 + 10 次全量扫描） */
+  deleteMods: (modNames: string[]) => Promise<void>;
   refreshAll: () => Promise<void>;
   setBackground: (bg: Partial<BackgroundSettings>) => boolean;
   /** 把（可能是超大原图的）背景图压缩到合适尺寸，仅首次需要执行 */
@@ -904,6 +921,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   setPage: (page) => set({ currentPage: page }),
+  clearError: () => set({ error: null }),
   toggleTheme: () =>
     set((state) => {
       const next = state.theme === 'light' ? 'dark' : 'light';
@@ -1569,11 +1587,24 @@ export const useStore = create<AppState>((set, get) => ({
       if (res.ok) {
         const data = await res.json();
         console.log('[Store] Response body:', data);
-        set({ addonsPath: data.addons_path, error: null });
+        const count = typeof data.vpk_count === 'number' ? data.vpk_count : null;
+        set({
+          addonsPath: data.addons_path,
+          // 路径合法但一个包都没有：多半是选错层级（选到 left4dead2 而不是 addons）。
+          // 以前这里显示「已保存 ✓」就完事了，用户回到 Mod 页看到空白列表只会困惑。
+          error: count === 0
+            ? `目录已保存，但里面一个 .vpk 都没有（${data.addons_path}）。如果 Mod 不在这一层，请改选到真正的 addons 目录。`
+            : null,
+        });
         return true;
       }
       const errText = await res.text();
       console.error('[Store] Error response:', res.status, errText);
+      let detail = '';
+      try {
+        detail = String(JSON.parse(errText)?.detail || '');
+      } catch { /* 非 JSON 响应 */ }
+      set({ error: detail || `保存 addons 路径失败（HTTP ${res.status}），请确认目录存在并且有访问权限` });
       return false;
     } catch (e) {
       console.error('[Store] Network error:', e);
@@ -1589,11 +1620,26 @@ export const useStore = create<AppState>((set, get) => ({
       });
       if (res.ok) {
         const data = await res.json();
-        set({ addonsPath: data.addons_path, error: null });
+        const count = typeof data.vpk_count === 'number' ? data.vpk_count : null;
+        set({
+          addonsPath: data.addons_path,
+          error: count === 0
+            ? `已检测到目录，但里面没有 .vpk 文件（${data.addons_path}）`
+            : null,
+        });
         await get().refreshAll();
+        return true;
       }
+      let detail = '';
+      try {
+        detail = String((await res.json())?.detail || '');
+      } catch { /* 忽略 */ }
+      // 以前不管成没成功，设置页都显示「已保存 ✓」—— 检测失败时用户完全不知道。
+      set({ error: detail || '自动检测失败：没有找到《求生之路 2》的 addons 目录' });
+      return false;
     } catch (e) {
-      set({ error: '自动检测路径失败' });
+      set({ error: '自动检测失败：无法连接到后端服务' });
+      return false;
     }
   },
 
@@ -1715,6 +1761,35 @@ export const useStore = create<AppState>((set, get) => ({
       }
     } catch (e) {
       set({ error: '删除 Mod 失败' });
+    }
+  },
+
+  deleteMods: async (modNames: string[]) => {
+    if (modNames.length === 0) return;
+    let failed = 0;
+    // 串行而不是 Promise.all：几百 MB 的 vpk 同时删会把磁盘和界面一起拖住，
+    // 而且失败时也分不清是哪一个。
+    for (const modName of modNames) {
+      try {
+        const res = await fetch(`${API_BASE}/api/mods/${encodeURIComponent(modName)}`, {
+          method: 'DELETE',
+        });
+        if (!res.ok) failed += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    try {
+      await get().fetchMods();
+      await get().fetchStatus();
+      await get().fetchPacks();
+    } catch {
+      /* 刷新失败不影响删除结果 */
+    }
+    if (failed > 0) {
+      set({
+        error: `${failed} 个 Mod 删除失败（共 ${modNames.length} 个）。文件可能正被游戏或 Steam 占用，关掉游戏后再试。`,
+      });
     }
   },
 
@@ -2249,6 +2324,20 @@ export const useStore = create<AppState>((set, get) => ({
       const res = await fetch(`${API_BASE}/api/workshop-updates/cancel`, { method: 'POST' });
       if (!res.ok) {
         // 刚好已经跑完 / 本来就没在查：刷新一下状态，别弹错吓人
+        await get().fetchWorkshopUpdates();
+        return;
+      }
+      scheduleWorkshopUpdatePoll();
+    } catch {
+      showToast('无法连接到后端服务', 'error');
+    }
+  },
+
+  cancelWorkshopApply: async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/workshop-updates/apply/cancel`, { method: 'POST' });
+      if (!res.ok) {
+        // 刚好已更新完 / 本来就没在跑：刷新状态就好，不当成错误弹出来
         await get().fetchWorkshopUpdates();
         return;
       }

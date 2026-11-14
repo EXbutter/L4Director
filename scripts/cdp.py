@@ -74,8 +74,16 @@ def _read_exact(s, n):
 
 
 def recv_text(s) -> str:
+    """读一条文本消息。
+
+    必须处理 WebSocket 分片：Page.captureScreenshot 返回的 base64 动辄几 MB，
+    对端会拆成「首帧 + N 个 continuation(0x0)」。早先这里只认 0x1/0x2，
+    遇到 0x0 直接跳过继续等下一帧，于是截图永远超时。
+    """
+    buffer = b''
     while True:
         b0, b1 = _read_exact(s, 2)
+        fin = b0 & 0x80
         opcode = b0 & 0x0F
         masked = b1 & 0x80
         n = b1 & 0x7F
@@ -89,8 +97,11 @@ def recv_text(s) -> str:
             chunk = bytes(b ^ mask[i % 4] for i, b in enumerate(chunk))
         if opcode == 0x8:
             raise RuntimeError('收到 close 帧')
-        if opcode in (0x1, 0x2):
-            return chunk.decode('utf-8', 'replace')
+        if opcode in (0x0, 0x1, 0x2):
+            buffer += chunk
+            if fin:
+                return buffer.decode('utf-8', 'replace')
+            continue
 
 
 def evaluate(expr: str, timeout: float = 15.0):

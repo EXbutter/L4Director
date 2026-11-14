@@ -151,6 +151,30 @@
       background: var(--bg-card-hover);
     }
   }
+
+  /* 「停止」：更新阶段才有（检查阶段本来就有取消按钮在别处） */
+  &__stop {
+    flex: none;
+    padding: 4px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 11.5px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: color var(--dur-fast, 0.15s) ease, border-color var(--dur-fast, 0.15s) ease;
+
+    &:hover:not(:disabled) {
+      color: #ef4444;
+      border-color: rgba(239, 68, 68, 0.5);
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  }
 }
 
 @keyframes wsDockSpin {

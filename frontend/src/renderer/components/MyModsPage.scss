@@ -839,6 +839,7 @@
 
 /* Preview container wrapper (for IntersectionObserver) */
 .mod-card__preview-container {
+  position: relative;   // 坏包的「VPK 无法解析」浮层以此为定位基准
   height: var(--card-cover-height, 116px);
   display: flex;
   align-items: center;

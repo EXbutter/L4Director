@@ -316,6 +316,41 @@ async function buildThumbnail(
  *   - `null`：原图尺寸与格式都无需处理，直接用原 URL 即可；
  *   - 抛错：网络 / 解码失败，调用方应回退到原 URL。
  */
+/** 同时在转码的缩略图数量上限，超出的排队。 */
+const MAX_CONCURRENT_PREPARE = 4;
+
+let activePrepare = 0;
+const prepareQueue: Array<() => void> = [];
+
+/**
+ * 转码闸门。
+ *
+ * 一张封面的处理包含 `createImageBitmap`（解码）与 `canvas.toBlob`（编码）两步，
+ * 其中编码落在主线程。创意工坊一页 100 张卡片、每张几 MB，如果同时开跑，
+ * 主线程会被连续几百次编码压死 —— 实测整页帧率掉到 2 FPS，比不优化还差。
+ * 所以这里限制并发，其余排队；真正的「不该现在做」由调用方用惰性加载挡住。
+ */
+async function withPrepareSlot<T>(fn: () => Promise<T>): Promise<T> {
+  if (activePrepare >= MAX_CONCURRENT_PREPARE) {
+    await new Promise<void>((resolve) => prepareQueue.push(resolve));
+  }
+  activePrepare += 1;
+  try {
+    return await fn();
+  } finally {
+    activePrepare -= 1;
+    prepareQueue.shift()?.();
+  }
+}
+
+/**
+ * 获取（带缓存）适合卡片显示的缩略图。
+ *
+ * @returns
+ *   - `PreparedThumbnail`：使用转码后的静态小图；
+ *   - `null`：原图尺寸与格式都无需处理，直接用原 URL 即可；
+ *   - 抛错：网络 / 解码失败，调用方应回退到原 URL。
+ */
 export function getPreparedThumbnail(
   src: string,
   maxWidth: number = THUMB_MAX_WIDTH,
@@ -325,7 +360,7 @@ export function getPreparedThumbnail(
   const cached = CACHE.get(key);
   if (cached) return cached;
 
-  const pending = buildThumbnail(src, maxWidth, maxHeight).catch((err) => {
+  const pending = withPrepareSlot(() => buildThumbnail(src, maxWidth, maxHeight)).catch((err) => {
     // 失败不缓存，下次仍可重试
     CACHE.delete(key);
     throw err;

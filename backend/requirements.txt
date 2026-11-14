@@ -1,3 +1,6 @@
 fastapi==0.109.0
 uvicorn==0.27.0
 python-multipart==0.0.6
+# VPK 解析：mod_scanner 顶层 `import vpk`，缺了它后端根本起不来。
+# 打包版把 site-packages 内置了一份，所以只有「按 README 建 venv」的开发环境会踩到。
+vpk==1.4.0

@@ -1,0 +1,919 @@
+// 创意工坊浏览器（自写，不再内嵌网页）
+//
+// 主题约束：这里一律用 App.scss 里的 CSS 变量，不写死颜色。
+// （v1.3.0 踩过一次坑：唯一在 .app--has-bg 下才定义的变量会让浅色主题回落到深色
+//   fallback，出现「深底深字」。）
+
+.wk-page {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ---------------------------------------------------------------- 顶部 */
+
+.wk-top {
+  flex-shrink: 0;
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-primary-solid, var(--bg-primary));
+  // 区块入场：和内容页（ContentArea.scss 的 sectionRise）同一组参数 ——
+  // 0.4s、--ease-soft、从左侧 20px 处推入。整页本身已经从侧边栏方向滑进来
+  // （App.scss 的 pageInFromSidebar），区块再各补一小段同方向位移，
+  // 看起来是同一股力推过来的，而不是「整块板子晃一下」。
+  animation: wk-section-in 0.4s var(--ease-soft) backwards;
+}
+
+.wk-top__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.wk-search {
+  flex: 1 1 260px;
+  min-width: 180px;
+  padding: 7px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font-family);
+  outline: none;
+
+  &:focus { border-color: var(--accent); }
+  &::placeholder { color: var(--text-secondary); opacity: 0.75; }
+}
+
+.wk-select {
+  padding: 7px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: var(--font-family);
+  cursor: pointer;
+  outline: none;
+}
+
+.wk-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+
+  input { cursor: pointer; }
+}
+
+.wk-top__sub {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 7px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+
+.wk-top__hint {
+  margin-left: auto;
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 46%;
+}
+
+.wk-source {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid var(--border-color);
+
+  &--api {
+    color: var(--accent-text, var(--accent));
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+}
+
+/* ---------------------------------------------------------------- 布局 */
+
+.wk-main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.wk-side {
+  width: 186px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border-color);
+  overflow-y: auto;
+  padding: 10px 8px 16px;
+  // 比顶栏晚 45ms 出发，和内容页「工具栏 → 筛选面板 → 分区」的节奏一致。
+  // 只给这一个滚动容器做位移：它内容少、动画 0.4s 就结束（backwards 不残留 transform），
+  // 主列表 .wk-content 刻意不加 —— 几十张卡片的滚动容器一旦挂上 transform 祖先，
+  // 合成路径会退化，滚动掉帧（App.scss 里踩过同一个坑）。
+  animation: wk-section-in 0.4s var(--ease-soft) 45ms backwards;
+}
+
+.wk-content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 12px 14px 28px;
+}
+
+/* ---------------------------------------------------------------- 筛选 */
+
+.wk-filters__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.wk-filters__title {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.wk-filters__count {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent, #fff);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+}
+
+.wk-filters__match {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.wk-group {
+  border-bottom: 1px dashed var(--border-color);
+
+  &:last-child { border-bottom: none; }
+}
+
+.wk-group__head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 7px 2px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-family);
+  text-align: left;
+  cursor: pointer;
+
+  // 与高度过渡同一时长/缓动，chevron 转到底的时候标签组刚好展开到位
+  svg { transition: transform 0.26s var(--ease-soft); opacity: 0.6; }
+}
+
+.wk-group.is-open .wk-group__head svg { transform: rotate(90deg); }
+
+// 折叠高度过渡：外层 grid 的 0fr → 1fr
+//
+// 为什么不用 max-height：标签组高度完全不可控（「类型」组 4 个 chip 一行，
+// 「武器」组 20 多个 chip 四五列），写死一个够大的 max-height 会让 0→1 的
+// 缓动曲线失真 —— 前 20% 就走完了实际的 100px，后 80% 在等剩余空白，
+// 看起来是「先蹿出来再停住」。grid-template-rows 是真正的 auto 高度插值，
+// Chromium 107+ 支持（Electron 28 / Chromium 120）。
+.wk-group__body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.26s var(--ease-soft);
+}
+
+.wk-group.is-open .wk-group__body {
+  grid-template-rows: 1fr;
+}
+
+// overflow hidden + min-height 0 是 0fr 能真正压扁内容的必要条件：
+// grid 子项默认 min-height: auto 会被内容撑住，压不下去。
+.wk-group__inner {
+  overflow: hidden;
+  min-height: 0;
+  // 收起后立刻让 chips 不可聚焦（Tab 不会走进看不见的按钮），
+  // 但要等高度过渡结束再隐藏，否则过渡最后一帧会闪一下空白。
+  visibility: hidden;
+  transition: visibility 0s linear 0.26s;
+}
+
+.wk-group.is-open .wk-group__inner {
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+.wk-group__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 0 8px 15px;
+}
+
+.wk-chip {
+  padding: 3px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-family: var(--font-family);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease,
+    transform 0.12s var(--ease-standard);
+
+  &:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+
+  // 按下时缩 5%：筛选是连续点多下才生效的操作，给一点「按到了」的触感。
+  // 不做 chipPop 那种弹跳（本地卡片是「启用/禁用」的强反馈场景，这里太吵）。
+  &:active { transform: scale(0.95); }
+
+  &.is-on {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--on-accent, #fff);
+    font-weight: 600;
+  }
+
+  &.is-static {
+    cursor: default;
+    &:hover { background: transparent; color: var(--text-secondary); }
+    &:active { transform: none; }
+  }
+}
+
+/* ---------------------------------------------------------------- 卡片 */
+
+.wk-grid {
+  display: grid;
+  // 最小宽度与本地 Mod 列表对齐（那边是 230px）。工坊左侧多一列 186px 筛选栏，
+  // 内容区窄一档，所以取 200px：默认窗口下每行 4 张，卡片实际 ~205px。
+  // 之前是 158px（每行 5-6 张），封面只有 158×99，标题挤成三行还不一定放得下，
+  // 一眼看过去全是小图，实际上也没省下多少视觉信息。
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 14px;
+}
+
+// 视口外的卡片不参与入场动画：它们看不见，却会让浏览器给几十张卡各建一个合成层
+// 逐帧推进，翻页/滚动时白掉帧。24 张 ≈ 六行，覆盖首屏加一次滚动；
+// 与本地 Mod 列表同一个取舍（那边也是第 25 张起不播）。
+.wk-grid > .wk-card:nth-child(n + 25) {
+  animation: none;
+}
+
+.wk-card {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  text-align: left;
+  font-family: var(--font-family);
+  cursor: pointer;
+  overflow: hidden;
+  transition: transform 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+
+  // 入场：与本地 Mod 列表同一套参数（MyModsPage.scss 的 cardFadeIn —— 0.3s、
+  // --ease-spring、translateY(16px) + scale(0.95) 起步），只是这边没有启用/禁用的
+  // 那次「鼓包」，工坊卡片没有可切换状态，多一层动画只是白烧合成层。
+  //
+  // --wk-i 是卡片在列表里的序号（WorkshopCard.tsx 行内变量），每张晚 24ms 出发，
+  // 一屏 16 张在 0.4s 内铺满，像水波推过来。超过 24 张的部分由上面的
+  // :nth-child(n + 25) 直接关掉动画，不会让底部卡片等上好几秒。
+  --wk-delay: calc(var(--wk-i, 0) * 24ms);
+  // backwards 而不是 both：动画结束后要让位给 :hover 的上浮 transform，
+  // 否则最后一帧的 translateY(0) 会把它永久压住。
+  animation: wk-card-in 0.3s var(--ease-spring) var(--wk-delay) backwards;
+
+  &:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in srgb, var(--accent) 50%, var(--border-color));
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  }
+}
+
+.wk-card__cover {
+  position: relative;
+  // 必须显式给宽度：卡片是 flex 列，封面现在**没有内容**（缩略图由 ThumbImage
+  // 异步贴上来），flex 交叉轴会把它收成内容宽度 0 —— 图片明明解码成功，
+  // 却因为父盒子宽度为 0 而完全看不见。
+  width: 100%;
+  // 用 padding-bottom 撑高度，而不是 aspect-ratio：空元素上 aspect-ratio 拿不到
+  // 内容高度会塌成 0，图片一到位整列卡片就往下跳。
+  height: 0;
+  padding-bottom: 62.5%;   // 16 : 10
+  background: var(--bg-secondary);
+  overflow: hidden;
+
+  // 里面的缩略图外框铺满这块比例盒
+  > .thumb-frame {
+    position: absolute;
+    inset: 0;
+  }
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    transition: opacity 0.2s ease;
+  }
+}
+
+.wk-card__badge {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(16, 185, 129, 0.92);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.wk-card__score {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.62);
+  color: #fbbf24;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.wk-card__title {
+  padding: 8px 9px 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 36px;
+}
+
+.wk-card__meta {
+  display: flex;
+  gap: 8px;
+  padding: 4px 9px 0;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.wk-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  padding: 6px 9px 9px;
+  /* 固定最小高度：没有标签的卡片不该比旁边的矮一截，
+     否则同一行的高度参差、扫起来很乱 */
+  min-height: 26px;
+  align-content: flex-start;
+}
+
+.wk-card__tag {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-card-hover);
+  color: var(--text-secondary);
+  font-size: 10.5px;
+
+  &--more { opacity: 0.7; }
+}
+
+/* ---------------------------------------------------------------- 状态 */
+
+.wk-note {
+  margin-bottom: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  animation: wk-section-in 0.34s var(--ease-soft) backwards;
+}
+
+.wk-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 60px 20px;
+  text-align: center;
+  color: var(--text-secondary);
+  // 空态/错误态同样是「一块内容」，跟着内容页的入场节奏出现，
+  // 而不是一片空白里突然蹦出几行字。
+  animation: wk-section-in 0.34s var(--ease-soft) backwards;
+
+  b { color: var(--text-primary); font-size: 14px; }
+  p { max-width: 520px; font-size: 12.5px; line-height: 1.6; margin: 0; }
+
+  &--err b { color: color-mix(in srgb, #ef4444 70%, var(--text-primary)); }
+}
+
+/* ------------------------------------------------------------ 排版切换 */
+
+.wk-view {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  height: 32px;
+  padding: 2px;
+  box-sizing: border-box;
+  border: 1px solid var(--border-color);
+  border-radius: 9px;
+  background: var(--bg-card);
+}
+
+.wk-view__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 26px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  // 与「我的 Mod」工具栏的 .toolbar__view-btn 同一组参数，只是尺寸收小一档
+  // （工坊顶栏那行控件都是 30~32px 高，40px 的分段控件会把整行撑高）
+  transition: background-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease,
+    transform 0.18s var(--ease-spring);
+
+  svg { width: 16px; height: 16px; }
+
+  &:hover:not(.active) {
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+  }
+
+  &:active { transform: scale(0.92); }
+
+  &.active {
+    background: var(--accent);
+    color: var(--on-accent, #fff);
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+}
+
+/* ---------------------------------------------------------------- 列表模式 */
+
+// 单列列表：一屏能看到 7~8 行，用来快速扫标题/订阅数/更新时间。
+// 与网格模式共用同一份数据，只是排版不同（点行同样打开详情抽屉）。
+.wk-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wk-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  text-align: left;
+  font-family: var(--font-family);
+  cursor: pointer;
+  outline: none;
+  // 入场：从左侧滑入 + 淡入。网格卡片是「上浮 + 缩放」，横向单列用横向位移更贴切
+  // （与 MyModsPage 的 listRowIn 同一个思路）。行高 72px、一屏 8 行，
+  // 步进取 18ms（比卡片的 24ms 密），整屏在 0.32s 内铺完。
+  --wk-delay: calc(var(--wk-i, 0) * 18ms);
+  animation: wk-row-in 0.3s var(--ease-soft) var(--wk-delay) backwards;
+  transition: background-color 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+
+  &:hover {
+    border-color: color-mix(in srgb, var(--accent) 50%, var(--border-color));
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  }
+
+  // 行是 div + role=button，浏览器不会自动给焦点环，这里补一个
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  // 按下只加深背景，不做缩放：整行近千像素宽，scale(0.99) 会让标题文字发虚一瞬
+  &:active {
+    background: var(--bg-card-hover);
+  }
+}
+
+// 与网格同一个取舍：视口外的行不参与入场动画（第 25 行起关掉）
+.wk-list > .wk-row:nth-child(n + 25) {
+  animation: none;
+}
+
+.wk-row__cover {
+  position: relative;
+  flex-shrink: 0;
+  width: 96px;
+  height: 60px;
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--bg-secondary);
+
+  // 同 .wk-card__cover：外框是固定尺寸的定位盒，缩略图铺满它
+  > .thumb-frame {
+    position: absolute;
+    inset: 0;
+  }
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+}
+
+.wk-row__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.wk-row__titleline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.wk-row__title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wk-row__flag {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: rgba(16, 185, 129, 0.16);
+  color: #10b981;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+}
+
+.wk-row__score {
+  flex-shrink: 0;
+  color: #d97706;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.wk-row__desc {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wk-row__tags {
+  display: flex;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.wk-row__tag {
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--bg-card-hover);
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.wk-row__stats {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  width: 106px;
+  font-size: 10.5px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.wk-skeleton {
+  height: 212px;
+  border-radius: 10px;
+  background: linear-gradient(
+    100deg,
+    var(--bg-card) 30%,
+    var(--bg-card-hover) 50%,
+    var(--bg-card) 70%
+  );
+  background-size: 220% 100%;
+  animation: wk-shimmer 1.3s infinite linear;
+}
+
+// 列表模式的骨架：行高 72px，比卡片的 212px 矮一截，切到列表时首屏不该是一片高块
+.wk-skeleton--row {
+  height: 72px;
+}
+
+@keyframes wk-shimmer {
+  from { background-position: 140% 0; }
+  to { background-position: -40% 0; }
+}
+
+.wk-more {
+  display: flex;
+  justify-content: center;
+  padding: 18px 0 6px;
+  animation: wk-section-in 0.3s var(--ease-soft) backwards;
+}
+
+/* ---------------------------------------------------------------- 按钮 */
+
+.wk-btn {
+  padding: 6px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: var(--font-family);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, opacity 0.12s ease;
+
+  &:hover:not(:disabled) { background: var(--bg-card-solid, var(--bg-card)); }
+  &:disabled { opacity: 0.5; cursor: default; }
+
+  &--primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--on-accent, #fff);
+    font-weight: 600;
+
+    &:hover:not(:disabled) { background: var(--accent); filter: brightness(1.08); }
+  }
+
+  &--ghost { background: transparent; }
+}
+
+.wk-link {
+  border: none;
+  background: transparent;
+  color: var(--accent-text, var(--accent));
+  font-size: 11px;
+  font-family: var(--font-family);
+  cursor: pointer;
+  padding: 0;
+
+  &:hover { text-decoration: underline; }
+}
+
+/* ---------------------------------------------------------------- 抽屉 */
+
+.wk-drawer-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(0, 0, 0, 0.42);
+  display: flex;
+  justify-content: flex-end;
+  // 遮罩单独淡入（0.2s 标准缓动）：它背后是整页工坊列表，
+  // 和抽屉的位移分开做，关掉时也不会「整块变黑再一起消失」。
+  animation: wk-mask-in 0.2s var(--ease-standard) backwards;
+}
+
+.wk-drawer {
+  width: min(460px, 92vw);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card-solid, var(--bg-primary));
+  border-left: 1px solid var(--border-color);
+  box-shadow: -12px 0 32px rgba(0, 0, 0, 0.28);
+  // 原来是 0.17s ease-out —— 比项目里任何面板都快一档，关掉/打开像被「啪」地贴上去。
+  // 统一成 0.26s + --ease-soft（快速起步、长尾巴），和其它弹窗面板同一个手感；
+  // 起点 34px 比旧版 26px 略远，让「从右侧推进来」的方向在被裁切时也看得出来。
+  animation: wk-drawer-in 0.26s var(--ease-soft) backwards;
+}
+
+@keyframes wk-drawer-in {
+  // 只做位移，不做 opacity：遮罩本身就是父级、正在做 0 → 1 的淡入，
+  // 抽屉再叠一层淡入会一起进入「组不透明度」合成路径 —— 两边叠乘之后
+  // 前 100ms 抽屉几乎看不见，观感上变成「遮罩先变暗、抽屉再冒出来」，
+  // 比直接把抽屉推进来慢半拍（App.scss 的切页动画出于同样原因也不用 opacity）。
+  from { transform: translate3d(34px, 0, 0); }
+  to { transform: none; }
+}
+
+.wk-drawer__head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.wk-drawer__id {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.wk-drawer__close {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+
+  &:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+}
+
+.wk-drawer__scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 14px 16px;
+}
+
+.wk-drawer__cover {
+  margin: 12px 0;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-secondary);
+  // 固定比例：工坊封面里有几万像素的竖长条，让它自由撑高会把描述挤到屏幕外
+  aspect-ratio: 16 / 9;
+  max-height: 46vh;
+
+  img { width: 100%; display: block; }
+}
+
+.wk-drawer__title {
+  margin: 0 0 10px;
+  font-size: 16px;
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+
+.wk-drawer__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(74px, 1fr));
+  gap: 8px;
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+
+  div { display: flex; flex-direction: column; gap: 2px; }
+  span { font-size: 10.5px; color: var(--text-secondary); }
+  b { font-size: 13px; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+}
+
+.wk-drawer__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 10px 0;
+}
+
+.wk-drawer__hint {
+  margin: 8px 0;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.wk-drawer__desc {
+  margin-top: 10px;
+  font-size: 12.5px;
+  line-height: 1.72;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  opacity: 0.9;
+}
+
+.wk-drawer__foot {
+  flex-shrink: 0;
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-primary-solid, var(--bg-primary));
+
+  .wk-btn { flex: 1; padding: 9px 12px; }
+}
+
+/* 窄窗口：筛选栏收到窄一档，卡片下限也降一档，否则每行只剩 2 张、列表拉得特别长 */
+@media (max-width: 880px) {
+  .wk-side {
+    width: 150px;
+  }
+  .wk-grid {
+    grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+    gap: 11px;
+  }
+  .wk-top__hint { display: none; }
+
+  // 列表模式窄屏：更新时间最先让位（长日期最占宽度），标题才有地方显示完整
+  .wk-row { gap: 10px; padding-right: 10px; }
+  .wk-row__stats {
+    width: 66px;
+    span:nth-child(3) { display: none; }
+  }
+  .wk-row__cover { width: 80px; height: 50px; }
+}
+
+/* ---------------------------------------------------------------- 动画 */
+// 工坊页的入场/过渡参数全部对齐项目既有约定，集中放一处方便以后一起调：
+//   区块入场  0.4s  --ease-soft    左侧 20px 推入，步进 45ms  ← 同 ContentArea.scss 的 sectionRise
+//   卡片入场  0.3s  --ease-spring  下 16px + scale(0.95)，步进 24ms ← 同 MyModsPage.scss 的 cardFadeIn
+//   列表行    0.3s  --ease-soft    左侧 16px 推入，步进 18ms        ← 同 MyModsPage.scss 的 listRowIn
+//   折叠展开  0.26s --ease-soft    高度 0fr → 1fr 插值（双向）      ← grid-template-rows 过渡，见 .wk-group__body
+//   详情抽屉  0.26s --ease-soft    右侧 34px 推进（原来是 0.17s ease-out，快一档）
+//
+// 这些关键帧在这里重新定义、没有直接引用上面那几处：渲染层 CSS 是按页面拆包的
+// （构建产物里 WorkshopPage-*.css 与 MyModsPage 的 CSS 是两个文件），
+// 跨文件引用关键帧会随加载顺序时有时无 —— 工坊本来就是延迟加载的页面，最容易中招。
+// 调参数时两处要同步。
+//
+// 所有动画只动 opacity / transform，不插值 box-shadow、filter 这类绘制属性：
+// 一屏几十张卡片同时插值，每帧要重绘几十个大模糊，帧率会从 200 掉到 90（MyModsPage 踩过）。
+
+@keyframes wk-section-in {
+  from { opacity: 0; transform: translate3d(-20px, 0, 0); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes wk-card-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.95); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes wk-row-in {
+  from { opacity: 0; transform: translate3d(-16px, 0, 0); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes wk-mask-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}

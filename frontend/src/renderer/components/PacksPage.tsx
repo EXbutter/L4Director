@@ -8,6 +8,7 @@ import { ThumbImage } from './ThumbImage';
 import { isCampaignMod } from '../utils/modRole';
 import { ModSwitch } from './ModSwitch';
 import { isFineTag, orderCardTags } from './MyModsPage';
+import { useModalA11y } from '../hooks/useModalA11y';
 import './ContentArea.scss';
 import './MyModsPage.scss';
 
@@ -178,6 +179,22 @@ export function PacksPage() {
   const [conflictDialogMod, setConflictDialogMod] = useState<string | null>(null);
   const [conflictSnapshot, setConflictSnapshot] = useState<string[]>([]);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+
+  // 弹窗的 Esc 关闭 + Tab 焦点陷阱（与 MyModsPage 同一套，见 hooks/useModalA11y）
+  const createModalRef = useModalA11y(showCreateModal, () => setShowCreateModal(false));
+  const renameModalRef = useModalA11y(!!renamePackId, () => {
+    setRenamePackId(null);
+    setRenameValue('');
+  });
+  const deleteModalRef = useModalA11y(!!deleteConfirmPackId, () => setDeleteConfirmPackId(null));
+  const addModsModalRef = useModalA11y(showAddModsModal, () => {
+    setShowAddModsModal(false);
+    setSelectedAddMods(new Set());
+  });
+  const conflictModalRef = useModalA11y(!!conflictDialogMod, () => {
+    setConflictDialogMod(null);
+    setConflictSnapshot([]);
+  });
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -813,7 +830,7 @@ export function PacksPage() {
             setConflictSnapshot([]);
           }}
         >
-          <div className="conflict-dialog" onClick={(e) => e.stopPropagation()}>
+          <div className="conflict-dialog" ref={conflictModalRef} onClick={(e) => e.stopPropagation()}>
             <div className="conflict-dialog__header">
               <h3>冲突 Mod 详情</h3>
               <button
@@ -912,7 +929,7 @@ export function PacksPage() {
             setSelectedAddMods(new Set());
           }}
         >
-          <div className="modal-content modal-content--wide" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-content modal-content--wide" ref={addModsModalRef} onClick={(e) => e.stopPropagation()}>
             <h3>添加 Mod 到「{selectedPack.name}」</h3>
             <input
               type="text"
@@ -1017,7 +1034,7 @@ export function PacksPage() {
 
       {showCreateModal && (
         <div className="modal-overlay" onClick={() => setShowCreateModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-content" ref={createModalRef} onClick={(e) => e.stopPropagation()}>
             <h3>新建整合包</h3>
             <input
               type="text"
@@ -1042,7 +1059,7 @@ export function PacksPage() {
 
       {renamePackId && (
         <div className="modal-overlay" onClick={() => { setRenamePackId(null); setRenameValue(''); }}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-content" ref={renameModalRef} onClick={(e) => e.stopPropagation()}>
             <h3>重命名整合包</h3>
             <input
               type="text"
@@ -1102,7 +1119,7 @@ export function PacksPage() {
 
       {deleteConfirmPackId && (
         <div className="modal-overlay" onClick={() => setDeleteConfirmPackId(null)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-content" ref={deleteModalRef} onClick={(e) => e.stopPropagation()}>
             <h3>确认删除</h3>
             <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '16px' }}>
               确定要删除该整合包吗？

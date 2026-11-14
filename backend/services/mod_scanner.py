@@ -7,7 +7,7 @@ import shutil
 import threading
 import time
 import locale
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from urllib.parse import quote
 from pathlib import Path
 from typing import Optional
@@ -81,6 +81,9 @@ class ModInfo:
     role: str = 'art'                     # campaign / art / script / hud
     role_tags: list[str] = field(default_factory=list)   # 地图 / 脚本 / 音效 / 美术
     unreadable: bool = False              # VPK 解析失败（坏包/非标准编码）
+    # 解析失败的具体原因。条目本身仍然留在列表里（带 unreadable=True），
+    # 用户能看到"这个包有问题"，而不是"我明明装了却不见了"。
+    unreadable_reason: Optional[str] = None
     # ── 重复安装（同一个 Mod 装了两份）────────────────────────────────
     # 典型来源：Steam 创意工坊订阅了一份，又把同一个 vpk 手动拖进了 addons 根目录。
     # 冲突引擎对「内容完全一致」的两份会判成无冲突（逐字节相同不算资源争夺），
@@ -413,13 +416,44 @@ _NON_CONFLICT_PREFIXES = (
 )
 
 # In-memory caches (persist across requests for speed)
-_VPK_MANIFEST_CACHE: dict[str, set[str]] = {}
-_VPK_METADATA_CACHE: dict[str, dict] = {}
+#
+# 三份缓存都是「每个 Mod 一份完整目录树」，早期完全没有上限：1000 个 Mod 时
+# 光是这三份副本就能吃掉几百 MB 到 1 GB，用户感知是「用久了越来越卡、偶尔闪退」。
+# 现在统一走 _BoundedCache，超出条目上限时淘汰最久没被访问的那个；被淘汰的 Mod
+# 下次用到会重新解析 VPK（慢一点，但结果一样）。
+class _BoundedCache(OrderedDict):
+    """带容量上限的 LRU 字典（用法与 dict 一致）。"""
+
+    def __init__(self, max_entries: int):
+        super().__init__()
+        self.max_entries = max(1, int(max_entries))
+
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        super().move_to_end(key)
+        while len(self) > self.max_entries:
+            super().popitem(last=False)
+
+    def __getitem__(self, key):
+        value = super().__getitem__(key)
+        super().move_to_end(key)
+        return value
+
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+
+_VPK_MANIFEST_CACHE: dict[str, set[str]] = _BoundedCache(600)
+_VPK_METADATA_CACHE: dict[str, dict] = _BoundedCache(600)
 
 # 冲突检测用的「路径 + CRC」索引缓存。索引格式升级时把版本号 +1，旧缓存自动失效。
+# index 是三者里最占内存的（每条路径都带 crc + size），上限压得最低。
 _INDEX_VERSION = 1
-_VPK_INDEX_CACHE: dict[str, dict[str, tuple[int, int]]] = {}
-_OFFICIAL_INDEX_CACHE: dict[str, tuple[float, object]] = {}
+_VPK_INDEX_CACHE: dict[str, dict[str, tuple[int, int]]] = _BoundedCache(400)
+_OFFICIAL_INDEX_CACHE: dict[str, tuple[float, object]] = _BoundedCache(8)
 _LAST_SCAN_KEY: Optional[str] = None
 _LAST_SCAN_RESULT: list[ModInfo] = []
 # 冲突检测结果缓存：仅当“启用状态指纹”变化时才重算（避免每次请求都重复 O(N^3) 计算）
@@ -867,6 +901,11 @@ def _get_vpk_data(path: Path) -> dict:
     
     except Exception as e:
         print(f"[VPK] Error reading {path.name}: {e}")
+        # 记下「这个包读不出来」。下面还会尽量从字节流里捞标题，但 unreadable
+        # 必须留下来 —— 否则界面上它和正常包长得一模一样，用户只会觉得
+        # "我明明装了，软件里没有"或者"装了但没生效"。
+        result['unreadable'] = True
+        result['unreadable_reason'] = f'{type(e).__name__}: {e}'
         # Raw binary fallback for metadata only.
         # addoninfo 位于 VPK 前部（header + 目录区/preload），只读文件开头即可，
         # 避免对超大文件整文件读取 + 解码 + 正则扫描（会灾难性回溯，拖慢扫描）。
@@ -1226,7 +1265,9 @@ def _detect_conflicts(mods: list[ModInfo], addons_path: Optional[str] = None):
         mod.conflict_details = []
         mod.conflict_hints = []
         mod.role_tags = []
-        mod.unreadable = False
+        # 刻意**不**在这里清 unreadable / unreadable_reason：
+        # 「这个包读不出来」是事实，不是冲突检测的中间结果。每轮重算都清一遍，
+        # 坏包就会在界面上看起来一切正常，用户永远不知道它其实没被识别。
 
     enabled_mods = [m for m in mods if m.enabled]
     if len(enabled_mods) < 2:
@@ -1241,6 +1282,8 @@ def _detect_conflicts(mods: list[ModInfo], addons_path: Optional[str] = None):
             idx = {}
         if not idx:
             mod.unreadable = True
+            if not mod.unreadable_reason:
+                mod.unreadable_reason = 'VPK 目录树读取失败（包可能损坏、被截断，或者不是标准的 VPK）'
             continue
         indices[mod.name] = idx
         mod.role = detect_role(idx)
@@ -1414,6 +1457,19 @@ def cache_gc(addons_path: Optional[str] = None) -> dict:
 
 
 
+class AddonListWriteError(RuntimeError):
+    """写 addonlist.txt 失败（只读 / 被占用 / 权限不足）。
+
+    以前这种失败只在后端 print 一行就过去了，接口照样回「已应用 N 项」——
+    用户看到软件里已经禁用，进游戏却还在加载。必须让调用方知道文件没写成。
+    """
+
+    def __init__(self, path: str, reason: str):
+        self.path = path
+        self.reason = reason
+        super().__init__(f'写入 addonlist.txt 失败（{path}）：{reason}')
+
+
 class ModScanner:
     def __init__(self, addons_path: Optional[str] = None):
         self._addons_path = None
@@ -1426,6 +1482,12 @@ class ModScanner:
         self._pref_norm_index: dict[str, bool] = {}
         self._pref_cache_ts: float = 0.0
         self._pref_lock = threading.Lock()
+        # 最近一次写 addonlist.txt 失败的原因（None = 上次写成功/还没写过）
+        self._last_addonlist_error: Optional[str] = None
+
+    def last_addonlist_error(self) -> Optional[str]:
+        """最近一次写 addonlist.txt 的失败原因（供路由层如实回报给界面）。"""
+        return self._last_addonlist_error
 
     def _get_addons_path_from_store(self) -> Optional[str]:
         """Get addons path from unified data store."""
@@ -1489,8 +1551,11 @@ class ModScanner:
         except Exception:
             return ''
 
-    def _write_addonlist(self, entries: dict[str, bool]):
+    def _write_addonlist(self, entries: dict[str, bool]) -> bool:
         """把 entries 里的启用状态写回 addonlist.txt（只改匹配到的行，其余原样保留）。
+
+        返回是否真的写成功了。失败原因记在 self._last_addonlist_error 里 ——
+        调用方必须据此决定要不要告诉界面「这次没生效」，而不是照样回一句成功。
 
         以前是「用解析结果重建整个文件」：只要某个条目解析不到（编码差异、格式变体），
         它就会从文件里消失 —— 游戏随后会把「文件里不存在的 addon」当成默认启用写回，
@@ -1498,7 +1563,8 @@ class ModScanner:
         """
         addonlist_path = self._get_addonlist_path()
         if not addonlist_path:
-            return
+            self._last_addonlist_error = '还没有配置 addons 目录，找不到 addonlist.txt'
+            return False
         try:
             addonlist_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1506,7 +1572,10 @@ class ModScanner:
             if not old_text and addonlist_path.exists():
                 # 文件存在却读不出内容（异常）→ 宁可不写，也不要覆盖掉用户的配置
                 print("[AddonList] Refuse to overwrite: existing file could not be read")
-                return
+                self._last_addonlist_error = (
+                    'addonlist.txt 存在但读不出内容（可能被游戏占用），为避免覆盖你的配置，本次没有写入'
+                )
+                return False
 
             had_bom = False
             try:
@@ -1572,8 +1641,17 @@ class ModScanner:
                 set_addonlist_state(hashlib.md5(data).hexdigest(), str(addonlist_path))
             except Exception as e:
                 print(f"[AddonList] Failed to record fingerprint: {e}")
+            self._last_addonlist_error = None
+            return True
         except Exception as e:
+            self._last_addonlist_error = f'{type(e).__name__}: {e}'
             print(f"[AddonList] Write failed: {e}")
+            # 替换失败时把临时文件清掉，别在游戏目录里留下一个 addonlist.tmp
+            try:
+                tmp_path.unlink()
+            except (OSError, UnboundLocalError):
+                pass
+            return False
 
     # ===== mod 启用状态偏好：软件里的设置是权威来源 =====
 
@@ -1842,7 +1920,11 @@ class ModScanner:
                 addonlist[list_key] = enabled
                 changed = True
         if changed:
-            self._write_addonlist(addonlist)
+            if not self._write_addonlist(addonlist):
+                # 写不进去就等于一条都没生效，不能回「已应用 N 项」——
+                # 用户会以为设置已经交给游戏了，进游戏却发现没变。
+                print(f"[Prefs] Sync failed: {self._last_addonlist_error}")
+                return 0
             print(f"[Prefs] Synced {applied} mod state(s) into addonlist.txt before launch")
         # 调用这个入口就意味着「已经按软件设置应用过一次」→ 清掉「未应用」标记
         # （界面上的「应用」按钮随之熄灭）
@@ -2118,8 +2200,10 @@ class ModScanner:
                 file_changed = True
                 changed_count += 1
 
-        if file_changed:
-            self._write_addonlist(addonlist)
+        if file_changed and not self._write_addonlist(addonlist):
+            # 文件没写成：state 照旧持久化（下次启动游戏前还会再试一次），
+            # 但必须把「这次没生效」带回去，否则界面会显示成功、游戏里却毫无变化。
+            result['write_error'] = self._last_addonlist_error or '写入 addonlist.txt 失败'
 
         # 持久化用户选择（整个整合包只写一次 data.json）
         try:
@@ -2162,17 +2246,45 @@ class ModScanner:
                 data = json.loads(config_path.read_text(encoding='utf-8'))
                 if data.get('addons_path') and not self._addons_path:
                     self.set_addons_path(data['addons_path'])
-            except:
-                pass
+            except Exception as e:
+                # 以前这里是裸 except: pass —— 配置文件写坏后 addons 路径被静默丢掉，
+                # 用户表现是「每次启动都要重新选一次目录」，日志里一个字都没有。
+                print(f"[Config] 读取 {config_path} 失败（将忽略其中的设置）：{type(e).__name__}: {e}")
 
     def _save_config(self):
         config_path = self._get_config_path()
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(
-            json.dumps({'addons_path': self._addons_path, 'updated_at': datetime.now().isoformat()},
-                       ensure_ascii=False, indent=2),
-            encoding='utf-8'
-        )
+        # 原子写：以前是 write_text 直接覆盖，断电/杀软占用时会留下半个 JSON，
+        # 下次启动就静默丢设置。这里改成 tmp + fsync + replace。
+        #
+        # 必须**合并**而不是整体重写：config.json 里除了 addons_path 还存着
+        # steam_api_key 等其它模块的配置。以前这里只写 addons_path 两个键，
+        # 结果是「启动时自动检测到路径 → 保存一次 → 刚填的 API Key 被抹掉」，
+        # 用户看到的现象是「key 明明填了，重启又要重填」。
+        data = {}
+        if config_path.exists():
+            try:
+                loaded = json.loads(config_path.read_text(encoding='utf-8'))
+                if isinstance(loaded, dict):
+                    data = loaded
+            except Exception as e:
+                print(f"[Config] 保存前读取 {config_path} 失败（保留既有字段的目标放弃）：{type(e).__name__}: {e}")
+        data['addons_path'] = self._addons_path
+        data['updated_at'] = datetime.now().isoformat()
+        payload = json.dumps(data, ensure_ascii=False, indent=2)
+        tmp_path = config_path.with_name(config_path.name + '.tmp')
+        try:
+            with open(tmp_path, 'w', encoding='utf-8') as fh:
+                fh.write(payload)
+                fh.flush()
+                os.fsync(fh.fileno())
+            tmp_path.replace(config_path)
+        except OSError as e:
+            print(f"[Config] 写入 {config_path} 失败：{e}")
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
 
     def get_addons_path(self) -> Optional[str]:
         return self._addons_path
@@ -2204,9 +2316,15 @@ class ModScanner:
         「新订阅的 Mod 下载完成」「手动往 addons 里丢文件」都能自动反映到界面，
         不会再出现「已经取消订阅，卡片还留在界面上」。
         只有真的变化了才写盘，避免每次扫描都碰 data.json。
+
+        注意 `last_scan` 的判断：以前只比 `files`，而空目录（或全新用户）两边都是
+        空 dict → 永远 return、清单永远不落盘 → `scan-status` 每次都回
+        `no_previous_scan / changed: true`，前端 5 秒轮询一次就判一次 changed，
+        界面后面的静默刷新永久空转。现在"从没扫过"也算需要写。
         """
         try:
-            if get_scan_manifest().files == files:
+            current = get_scan_manifest()
+            if current.files == files and current.last_scan:
                 return
             save_scan_manifest(ScanManifest(
                 files=files,
@@ -2226,6 +2344,9 @@ class ModScanner:
         
         addons_dir = Path(self._addons_path)
         if not addons_dir.exists():
+            # 目录不见了（盘没挂上 / 被删 / 改名）：写一份「扫过了，确实是空的」清单，
+            # 否则 scan-status 永远停在 no_previous_scan，前端每 5 秒被判一次 changed。
+            self._sync_scan_manifest({})
             return []
         
         global _LAST_SCAN_RESULT, _LAST_SCAN_KEY, _LAST_CONFLICT_KEY
@@ -2660,10 +2781,50 @@ class ModScanner:
                 category=(category_tags[0] if category_tags else None),
                 tags_manual=tags_are_manual,
                 missing_addoninfo=missing_addoninfo,
+                unreadable=bool(metadata.get('unreadable')),
+                unreadable_reason=metadata.get('unreadable_reason'),
             )
         except Exception as e:
             print(f"[VPK] Error {file_path.name}: {e}")
-            return None
+            # 坏包 / 被截断 / 目录树编码异常：以前这里 return None，这张卡就从列表里
+            # 直接消失了 —— 用户看到的是"我明明装了，软件里根本没有"，也没法删/禁用。
+            # 现在产出一条最小记录并标记 unreadable，界面标「无法解析」。
+            return self._unreadable_mod(file_path, addonlist, is_workshop, workshop_id, e)
+
+    def _unreadable_mod(
+        self, file_path: Path, addonlist: dict[str, bool],
+        is_workshop: bool, workshop_id: Optional[str], exc: Exception,
+    ) -> ModInfo:
+        """为解析失败的 VPK 产出一条最小可用的 ModInfo（只依赖 stat，不再碰包内容）。"""
+        stat = None
+        try:
+            stat = file_path.stat()
+        except OSError:
+            pass
+        name = file_path.name
+        list_key = f'workshop\\{name}' if is_workshop else name
+        try:
+            is_enabled = self._resolve_enabled(name, list_key, addonlist)
+        except Exception:
+            is_enabled = False
+        try:
+            resolved = str(file_path.resolve())
+        except OSError:
+            resolved = str(file_path)
+        return ModInfo(
+            name=name,
+            display_name=name[:-4] if name.lower().endswith('.vpk') else name,
+            path=resolved,
+            size_bytes=stat.st_size if stat else 0,
+            enabled=is_enabled,
+            is_workshop=is_workshop,
+            workshop_id=workshop_id,
+            last_modified=datetime.fromtimestamp(stat.st_mtime).isoformat() if stat else None,
+            added_at=datetime.fromtimestamp(file_created_ts(stat)).isoformat() if stat else None,
+            tags=['创意工坊 Mod'] if is_workshop else ['外部 Mod'],
+            unreadable=True,
+            unreadable_reason=f'{type(exc).__name__}: {exc}',
+        )
 
     def add_addoninfo(self, mod_name: str, path_hint: Optional[str] = None) -> dict:
         """给某个本地 Mod 的 VPK 补一份 addoninfo.txt。

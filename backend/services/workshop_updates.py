@@ -65,15 +65,19 @@ def _is_wid(text: str) -> bool:
 def workshop_id_for(path: Path, is_workshop: bool) -> Optional[str]:
     """从文件路径推断创意工坊 ID。
 
-    L4D2 里工坊文件至少有三种落法，都要认：
+    只认 `addons/workshop/` 下的两种落法：
       1. `addons/workshop/<id>.vpk`  —— Steam 订阅的标准位置；
-      2. `addons/workshop/<id>/<id>.vpk` —— 下载器解包后的目录式写法；
-      3. `addons/<id>.vpk` —— 用户把工坊 vpk 直接拖进 addons 根目录。
-    文件名是数字就用文件名，否则（目录式）用上级目录名。
+      2. `addons/workshop/<id>/<id>.vpk` —— 下载器解包后的目录式写法。
+
+    以前还会把 `addons/<id>.vpk`（用户把工坊 vpk 直接拖进根目录）当工坊包。问题是
+    本地 Mod 恰好叫 `123456789.vpk` 时会被当成工坊条目去查、去覆盖 —— 本地文件改过
+    就没了，而工坊包随时能重下。宁可少认一种落法，也不能拿用户的手工 Mod 去覆盖。
     """
+    if not is_workshop:
+        return None
     if _is_wid(path.stem):
         return path.stem
-    if is_workshop and _is_wid(path.parent.name):
+    if _is_wid(path.parent.name):
         return path.parent.name
     return None
 
@@ -186,6 +190,10 @@ class WorkshopUpdateService:
         self._pct = 0.0
         self._errors: list[str] = []
         self._finished_at = 0.0
+        # 「更新」阶段的取消信号。以前 download_one 的 cancel 硬编码 None，
+        # 一个 2GB 的更新点下去只能干等到底、没有任何停止入口。
+        self._apply_cancel = threading.Event()
+        self._apply_cancelled = False
 
     # ---------- 设置 ----------
     @staticmethod
@@ -276,6 +284,8 @@ class WorkshopUpdateService:
                     "pct": round(self._pct, 1),
                     "errors": list(self._errors),
                     "finished_at": self._finished_at,
+                    "cancelling": self._apply_cancel.is_set(),
+                    "cancelled": self._apply_cancelled,
                 },
             }
 
@@ -550,9 +560,20 @@ class WorkshopUpdateService:
             self._pct = 0.0
             self._errors = []
             self._finished_at = 0.0
+            self._apply_cancelled = False
+            self._apply_cancel.clear()
         threading.Thread(target=self._apply_worker, args=(wids, addons_path),
                          daemon=True, name="workshop-update-apply").start()
         return {"ok": True, "total": len(wids)}
+
+    def cancel_apply(self) -> dict:
+        """请求停止正在进行的更新。已下完的包保留，当前这个会在下一个分块边界退出。"""
+        with self._lock:
+            if not self._running:
+                return {"ok": False, "error": "当前没有正在进行的更新"}
+            self._apply_cancelled = True
+            self._apply_cancel.set()
+        return {"ok": True}
 
     def _on_prog(self, p: dict):
         with self._lock:
@@ -577,6 +598,8 @@ class WorkshopUpdateService:
                     return
 
             for wid in wids:
+                if self._apply_cancel.is_set():
+                    break
                 e = entries.get(wid)
                 item = details.get(wid)
                 if not e:
@@ -595,13 +618,15 @@ class WorkshopUpdateService:
                     self._pct = 0.0
                 ok_any = False
                 for path in e["paths"]:
+                    if self._apply_cancel.is_set():
+                        break
                     outdir = os.path.dirname(path)
                     try:
                         result = download_one(
                             item, outdir, UPDATE_THREADS, True,
                             log=lambda m: print(f"[WsUpdate] {m}"),
                             prog=self._on_prog,
-                            cancel=None,
+                            cancel=self._apply_cancel,
                         )
                     except Exception as ex:
                         with self._lock:
@@ -642,6 +667,9 @@ class WorkshopUpdateService:
                 self._running = False
                 self._current = ""
                 self._finished_at = time.time()
+                if self._apply_cancel.is_set():
+                    self._apply_cancelled = True
+                self._apply_cancel.clear()
 
     # ---------- 自动检查 ----------
     def maybe_auto_check(self, addons_path: str, delay: float = 8.0):

@@ -298,7 +298,9 @@ export function Sidebar() {
               initiateSteamLogin();
             }
           }}
-          title={steamUser ? `已登录为 ${steamUser.nickname}，点击退出` : '点击登录 Steam 账户'}
+          title={steamUser
+            ? `读取到本机账号：${steamUser.nickname}（来自 Steam 本地配置，不代表已授权），点击清除`
+            : '读取本机 Steam 账号（读的是 Steam 自己记的最近登录用户，不会向 Valve 发请求）'}
         >
           {steamUser ? (
             <>
@@ -319,7 +321,7 @@ export function Sidebar() {
                 </svg>
               </div>
               <span className="sidebar-steam__name">
-                {steamLoginInProgress ? '登录中...' : '登录 Steam'}
+                {steamLoginInProgress ? '读取中...' : '读取本机账号'}
               </span>
             </>
           )}

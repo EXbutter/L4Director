@@ -145,25 +145,36 @@ def clear_ip_cache(host=None):
 
 
 # ---------------------------------------------------------------- 元数据
-# 调用 Steam API 有两条路，选错就会「不开加速器查不了 / 开了又慢」：
+# 查工坊元数据只有 HTTPS 一条路，但「怎么出网」有好几种，选错就会
+# 「不开加速器查不了 / 开了加速器还是超时」：
 #
-#   * 加速器（Steam++、Watt Toolkit 之类）在跑时会把 API 域名写进 hosts 指向
-#     127.0.0.1，由它在本地 443 端口起反向代理。这时只能走系统解析（urllib），
-#     直连真实 IP 反而绕过了它的代理。
-#   * 加速器关掉但 hosts 残留 127.0.0.1 时，系统解析直接指向没人监听的端口，
-#     连接立刻被拒 —— 这就是「不开加速器检查更新永远失败」的典型原因。
-#     这时要自己解析真实 IP、带 SNI 直连（dns_a 已经不认 hosts 了）。
+#   * api.steamchina.com（蒸汽平台）：DNS 不被加速器劫持，国内直连 0.3~0.7s，
+#     返回字段与 api.steampowered.com 完全一致（已逐字段对比过）。优先走它。
+#     这条必须**绕开系统代理**：解析到的是国内 IP，塞进境外代理反而超时。
+#   * api.steampowered.com：国内直连基本不通（184.26.x 读超时），只能靠
+#     加速器把域名写进 hosts 指向 127.0.0.1，再由它在本地 443 反代出去。
+#     加速器没开但 hosts 残留时，连接立刻被拒 —— 这就是老版「不开加速器
+#     检查更新永远失败」的原因；这时自己解析真实 IP 带 SNI 直连也只是碰运气。
 #
-# 所以先探一下 127.0.0.1:443 有没有人监听来决定顺序，两条路都试，且全程有
-# 时间预算：断网时几秒内就报错，而不是卡在 socket 上让界面一直「检查中…」。
+# 所以顺序是：国内端点（直连）→ 国际端点（先加速器反代，再直连真实 IP），
+# 全程有时间预算，断网时几秒内报错，而不是让界面一直「检查中…」。
 
-API_HOST = "api.steampowered.com"
+API_HOST = "api.steampowered.com"     # 国际站：国内多数网络直连被墙，只能靠加速器/系统代理
+API_HOST_CN = "api.steamchina.com"    # 蒸汽平台：国内直连可用（实测 0.3~0.7s），字段与国际站一致
 API_PATH = "/ISteamRemoteStorage/GetPublishedFileDetails/v1/"
 API_URL = f"https://{API_HOST}{API_PATH}"
+
+# 端点顺序：先国内再国际。国内这条不依赖 hosts/加速器，是「开了加速器也超时」的解药；
+# 国际站留作兜底，毕竟个别条目（下架、锁区）可能只在国际站查得到。
+API_ENDPOINTS = (API_HOST_CN, API_HOST)
 API_CONNECT_TIMEOUT = 3.5     # 单个 IP 建连 + TLS 握手的时间上限
 API_READ_TIMEOUT = 10.0       # 单次请求收响应的时间上限
 API_MAX_IPS = 2               # 每条路最多试几个 IP
-API_TOTAL_BUDGET = 15.0       # 一次 _api_post 的总预算，超了就认输
+API_TOTAL_BUDGET = 18.0       # 一次 _api_post 的总预算，超了就认输
+
+# 记住上次成功的端点，10 分钟内优先用它，省掉一次无用超时
+_LAST_OK = {"host": "", "at": 0.0}
+ENDPOINT_MEMORY_TTL = 600.0
 
 _PROXY_PROBE = {"at": 0.0, "ok": False}
 
@@ -255,11 +266,12 @@ def _parse_http_response(buf: bytes) -> dict:
     return json.loads(payload.decode("utf-8", "replace"))
 
 
-def _post_direct(ip, body: bytes, read_timeout: float) -> dict:
+def _post_direct(ip, body: bytes, read_timeout: float,
+                 host: str = API_HOST, path: str = API_PATH) -> dict:
     """直连指定 IP 发 POST（自带 SNI 和 Host 头，证书照样校验）。"""
     raw = socket.create_connection((ip, 443), timeout=API_CONNECT_TIMEOUT)
     try:
-        s = SSL_CTX.wrap_socket(raw, server_hostname=API_HOST)
+        s = SSL_CTX.wrap_socket(raw, server_hostname=host)
     except Exception:
         try:
             raw.close()
@@ -268,8 +280,8 @@ def _post_direct(ip, body: bytes, read_timeout: float) -> dict:
         raise
     try:
         s.settimeout(read_timeout)
-        req = (f"POST {API_PATH} HTTP/1.1\r\n"
-               f"Host: {API_HOST}\r\n"
+        req = (f"POST {path} HTTP/1.1\r\n"
+               f"Host: {host}\r\n"
                f"User-Agent: {UA}\r\n"
                f"Accept: application/json\r\n"
                f"Content-Type: application/x-www-form-urlencoded\r\n"
@@ -310,94 +322,198 @@ def _post_direct(ip, body: bytes, read_timeout: float) -> dict:
     return _parse_http_response(bytes(buf))
 
 
-def _post_via_system(body: bytes, read_timeout: float) -> dict:
-    req = urllib.request.Request(API_URL, data=body, headers={
+def _post_via_system(body: bytes, read_timeout: float,
+                     host: str = API_HOST, path: str = API_PATH,
+                     no_proxy: bool = False) -> dict:
+    """走系统解析（urllib）发 POST。
+
+    no_proxy=True 时忽略 HTTP(S)_PROXY 与注册表代理 —— 国内端点必须这样，
+    否则会把打给 211.97.x 的请求塞进境外代理，白等一轮超时。
+    """
+    req = urllib.request.Request(f"https://{host}{path}", data=body, headers={
         "User-Agent": UA,
         "Content-Type": "application/x-www-form-urlencoded",
     })
-    with urllib.request.urlopen(req, timeout=read_timeout, context=SSL_CTX) as r:
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({})) if no_proxy else None
+    open_fn = opener.open if opener else urllib.request.urlopen
+    with open_fn(req, timeout=read_timeout) as r:
         return json.loads(r.read().decode("utf-8", "replace"))
 
 
-def _api_post(payload, timeout=API_READ_TIMEOUT):
-    body = urllib.parse.urlencode(payload).encode()
-    deadline = time.time() + API_TOTAL_BUDGET
+
+class _EndpointError(RuntimeError):
+    """某个端点把它该试的走法都试完了；errs 是每次尝试的一句话原因。"""
+
+    def __init__(self, host: str, errs: list):
+        self.host = host
+        self.errs = list(errs)
+        super().__init__(" | ".join(self.errs) or "未知原因")
+
+
+def _endpoint_order() -> list:
+    """端点顺序：上次成功的优先（10 分钟内），其余保持「国内 → 国际」。"""
+    hosts = list(API_ENDPOINTS)
+    last = _LAST_OK["host"]
+    if last in hosts and time.time() - _LAST_OK["at"] < ENDPOINT_MEMORY_TTL:
+        hosts.remove(last)
+        hosts.insert(0, last)
+    return hosts
+
+
+def _host_label(host: str) -> str:
+    return {API_HOST_CN: "国内", API_HOST: "国际"}.get(host, host)
+
+
+def _post_host(host: str, body: bytes, timeout: float, deadline: float) -> dict:
+    """在单个端点内把可用的走法试完；全失败抛 _EndpointError。"""
     errs: list = []
 
-    # 先看系统解析长什么样，再决定先走哪条路：
-    #   * 解析结果是 127.x 且本机 443 上确实有加速器的反代在跑 → 走系统路径
-    #     （它自己会连到 127.0.0.1，由加速器转发出去）；
-    #   * 解析结果是 127.x 但 443 没人听（加速器关了、hosts 残留）→ 先直连，
-    #     这正是「不开加速器就查不了」的那种机器；
-    #   * 解析结果正常 → 先走系统路径：最便宜，也顺带吃系统代理设置；
-    #   * 解析不出东西（DNS 被墙/卡死）→ 先直连，用公共 DNS 拿到的真实 IP。
-    sys_ips = _system_ips(API_HOST)
+    if host == API_HOST_CN:
+        # 国内站解析到国内 IP，必须绕开代理：塞进境外代理只会白等一轮超时。
+        # 用 urllib 而不是自己挑 IP，因为它会依次试 getaddrinfo 的每个地址。
+        left = min(timeout, deadline - time.time())
+        if left > 0.5:
+            try:
+                return _post_via_system(body, max(1.0, left), host=host, no_proxy=True)
+            except Exception as e:
+                errs.append(f"直连：{type(e).__name__} {e}")
+        # 系统 DNS 若被劫持成 127.x，就问公共 DNS 拿真地址再直连
+        for ip in [x for x in resolve_ips(host) if not x.startswith("127.")][:API_MAX_IPS]:
+            left = min(timeout, deadline - time.time())
+            if left <= 0.5:
+                break
+            try:
+                return _post_direct(ip, body, max(1.0, left), host=host)
+            except Exception as e:
+                errs.append(f"直连 {ip}：{type(e).__name__}")
+        raise _EndpointError(host, errs)
+
+    # 国际站：先看系统解析长什么样，再决定先走哪条路
+    #   * 127.x + 本机 443 有反代（加速器在跑）→ 系统路径，由它转发出去；
+    #   * 127.x 但没人听（加速器关了、hosts 残留）→ 先直连；
+    #   * 解析正常 → 系统路径最便宜，也顺带吃系统代理设置；
+    #   * 解析不出东西 → 直连，用公共 DNS 拿到的真实 IP。
+    sys_ips = _system_ips(host)
     hijacked = (not sys_ips) or all(ip.startswith("127.") for ip in sys_ips)
-    if hijacked:
-        prefer_system = _proxy_listening()
-    else:
-        prefer_system = True
+    prefer_system = _proxy_listening() if hijacked else True
     order = ("system", "direct") if prefer_system else ("direct", "system")
-
     if hijacked and not sys_ips and not prefer_system:
-        # 系统 DNS 完全废了：直连是唯一出路，先清掉可能已经过期的缓存
-        clear_ip_cache(API_HOST)
+        clear_ip_cache(host)   # 系统 DNS 完全废了，先清掉可能过期的缓存
 
-    for idx, mode in enumerate(order):
-        remain = deadline - time.time()
-        if remain <= 0:
+    for mode in order:
+        left = min(timeout, deadline - time.time())
+        if left <= 0.5:
             errs.append("超出时间预算")
             break
-        # 先跑的那条路别把预算吃光：另一条至少要留三分之一的机会
-        mode_deadline = time.time() + (remain * 0.65 if idx == 0 and len(order) > 1 else remain)
-        if mode == "direct":
-            ips = [ip for ip in resolve_ips(API_HOST) if not ip.startswith("127.")]
-            if not ips:
-                errs.append(f"解析不到 {API_HOST}")
-                continue
-            for ip in ips[:API_MAX_IPS]:
-                left = min(mode_deadline, deadline) - time.time()
-                if left <= 0.5:
-                    break
-                try:
-                    # 让单次尝试也别超过剩余预算，否则最后一次会把总时长撑爆
-                    return _post_direct(ip, body, max(1.0, min(timeout, left)))
-                except Exception as e:
-                    errs.append(f"直连 {ip}：{type(e).__name__}")
-        else:
+        if mode == "system":
             try:
-                left = max(1.0, min(mode_deadline, deadline) - time.time())
-                return _post_via_system(body, min(timeout, API_READ_TIMEOUT, left))
+                return _post_via_system(body, max(1.0, left), host=host)
             except Exception as e:
                 errs.append(f"系统解析：{type(e).__name__} {e}")
+            continue
+        ips = [x for x in resolve_ips(host) if not x.startswith("127.")]
+        if not ips:
+            errs.append(f"解析不到 {host}")
+            continue
+        for ip in ips[:API_MAX_IPS]:
+            left = min(timeout, deadline - time.time())
+            if left <= 0.5:
+                break
+            try:
+                return _post_direct(ip, body, max(1.0, left), host=host)
+            except Exception as e:
+                errs.append(f"直连 {ip}：{type(e).__name__}")
+    raise _EndpointError(host, errs)
 
-    clear_ip_cache(API_HOST)   # 下次重新解析，别一直拿坏 IP
-    print(f"[SteamApi] 请求失败（{order}）：" + " | ".join(errs))
+
+def _api_post(payload, timeout=API_READ_TIMEOUT, skip_host=None):
+    body = urllib.parse.urlencode(payload).encode()
+    deadline = time.time() + API_TOTAL_BUDGET
+    hosts = _endpoint_order()
+    if skip_host in hosts and len(hosts) > 1:
+        hosts.remove(skip_host)
+        hosts.append(skip_host)     # 补查时把上次那个端点排到最后
+    errs: list = []
+
+    for idx, host in enumerate(hosts):
+        remain = deadline - time.time()
+        if remain <= 1.0:
+            errs.append("超出时间预算")
+            break
+        # 第一个端点别把预算吃光，兜底端点至少留三成机会
+        share = remain * 0.7 if idx == 0 and len(hosts) > 1 else remain
+        try:
+            data = _post_host(host, body, min(timeout, max(1.0, share)),
+                              time.time() + share)
+        except Exception as e:
+            sub = getattr(e, "errs", None) or [f"{type(e).__name__} {e}"]
+            errs.extend(f"{_host_label(host)}·{x}" for x in sub)
+            clear_ip_cache(host)
+            continue
+        if _LAST_OK["host"] != host:
+            _LAST_OK.update(host=host, at=time.time())
+        return data
+
+    for h in hosts:                # 下次重新解析，别一直拿坏 IP / 坏端点
+        clear_ip_cache(h)
+    _LAST_OK.update(host="", at=0.0)   # 全挂了就别再优先上次那个，回到「国内优先」
+    print(f"[SteamApi] 请求失败（{' → '.join(hosts)}）：" + " | ".join(errs))
     raise ResolveError(_api_fail_hint(errs))
 
 
 def _api_fail_hint(errs: list) -> str:
-    """把技术性的失败原因翻成一句用户能照做的话。"""
+    """把技术性的失败原因翻成一句用户能照做的话。
+
+    走到这里说明国内、国际两条线都失败了 —— 单纯「再开一次加速器」已经不
+    是有效建议（用户多半早就开着），要指出下一步该看什么。原始错误压到 80 字
+    以内附在末尾：界面是普通段落，太长会占掉半屏。
+    """
     joined = " ".join(errs)
+    tail = " | ".join(errs[-2:])
+    if len(tail) > 60:
+        tail = tail[:57] + "…"
+
     if "ConnectionRefused" in joined or "RefusedError" in joined or "10061" in joined:
-        return ("连不上 Steam 接口：连接被拒绝。常见原因是加速器关了但 hosts 里还留着 "
-                "api.steampowered.com → 127.0.0.1；重新开一次加速器再退出，或手动清掉这行 hosts")
-    if "TimeoutError" in joined or "timed out" in joined:
-        return ("连不上 Steam 接口：请求超时。网络或加速器有问题时就是这样，"
-                "换网络、开加速器后再点一次「检查更新」")
-    if ("gaierror" in joined or "getaddrinfo" in joined
-            or "Name or service not known" in joined or "解析不到" in joined):
-        return "连不上 Steam 接口：域名解析失败（DNS 有问题），换个 DNS 或开加速器再试"
-    return "连不上 Steam 接口：" + (" | ".join(errs[-2:]) or "未知原因")
+        base = ("连不上 Steam 接口：hosts 里 api.steampowered.com → 127.0.0.1 已经失效"
+                "（加速器关了没清）。重开一次加速器再彻底退出，或删掉 hosts 里那一行")
+    elif "TimeoutError" in joined or "timed out" in joined:
+        base = ("连不上 Steam 接口：国内、国际两条线都超时。浏览器能打开 api.steamchina.com，"
+                "就是本机拦了 Python（防火墙 / 代理只放行浏览器）；打不开就换网络再试")
+    elif ("gaierror" in joined or "getaddrinfo" in joined
+          or "Name or service not known" in joined or "解析不到" in joined):
+        base = "连不上 Steam 接口：两条线的域名都解析失败，把网卡 DNS 临时改成 223.5.5.5 再试"
+    else:
+        base = "连不上 Steam 接口"
+    return f"{base}（{tail}）" if tail else base
 
 
-def fetch_details(ids) -> list[dict]:
+
+def _details_payload(ids) -> dict:
     payload = {"itemcount": str(len(ids))}
     for i, v in enumerate(ids):
         payload[f"publishedfileids[{i}]"] = str(v)
-    data = _api_post(payload)
-    res = data.get("response", {}).get("publishedfiledetails", [])
-    return [f for f in res if int(f.get("result", 0)) == 1]
+    return payload
+
+
+def fetch_details(ids) -> list[dict]:
+    ids = [str(i) for i in ids]
+    data = _api_post(_details_payload(ids))
+    res = [f for f in data.get("response", {}).get("publishedfiledetails", [])
+           if int(f.get("result", 0)) == 1]
+    got = {str(f.get("publishedfileid")) for f in res}
+    missing = [i for i in ids if i not in got]
+    if missing:
+        # 端点的库未必一样全（下架、锁区条目常只在一边能查到），换另一条线补一次。
+        # 补不到就算了：已经拿到的结果照常返回，不该因为个别条目把整批判失败。
+        try:
+            data2 = _api_post(_details_payload(missing),
+                              timeout=min(API_READ_TIMEOUT, 6.0),
+                              skip_host=_LAST_OK["host"])
+            res.extend(f for f in data2.get("response", {}).get("publishedfiledetails", [])
+                       if int(f.get("result", 0)) == 1)
+        except ResolveError:
+            pass
+    return res
 
 
 def expand_collections(items, depth=0, log=None) -> list[dict]:
@@ -767,9 +883,15 @@ def _download_stream(host, path, ips, part, cancel=None):
 
 
 def fetch_bytes(url, timeout=15, attempts=3) -> Optional[bytes]:
-    """走同样的直连 IP 逻辑抓一张图片（封面）。返回 None 表示失败。"""
-    host = urllib.parse.urlsplit(url).hostname or IMG_HOST
-    path = urllib.parse.urlsplit(url).path
+    """走同样的直连 IP 逻辑抓一张图片（封面）。返回 None 表示失败。
+
+    查询串必须一起带上：图床的缩放参数（`?imw=…&imh=…`）全在 query 里，
+    以前只取 `urlsplit().path` 把它丢掉了，等于「加了缩放参数也拿回原图」——
+    一张 11.8 MB 的动图缩不下来，白费流量和显存。
+    """
+    parts = urllib.parse.urlsplit(url)
+    host = parts.hostname or IMG_HOST
+    path = parts.path + (("?" + parts.query) if parts.query else "")
     ips = resolve_ips(host)
     for _ in range(attempts):
         for ip in (ips or [host]):
