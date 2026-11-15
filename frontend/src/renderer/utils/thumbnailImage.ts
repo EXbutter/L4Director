@@ -1,40 +1,25 @@
 /**
  * Mod 卡片缩略图优化工具。
  *
- * 背景：玩家 addons 目录里的封面图经常极其离谱，实测存在两类：
- *   1. 8504×8504 的 JPEG（解码后约 276MB 位图，单张就能把内存与 GPU 纹理顶满）；
- *   2. 扩展名写成 `.jpg`、内容其实是 **GIF 动图** 的文件（最大 28MB / 81 帧，
- *      还有 119 帧、114 帧的）。
+ * addons 里的封面有两类极端：8504×8504 的 JPEG（解码后约 276MB 位图），
+ * 以及后缀写 `.jpg`、内容其实是 GIF 动图的文件（最大 28MB / 81 帧）。
+ * 后者才是杀手 —— Chromium 会把动图所有帧解码常驻（81 × 831×1186 × 4B ≈ 300MB），
+ * 滚到那张卡片时帧率掉到个位数。
  *
- * 第 2 类才是真正的性能杀手：Chromium 的 `<img>` 会把动画的**所有帧**都解码
- * 缓存起来（81 帧 × 831×1186 × 4B ≈ 300MB），再加上每帧都要重绘，滚到这张
- * 卡片时帧率会直接掉到个位数。
+ * 流程：fetch 拿 blob → 只解析文件头（嗅探真实格式、读出尺寸与是否动图，不碰像素）
+ * → 不超过上限 2 倍的静态图直接使用 → 其余走
+ * `createImageBitmap(blob, { resizeWidth, resizeHeight })` 只解第一帧并按目标尺寸解码，
+ * 再在 640×320 内重编码成 WebP。
  *
- * 处理流程：
- *   1. `fetch` 拿 blob，读文件头做两件事：
- *      - 嗅探**真实格式**（扩展名和后端给的 Content-Type 都可能是错的）；
- *      - 解析出原始像素尺寸与「是否动图」（纯头部解析，不碰像素数据）；
- *   2. 静态小图（不超过上限的 2 倍）直接用原图，零开销；
- *   3. 其余一律 `createImageBitmap(blob, { resizeWidth, resizeHeight })` ——
- *      只解第一帧（动图被冻结），并按目标尺寸解码（JPEG 可走缩放解码），
- *      然后在 640×320 以内的小画布上重新编码成 WebP。
+ * 两条硬约束：
+ *   - **不能用指向后端的 `<img>` 画 canvas**：页面与后端跨源会污染 canvas，
+ *     `toBlob()` 直接抛 "Tainted canvases may not be exported"；用 fetch 来的 blob 才不会。
+ *   - **不能靠 WebCodecs 的 ImageDecoder 读尺寸**：`ImageTrack` 只有
+ *     `frameCount/animated`，没有像素尺寸（`track.video` 在 Chromium 里是 undefined），
+ *     尺寸只能自己解析文件头。
  *
- * 两个必须遵守的约束：
- *   - **不能用指向后端的 `<img>` 画 canvas**：页面（`http://localhost:5173` 或
- *     `file://`）与后端（`127.0.0.1:xxxx`）跨源，跨源图片会让 canvas 被污染，
- *     `toBlob()` 直接抛 "Tainted canvases may not be exported"。来自已 fetch
- *     的 blob 的 ImageBitmap 不会有这个问题。
- *   - **不能依赖 WebCodecs 的 ImageDecoder** 来读尺寸：它的 `ImageTrack` 只提供
- *     `frameCount/animated`，没有任何像素尺寸信息（`track.video` 在 Chromium 中
- *     是 undefined），读尺寸只能自己解析文件头。
- *
- * 卡片预览区实际只有 260×130 px，任何原图都能安全降采样。
- *
- * 动图现在的处理分工：
- *   - **静态层**仍然由本模块转成首帧 WebP（视口外、开关关闭时只看这一层）；
- *   - **播放层**由 utils/animatedThumbnail.ts 用 WebCodecs 按需逐帧解码，
- *     卡片进入视口即挂载，帧数与位图都有硬上限。
- *   换句话说，这里的「冻结」不再是永久行为，而是「不播放时的默认形态」。
+ * 卡片预览区实际只有 260×130px。动图的静态层由本模块转成首帧 WebP，
+ * 播放层见 utils/animatedThumbnail.ts —— 这里的「冻结」只是不播放时的默认形态。
  */
 
 /** 缩略图目标上限（按 2× 预览区留足余量，保证高 DPI 下依然清晰） */

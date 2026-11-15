@@ -1,28 +1,21 @@
 /**
  * 卡片动图（GIF / APNG / 动图 WebP）的逐帧解码与生命周期管理。
  *
- * 为什么不用 `<img src="xxx.gif">` 直接播：
- *   Chromium 会把动图的**全部帧**一次性解码并常驻内存。实测玩家目录里
- *   一张 831×1186 / 81 帧的 GIF，解码后占 81 × 831 × 1186 × 4B ≈ 300MB，
- *   再叠加逐帧重绘，滚到那张卡片时整页帧率直接掉到个位数。
- *   —— 这也是此前版本把动图「冻结成第一帧」的原因。
+ * 不用 `<img src="xxx.gif">` 的原因：Chromium 会把所有帧一次性解码常驻，
+ * 一张 831×1186 / 81 帧的 GIF 就是 ≈300MB，叠加逐帧重绘整页掉到个位数帧率。
  *
- * 现在的做法：
- *   1. 用 WebCodecs 的 `ImageDecoder` **按需逐帧解码**，配合
- *      `OffscreenCanvas.transferToImageBitmap()` 把每一帧降采样到卡片尺寸，
- *      内存占用从「原始分辨率的全部帧」变成「目标尺寸的抽样帧」；
- *   2. 帧数上限 + 显存上限双闸门：超出就等间隔抽帧，并把被跳过的帧时长
- *      累加到保留帧上 —— 抽稀只降低采样率，不改变动画的播放节奏；
- *   3. 卡片**一进视口就自动播**，所以解码必须限流：同一时刻最多两个动图
- *      在解（`MAX_CONCURRENT_DECODES`），其余排队。十几个 300 帧的 GIF
- *      同时解会把主线程堵出上百毫秒的长帧，那正是「帧数波动」的来源；
- *   4. 解码结果进 LRU 缓存（按组数 + 总字节双上限），滚回来直接复用；
- *      离开视口的播放器会释放引用，缓存才有机会回收；
- *   5. 绘制只有一次 `drawImage`，实测 0.05~0.3ms，相对 180fps 的 5.56ms
- *      单帧预算留有 20 倍余量（见 utils/frameLoop.ts）。
+ * 做法：
+ *   1. WebCodecs 的 `ImageDecoder` 按需逐帧解码，配合
+ *      `OffscreenCanvas.transferToImageBitmap()` 降采样到卡片尺寸；
+ *   2. 帧数与位图双上限：超了就等间隔抽帧，被跳过帧的时长累加到保留帧上 ——
+ *      抽稀只降采样率，不改播放节奏；
+ *   3. 一进视口就播，所以解码必须限流（`MAX_CONCURRENT_DECODES`）：
+ *      十几个 300 帧的 GIF 同时解会堵出上百毫秒的长帧；
+ *   4. 结果进 LRU（组数 + 总字节双上限），离开视口的播放器释放引用；
+ *   5. 每帧只 `drawImage` 一次，0.05~0.3ms，见 utils/frameLoop.ts 的预算。
  *
- * 全部位图都来自已 fetch 的 blob，不经过跨源 `<img>`，因此不存在
- * canvas 被污染的问题（这点与 utils/thumbnailImage.ts 的静态转码一致）。
+ * 位图全部来自已 fetch 的 blob，不经跨源 `<img>`，不存在 canvas 污染
+ * （与 utils/thumbnailImage.ts 的静态转码一致）。
  */
 
 import { sniffAnimated, sniffMime } from './thumbnailImage';
