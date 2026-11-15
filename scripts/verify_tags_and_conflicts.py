@@ -27,6 +27,7 @@ os.environ['HOME'] = str(TEMP_HOME)
 os.environ['USERPROFILE'] = str(TEMP_HOME)
 
 import main as backend_main  # noqa: E402
+from services import mod_scanner  # noqa: E402
 
 REPORT = Path(__file__).resolve().parent / '_verify_tags_conflicts_out.txt'
 lines = []
@@ -64,7 +65,7 @@ make_vpk('A.vpk', {
     'materials/props/aaa.vtf': b'x',
     'materials/props/bbb.vtf': b'x',
 })
-# B：只带**一个**音效文件（用户反馈：这类 Mod 以前拿不到「音效」标签）
+# B：只带**一个**音效文件 —— 用来确认音效阈值没有被放松
 make_vpk('B.vpk', {
     'sound/weapons/rifle_fire.wav': b'x',
 })
@@ -74,9 +75,9 @@ make_vpk('C.vpk', {
     'resource/ui/hud/hud_main.res': b'x',
     'materials/vgui/hud/scoreboard_bg.vtf': b'x',
 })
-# D：与 A 共享同一个核心文件（models/… → **应该**算冲突）
+# D：与 A 共享同一个核心文件，但**内容不同**（内容逐字节相同属于无害覆盖，不算冲突）
 make_vpk('D.vpk', {
-    'models/weapons/v_rifle.mdl': b'x',
+    'models/weapons/v_rifle.mdl': b'y',
 })
 # E：只和 C 共享 materials/vgui/ 下的界面图标（无感覆盖 → **不该**算冲突）
 make_vpk('E.vpk', {
@@ -88,6 +89,13 @@ scanner = backend_main.scanner
 scanner._addons_path = str(ADDONS)
 scanner.invalidate_mod_enabled_cache()
 
+# 隔离环境里没有游戏本体，`_get_official_index` 读不到 pak01 的目录树，于是
+# 「共享同一路径」只能降级成软重叠（提示，不进 conflicts）。场景 3 要验的是
+# 「双方都改过同一条官方资源」，所以手工喂一份官方名单。
+mod_scanner._get_official_index = lambda _addons_path=None: frozenset({
+    'models/weapons/v_rifle.mdl',
+})
+
 log('=' * 78)
 log(' 场景 1：自动分类（多标签）')
 log('=' * 78)
@@ -97,7 +105,8 @@ log('  B: ' + ', '.join(mods['B.vpk'].tags))
 log('  C: ' + ', '.join(mods['C.vpk'].tags))
 check('A 命中「武器」', '武器' in mods['A.vpk'].tags, True)
 check('A 命中「皮肤」（材质命中够多）', '皮肤' in mods['A.vpk'].tags, True)
-check('B 只带 1 个音效文件也算「音效」', '音效' in mods['B.vpk'].tags, True)
+check('B 只带 1 个音效文件 → 未达音效阈值', '音效' in mods['B.vpk'].tags, False)
+check('B 因此落到「杂项」', '杂项' in mods['B.vpk'].tags, True)
 check('C 命中「游戏界面」', '游戏界面' in mods['C.vpk'].tags, True)
 check('C 的 1 个材质不该被判成「皮肤」（宽泛分类要求更高）', '皮肤' in mods['C.vpk'].tags, False)
 check('未自动打「杂项」', '杂项' in mods['A.vpk'].tags, False)
@@ -124,7 +133,8 @@ log('=' * 78)
 log(' 场景 3：冲突过滤（核心资源算、无感资源不算）')
 log('=' * 78)
 mods = {m.name: m for m in scanner.scan_mods()}
-check('A 与 D 共享 models/ 文件 → 互相算冲突', 'D.vpk' in mods['A.vpk'].conflicts, True)
+check('A 与 D 都改过同一条官方 models/ 文件、内容不同 → 互相算冲突',
+      'D.vpk' in mods['A.vpk'].conflicts, True)
 check('D 侧也标了 A', 'A.vpk' in mods['D.vpk'].conflicts, True)
 check('C 与 E 只共享 materials/vgui/ → 不算冲突', mods['C.vpk'].conflicts, [])
 check('E 侧也没有冲突', mods['E.vpk'].conflicts, [])

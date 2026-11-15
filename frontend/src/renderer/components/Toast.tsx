@@ -1,5 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
-import * as ReactDOM from 'react-dom/client';
+import { useState, useEffect } from 'react';
 import './Toast.scss';
 
 export type ToastType = 'success' | 'info' | 'warning' | 'error';

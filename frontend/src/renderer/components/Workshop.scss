@@ -364,16 +364,49 @@
   font-weight: 600;
 }
 
-.wk-card__score {
+/* 好评数 + 下载量（原来这里是好评率角标）。
+   两个数用「·」分隔而不是竖线：竖线的颜色得跟着底色变，浮层是黑底、
+   列表行是页面底色，一个 currentColor 出来的分隔线总有一边糊。 */
+.wk-stats {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+
+  /* 序号之间隔一个中点，末项不加 */
+  .wk-stats__item + .wk-stats__item::before {
+    content: '·';
+    margin: 0 5px;
+    opacity: 0.45;
+  }
+}
+
+.wk-stats__item--up { color: #10b981; }
+
+/* 压在封面右下角：底色必须自带，封面可能是纯白也可能是纯黑 */
+.wk-stats--overlay {
   position: absolute;
   right: 6px;
   bottom: 6px;
-  padding: 1px 6px;
+  padding: 1px 7px;
   border-radius: 4px;
   background: rgba(0, 0, 0, 0.62);
-  color: #fbbf24;
+  color: #e5e7eb;
   font-size: 10.5px;
   font-weight: 700;
+
+  /* 浮层恒定压在黑底上，白天/夜间都不变，绿色可以放心提亮一档；
+     列表行那版跟着正文走，用项目既有的 #10b981（和「已下载」徽标同色） */
+  .wk-stats__item--up { color: #6ee7b7; }
+}
+
+/* 列表行标题后面：跟着正文的 10.5px 走，别比标题还抢眼 */
+.wk-stats--inline {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  font-weight: 600;
 }
 
 .wk-card__title {
@@ -604,13 +637,6 @@
   font-size: 10px;
   font-weight: 600;
   line-height: 15px;
-}
-
-.wk-row__score {
-  flex-shrink: 0;
-  color: #d97706;
-  font-size: 10.5px;
-  font-weight: 700;
 }
 
 .wk-row__desc {

@@ -1,5 +1,6 @@
 import type { CSSProperties, KeyboardEvent } from 'react';
 import { ThumbImage } from '../ThumbImage';
+import { ItemStats } from './ItemStats';
 import { cleanDescription, formatCount, formatDate, formatSize, thumbnailUrl } from './types';
 import type { WorkshopItem } from './types';
 
@@ -58,14 +59,7 @@ export function WorkshopRow({ item, api, index = 0, onClick }: Props) {
         <div className="wk-row__titleline">
           <span className="wk-row__title">{item.title || `（无标题）${item.id}`}</span>
           {item.downloaded && <span className="wk-row__flag">已下载</span>}
-          {item.score !== null && (
-            <span
-              className="wk-row__score"
-              title={`好评度 ${item.score}%（赞 ${item.votes_up} / 踩 ${item.votes_down}）`}
-            >
-              {Math.round(item.score)}%
-            </span>
-          )}
+          <ItemStats item={item} />
         </div>
         <div className="wk-row__desc">{desc || '（原作者没有填写简介）'}</div>
         <div className="wk-row__tags">
@@ -77,8 +71,8 @@ export function WorkshopRow({ item, api, index = 0, onClick }: Props) {
       </div>
 
       <div className="wk-row__stats">
-        <span title="订阅数">↓ {formatCount(item.subscriptions)}</span>
         <span title="文件体积">{formatSize(item.size)}</span>
+        <span title={`当前订阅 ${item.subscriptions} 人`}>订阅 {formatCount(item.subscriptions)}</span>
         <span title="最后更新">{formatDate(item.updated_at)}</span>
       </div>
     </div>

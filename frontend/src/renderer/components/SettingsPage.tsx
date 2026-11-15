@@ -49,7 +49,6 @@ export function SettingsPage() {
     refreshAll,
     status,
     mods,
-    loading,
     background,
     setBackground,
     showMascot,
@@ -208,7 +207,7 @@ export function SettingsPage() {
       });
       setKeyInput('');
       if (data.configured) {
-        showToast('已保存：创意工坊改为走 Steam API（每页 100 条，带评分）', 'success');
+        showToast('已保存：创意工坊改为走 Steam API（每页 100 条，带好评数 / 下载量）', 'success');
       } else {
         showToast('已清除 API Key，创意工坊回到网页模式', 'info');
       }
@@ -377,7 +376,7 @@ export function SettingsPage() {
           <div className="settings-group">
             <p className="settings-desc">
               填了它，创意工坊就从「抓网页」切到「官方搜索接口」：每页 <strong>100 条</strong>（原 30 条）、
-              带<strong>好评率</strong>、能显示<strong>精确结果总数</strong>、支持「最近更新」排序。
+              带<strong>好评数 / 累计下载量</strong>、能显示<strong>精确结果总数</strong>、支持「最近更新」排序。
               不填也能用，只是每页 30 条、慢一点。
             </p>
             <p className="settings-desc" style={{ marginTop: -4 }}>

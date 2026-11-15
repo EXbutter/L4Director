@@ -392,25 +392,23 @@ def _decide(f: Counter) -> list[str]:
     return out[:3]
 
 
-def fine_tags(paths, coarse: list[str]) -> list[str]:
-    """按已命中大类推导细分标签（大类顺序 → 命中次数降序）。
+def _count_fine(paths, want: set[str]) -> dict[str, Counter]:
+    """按路径统计家族内每个具体成员被命中的文件数。
 
-    只在对应大类成立时才算：一个只改贴图的「武器皮肤」不会因为包里
-    顺带一个 v_arms 就被贴上「步枪」。
+    `want` 是「本次关心哪些大类」——细分标签只对已成立的大类计数，
+    覆盖识别（coverage）则四类全要。两个调用方共用这一份判定，
+    免得「卡片说 8/8 生还者、标签里却只有一个 Zoey」这种自相矛盾。
     """
-    fams = [c for c in coarse if c in FINE_TAGS]
-    if not fams:
-        return []
-
-    survivors: Counter = Counter()
-    infected: Counter = Counter()
-    weapons: Counter = Counter()
-    weapon_fallback: Counter = Counter()
-    items: Counter = Counter()
-    want_survivor = '生还者' in fams
-    want_infected = '被感染者' in fams
-    want_weapon = '武器' in fams
-    want_item = '物品' in fams
+    out: dict[str, Counter] = {
+        '生还者': Counter(), '被感染者': Counter(),
+        '武器': Counter(), '武器兜底': Counter(), '物品': Counter(),
+    }
+    survivors, infected = out['生还者'], out['被感染者']
+    weapons, weapon_fallback, items = out['武器'], out['武器兜底'], out['物品']
+    want_survivor = '生还者' in want
+    want_infected = '被感染者' in want
+    want_weapon = '武器' in want
+    want_item = '物品' in want
 
     for raw in paths:
         p = raw.lower().replace('\\', '/')
@@ -452,6 +450,25 @@ def fine_tags(paths, coarse: list[str]) -> list[str]:
                 if _hit(norm, toks, keys):
                     items[tag] += 1
                     break
+    return out
+
+
+def fine_tags(paths, coarse: list[str]) -> list[str]:
+    """按已命中大类推导细分标签（大类顺序 → 命中次数降序）。
+
+    只在对应大类成立时才算：一个只改贴图的「武器皮肤」不会因为包里
+    顺带一个 v_arms 就被贴上「步枪」。
+    """
+    fams = [c for c in coarse if c in FINE_TAGS]
+    if not fams:
+        return []
+
+    c = _count_fine(paths, set(fams))
+    survivors = c['生还者']
+    infected = c['被感染者']
+    weapons = c['武器']
+    weapon_fallback = c['武器兜底']
+    items = c['物品']
 
     # 兜底规则只在整包都认不出具体型号时启用：通用目录（sound/weapons/shotgun）
     # 不能把已经确定的型号稀释成「Pump Shotgun + 别的」
@@ -479,6 +496,108 @@ def fine_tags(paths, coarse: list[str]) -> list[str]:
             out.extend(t for t, _ in items.most_common(2))
     return list(dict.fromkeys(out))
 
+
+
+# ── 覆盖清单：「这个包是不是把整套都换了一遍」 ─────────────────────
+# 只服务于「我的 Mod」里的整套识别与一键混搭，不参与标签展示。
+COVERAGE_FAMILIES = ('生还者', '特感', '物品', '武器')
+
+COVERAGE_ROSTER: dict[str, list[str]] = {
+    '生还者': FINE_TAGS['生还者'],          # L4D1 四人 + L4D2 四人 = 8
+    # 只算 8 种特殊感染者。Common Infected 是普通丧尸，几乎每个带 common
+    # 音效的包都会命中它 —— 混进清单里「8/8 特感」就永远不可达了。
+    '特感': [t for t in FINE_TAGS['被感染者'] if t != 'Common Infected'],
+    '物品': FINE_TAGS['物品'],              # 医疗包 / 止痛药 / 肾上腺素 / 电击器
+    '武器': FINE_TAGS['武器'],              # 主武器 + 手枪 + 近战 + 投掷物
+}
+COVERAGE_TOTAL = {k: len(v) for k, v in COVERAGE_ROSTER.items()}
+
+
+def _coverage_families(f: Counter) -> set[str]:
+    """哪些家族值得算覆盖 —— 沿用 `_decide` 的证据门槛。
+
+    不能「路径里出现就报」：音效包、HUD 包的路径里到处是 nick / medkit
+    这种词，放开就会把一套语音包认成「全员生还者」，混搭直接推歪。
+    """
+    n = f['n'] or 1
+    want: set[str] = set()
+    if f['survivor']:
+        want.add('生还者')
+    if f['infected']:
+        want.add('特感')
+    if f['weapon'] or f['weapon_mat']:
+        want.add('武器')
+    item_evidence = f['item'] + f['item_mat']
+    if item_evidence >= 2 and item_evidence / n >= 0.3:
+        want.add('物品')
+    return want
+
+
+def _has_model_textures(paths) -> bool:
+    """这个包有没有「模型贴图」—— 整套替换和公共动画库的分水岭。
+
+    真正换人的包一定带材质（不管放在 materials/models/survivors/ 还是作者
+    自己的 materials/meng/nell/ 下），而 xdR 那类动画库 / 表情平台只有
+    .mdl + .ani：实测 xdr_heal_doodle_dance 共 18 个文件、8 个 mdl、8 个 ani、
+    零材质，却照样命中 8 个角色代号。不加这道闸，混搭会把动画库当成
+    「全员生还者」推给用户 —— 换上之后人物还是原版，只是动作变了。
+
+    只看有没有，不看放在哪：自定义目录的 Mod（materials/<作者>/<角色>/…）
+    在这类包里的占比极高，按标准路径卡会漏掉一大半真替换包。
+    但 HUD 贴图不算 —— s_panel_zoey.vtf 这种每个角色皮肤都会顺手带一张。
+    """
+    for raw in paths:
+        p = raw.lower().replace('\\', '/')
+        ext = p.rsplit('.', 1)[-1] if '.' in p else ''
+        if ext not in _TEX_EXT:
+            continue
+        if p.startswith(('materials/vgui/', 'materials/hud/', 'materials/console/',
+                         'materials/letterbox/')):
+            continue
+        return True
+    return False
+
+
+def coverage(paths, feature: Counter) -> dict[str, dict]:
+    """统计这个包替换了每类清单里的哪些具体成员。
+
+    返回 `{家族: {'hit': 命中数, 'total': 清单长度, 'names': [成员…]}}`，
+    没命中的家族不出现，界面据此决定显示哪几项。
+
+    为什么需要它：`fine_tags` 只留最多 2 个细分标签，≥4 个生还者、≥6 把武器
+    就直接隐去（判成「合集」）—— 那正好把「整套替换」这个信息丢掉。
+    这里保留完整命中集，`hit == total` 就是「全员」。
+
+    两道闸门（缺一样都不算覆盖）：
+      1. `_coverage_families`：内容主体确实是这类资源（沿用 `_decide` 的证据门槛）；
+      2. `_has_model_textures`：包里真的带模型贴图 —— 只有模型+动画的是公共动画库。
+    """
+    if not paths or not _has_model_textures(paths):
+        return {}
+    want = _coverage_families(feature)
+    if not want:
+        return {}
+
+    counts = _count_fine(paths, {'生还者', '被感染者', '武器', '物品'})
+    pools: dict[str, Counter] = {
+        '生还者': counts['生还者'],
+        '特感': Counter({k: v for k, v in counts['被感染者'].items()
+                        if k != 'Common Infected'}),
+        '物品': counts['物品'],
+        # 同 fine_tags：整包认不出具体型号时才退到通用词兜底
+        '武器': counts['武器'] or counts['武器兜底'],
+    }
+
+    out: dict[str, dict] = {}
+    for fam in COVERAGE_FAMILIES:
+        if fam not in want:
+            continue
+        pool = pools[fam]
+        roster = COVERAGE_ROSTER[fam]
+        names = [name for name in roster if pool.get(name)]
+        if names:
+            out[fam] = {'hit': len(names), 'total': len(roster), 'names': names}
+    return out
 
 
 # 有的 Mod 一个资源文件都不带，全靠 .nut 脚本在跑（典型：爆头音效包）。
@@ -547,29 +666,43 @@ def extract_paths(path: Path, limit: int = 32 << 20) -> list[str]:
 
 def classify(paths=None, vpk_path: Path | None = None,
              reader=None) -> tuple[list[str], bool]:
-    """返回 (标签列表, 是否为降级判定)。
+    """返回 (标签列表, 是否为降级判定)。见 `classify_full`。"""
+    tags, degraded, _coverage = classify_full(paths, vpk_path=vpk_path, reader=reader)
+    return tags, degraded
+
+
+def classify_full(paths=None, vpk_path: Path | None = None,
+                  reader=None) -> tuple[list[str], bool, dict]:
+    """返回 (标签列表, 是否为降级判定, 覆盖清单)。
 
     paths 为空且给了 vpk_path 时会退化为字节流扫描。
     reader 可选，形如 `reader(内部路径) -> bytes`：只有「什么资源都不带、
     光靠 .nut 脚本干活」的 Mod 才会用到 —— 通过脚本里调用的音效 API
     判断它其实是个音效 Mod（例：爆头音效包）。
+
+    覆盖清单（第 3 项）只有真的解析出文件清单时才算：降级扫描连具体
+    文件名都拿不到，硬凑出来的覆盖率是假的。地图与公共动画库也一律给空 ——
+    它们本来就带各家人物的素材，算进去只会把「整套替换」判错。
     """
     paths = [p for p in (paths or []) if isinstance(p, str) and p.strip()]
     if paths:
         feature = _features_from_paths(paths)
         tags = _decide(feature)
         if reader and tags == ['脚本'] and script_sounds(reader, paths):
-            return ['音效', '脚本'], False
+            return ['音效', '脚本'], False, {}
         # 细分标签挂在大类后面：卡片上永远先看到「武器」再看到「霰弹枪」
         fine = fine_tags(paths, tags)
-        return (tags + fine) if fine else tags, False
+        cov: dict = {}
+        if '战役' not in tags and tags != ['脚本']:
+            cov = coverage(paths, feature)
+        return ((tags + fine) if fine else tags), False, cov
     if vpk_path and Path(vpk_path).exists():
         vpk_path = Path(vpk_path)
         salvaged = extract_paths(vpk_path)
         if len(salvaged) >= 3:
-            return _decide(_features_from_paths(salvaged)), True
-        return _decide(features_from_bytes(vpk_path)), True
-    return ['杂项'], True
+            return _decide(_features_from_paths(salvaged)), True, {}
+        return _decide(features_from_bytes(vpk_path)), True, {}
+    return ['杂项'], True, {}
 
 
 def primary(tags: list[str]) -> str:

@@ -7,6 +7,7 @@ import {
 } from '../utils/backgroundImage';
 import { showToast } from '../components/Toast';
 import { applyUiFont, loadUiFontKey, saveUiFontKey } from '../utils/uiFont';
+import type { CoverageMap, RosterFamily } from '../utils/mix';
 import { DEFAULT_ACCENT, applyAccent, loadAccent, normalizeHex, saveAccent } from '../utils/themeColor';
 
 export type Page = 'my-mods' | 'workshop' | 'download' | 'packs' | 'settings';
@@ -52,6 +53,13 @@ export interface ModData {
   role?: 'campaign' | 'art' | 'script' | 'hud';
   /** 多标签：地图 / 脚本 / 音效 / 美术 */
   role_tags?: string[];
+  /**
+   * 整套替换识别：家族 → 命中情况。
+   * 家族固定是 生还者 / 特感 / 物品 / 武器，只在真的替换了该类资源时才有键；
+   * `hit === total` 即「整套换完」。判定在后端（tagger.coverage），
+   * 计算与展示见 utils/mix.ts。
+   */
+  coverage?: CoverageMap;
   /** VPK 解析失败（坏包 / 非标准编码），这类包不参与冲突判定 */
   unreadable?: boolean;
   /** 解析失败的具体原因（后端给出，例如 'JSONDecodeError: ...'），展示在卡片与底部提示里 */
@@ -333,6 +341,11 @@ interface AppState {
    * 导致「点了没反应」。返回后端统计（changed/missing/enable）；失败返回 null。
    */
   enablePackMods: (packId: string, enable?: boolean) => Promise<{ changed: number; missing: string[]; enable: boolean } | null>;
+  /**
+   * 一键混搭：一批里「这套启用、这些同类关掉」，一次写回 addonlist.txt。
+   * 只有同一批里既有开也有关才用得上（整合包接口一次只朝一个方向）。
+   */
+  applyModMix: (enable: string[], disable: string[]) => Promise<{ changed: number; missing: string[]; writeError: string | null } | null>;
   /** 立刻强制刷新 Mod 列表：绕过「正在扫描」的并发保护，保证界面与后端一致 */
   refreshModsNow: () => Promise<void>;
   /**
@@ -373,6 +386,13 @@ interface AppState {
   modsDirty: boolean;
   /** 拉取「应用」按钮状态（dirty / 游戏是否在运行） */
   fetchApplyState: () => Promise<void>;
+  /**
+   * 「替换清单」的全集（生还者 8 / 特感 8 / 物品 4 / 武器 35）。
+   * 完整度看板要知道「缺的是谁」就必须有全集，只靠各个 Mod 自己的
+   * coverage 只能知道它换了哪几个。来自 /api/mods/coverage-roster。
+   */
+  coverageRoster: RosterFamily[];
+  fetchCoverageRoster: () => Promise<void>;
   /** 界面字体预设 key（见 utils/uiFont.ts 的 FONT_PRESETS） */
   uiFontKey: string;
   /** 切换界面字体（立即生效并记住） */
@@ -810,6 +830,7 @@ export const useStore = create<AppState>((set, get) => ({
   pendingReapply: false,
   applyingPrefs: false,
   modsDirty: false,
+  coverageRoster: [],
   uiFontKey: loadUiFontKey(),
   
   exportLogs: async () => {
@@ -1213,6 +1234,20 @@ export const useStore = create<AppState>((set, get) => ({
       if (get().modsDirty !== dirty) set({ modsDirty: dirty });
     } catch {
       // 后端不可用时保持现状：下次改动或刷新还会再拉
+    }
+  },
+
+  fetchCoverageRoster: async () => {
+    if (!get().backendConnected) return;
+    try {
+      const res = await fetchWithTimeout(`${API_BASE}/api/mods/coverage-roster`);
+      if (!res.ok) return;
+      const data = await res.json().catch(() => null);
+      const families = (data?.families ?? []) as RosterFamily[];
+      if (!Array.isArray(families) || families.length === 0) return;
+      set({ coverageRoster: families });
+    } catch {
+      // 拉不到就退到「用已有 coverage 拼一份」的兜底（见 CoverageBoard）
     }
   },
 
@@ -2167,6 +2202,68 @@ export const useStore = create<AppState>((set, get) => ({
     } catch (e) {
       console.error('Failed to toggle pack mods:', e);
       set({ error: '整合包切换失败：网络错误' });
+      return null;
+    }
+  },
+
+  applyModMix: async (enable: string[], disable: string[]) => {
+    if (enable.length === 0 && disable.length === 0) {
+      return { changed: 0, missing: [], writeError: null };
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/api/mods/mix/apply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enable, disable }),
+      });
+      const data = await res.json().catch(() => ({} as any));
+      if (!res.ok) {
+        const message = (data && data.detail) || '混搭应用失败';
+        set({ error: message });
+        showToast(message, 'error');
+        return null;
+      }
+
+      // 改动写进了 addonlist.txt，但软件里也可能还有别的未应用改动 → 点亮「应用」
+      set({ modsDirty: true });
+
+      const updated: Record<string, boolean> =
+        data && typeof data.updated === 'object' && data.updated ? data.updated : {};
+      const targets = new Set(Object.keys(updated).map(normalizeModKey));
+
+      // 局部更新，不触发全量扫描（那会弹「正在扫描 Mod」并把按钮锁住）
+      if (targets.size > 0) {
+        set((state) => ({
+          mods: state.mods.map((m) => {
+            if (!targets.has(normalizeModKey(m.name))) return m;
+            const enabled = updated[m.name] ?? updated[m.name.replace(/\.vpk$/i, '')];
+            if (typeof enabled !== 'boolean') return m;
+            return {
+              ...m,
+              enabled,
+              // 禁用后冲突不再成立；启用则等静默刷新校正
+              conflicts: enabled ? m.conflicts : [],
+              conflict_details: enabled ? m.conflict_details : [],
+              conflict_hints: enabled ? m.conflict_hints : [],
+            };
+          }),
+        }));
+        scheduleSilentModsRefresh();
+      } else {
+        await get().fetchModsSilently();
+      }
+
+      void get().fetchApplyState();
+
+      return {
+        changed: typeof data.changed === 'number' ? data.changed : 0,
+        missing: Array.isArray(data.missing) ? (data.missing as string[]) : [],
+        writeError: typeof data.write_error === 'string' ? data.write_error : null,
+      };
+    } catch (e) {
+      console.error('Failed to apply mod mix:', e);
+      set({ error: '混搭应用失败：网络错误' });
       return null;
     }
   },

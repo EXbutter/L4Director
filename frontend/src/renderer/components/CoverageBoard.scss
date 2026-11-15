@@ -1,0 +1,206 @@
+/**
+ * 「当前搭配完整度」看板 —— 常驻在我的 Mod 页面顶部。
+ *
+ * 配色只用主题变量：这个页面同时支持浅色 / 深色 / 背景图毛玻璃三套表面，
+ * 写死深色底在浅色主题下会变成一块黑板。
+ */
+.cov-board {
+  margin: 0 24px 12px;
+  padding: 9px 14px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-card);
+  flex: none;
+}
+
+.cov-board__head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.cov-board__title {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.2px;
+
+  em {
+    font-style: normal;
+    font-size: 12px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--accent);
+
+    i {
+      font-style: normal;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+  }
+}
+
+.cov-board__bars {
+  display: flex;
+  align-items: center;
+  gap: 6px 16px;
+  flex-wrap: wrap;
+}
+
+.cov-board__fam {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  cursor: default;
+
+  b {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary);
+
+    &.is-full {
+      color: #10b981;
+    }
+  }
+}
+
+.cov-board__bar {
+  display: block;
+  width: 44px;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-muted) 24%, transparent);
+  overflow: hidden;
+}
+
+.cov-board__bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.cov-board__gaps {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, #f59e0b 34%, transparent);
+  background: color-mix(in srgb, #f59e0b 12%, transparent);
+  color: color-mix(in srgb, #f59e0b 82%, var(--text-primary));
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background 0.16s, border-color 0.16s;
+
+  b {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  &:hover {
+    background: color-mix(in srgb, #f59e0b 20%, transparent);
+    border-color: color-mix(in srgb, #f59e0b 52%, transparent);
+  }
+}
+
+.cov-board__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 6px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--accent);
+  }
+
+  svg {
+    transition: transform 0.2s;
+  }
+}
+
+.cov-board__detail {
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px dashed var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cov-fam {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.cov-fam__label {
+  flex: none;
+  width: 74px;
+  padding-top: 2px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+
+  em {
+    margin-left: 5px;
+    font-style: normal;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+  }
+}
+
+.cov-fam__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cov-chip {
+  padding: 1px 7px;
+  border-radius: 5px;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+}
+
+/* 已覆盖：主色淡底 —— 一眼看出「这个人已经换了」 */
+.cov-chip--on {
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: color-mix(in srgb, var(--accent) 74%, var(--text-primary));
+}
+
+/* 多个已启用的包都在换同一个成员：本来就是冲突，标黄提醒 */
+.cov-chip--dup {
+  border-color: color-mix(in srgb, #f59e0b 52%, transparent);
+  background: color-mix(in srgb, #f59e0b 16%, transparent);
+  color: color-mix(in srgb, #f59e0b 80%, var(--text-primary));
+}
+
+/* 缺失：虚框 + 弱化，不抢覆盖项的注意力 */
+.cov-chip--off {
+  border: 1px dashed color-mix(in srgb, var(--text-muted) 42%, transparent);
+  color: var(--text-muted);
+  opacity: 0.78;
+}
+
+/* 连库里的包都没有：再淡一档，和「有包但没启用」区分开 */
+.cov-chip--none {
+  opacity: 0.42;
+}

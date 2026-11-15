@@ -75,7 +75,7 @@ async def _app_lifespan(_app: FastAPI):
 # 这里的默认值只在「直接 python main.py 跑后端」时用到，但必须是**唯一一份** ——
 # 以前 FastAPI 与 /api/health 各写一个默认值（1.1.0 / 1.2.0），两边长期不一致，
 # 排查线上问题时没法确认对面到底是哪个版本。
-_DEFAULT_APP_VERSION = "1.3.1"
+_DEFAULT_APP_VERSION = "1.3.2"
 APP_VERSION = os.environ.get("L4DIRECTOR_APP_VERSION", _DEFAULT_APP_VERSION)
 
 
@@ -1120,6 +1120,67 @@ def toggle_pack(pack_id: str, data: dict):
         # 实际生效的「成员名 -> 启用状态」：前端用它做局部更新，
         # 从而不需要在每次启停后重新扫描一遍全部 Mod
         "updated": result.get("updated", {}),
+    }
+
+
+# ===== 一键混搭 =====
+
+@app.get("/api/mods/coverage-roster")
+def get_coverage_roster():
+    """「替换清单」的完整名册：生还者 8 / 特感 8 / 物品 4 / 武器 35。
+
+    界面要画出「当前搭配覆盖了谁、还差谁」，就必须知道**全集** ——
+    只靠 Mod 自己的 coverage 只能知道它替换了哪几个，缺的那几个名字
+    只有这里能给出（清单定义在 tagger.COVERAGE_ROSTER，单一来源）。
+    """
+    from services import tagger
+
+    return {
+        "families": [
+            {
+                "key": fam,
+                "total": len(tagger.COVERAGE_ROSTER[fam]),
+                "names": list(tagger.COVERAGE_ROSTER[fam]),
+            }
+            for fam in tagger.COVERAGE_FAMILIES
+        ]
+    }
+
+
+@app.post("/api/mods/mix/apply")
+def apply_mod_mix(data: dict):
+    """一键混搭：同一批里「这套启用、这些同类关掉」。
+
+    和整合包批量启停同源（scanner.set_mods_states），区别只在于一批里
+    允许两个方向 —— 混搭必然要同时干这两件事：选中的那套开，被顶下去的
+    同类关。分两次调用也能实现，但会写两遍 addonlist.txt，中途失败就留下
+    一个「一半开一半没关」的组合，那正是混搭最不该出现的状态。
+    """
+    if not scanner.get_addons_path():
+        raise HTTPException(status_code=400, detail="请先配置 Addons 目录")
+
+    states: dict[str, bool] = {}
+    for name in (data.get("enable") or []):
+        if isinstance(name, str) and name.strip():
+            states[name.strip()] = True
+    for name in (data.get("disable") or []):
+        if isinstance(name, str) and name.strip():
+            # 同一批里既启用又禁用时以「启用」为准（前端已经算过互斥，这里只是兜底）
+            states.setdefault(name.strip(), False)
+
+    if not states:
+        raise HTTPException(status_code=400, detail="这套混搭里没有可应用的 Mod")
+
+    result = scanner.set_mods_states(states)
+    # 同整合包：游戏运行中的改动会被退出时写回的内存状态覆盖，标记一下
+    _mark_pending_reapply_if_game_running()
+    return {
+        "status": "ok",
+        "changed": result.get("changed", 0),
+        "missing": result.get("missing", []),
+        "updated": result.get("updated", {}),
+        # addonlist.txt 没写成：软件里已经是新状态，但游戏读到的还是旧文件
+        "write_error": result.get("write_error"),
     }
 
 

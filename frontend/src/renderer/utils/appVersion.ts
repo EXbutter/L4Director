@@ -22,17 +22,15 @@ export const VERSION_LABEL: string = APP_VERSION ? `v${APP_VERSION}` : '';
 /** 去掉预发布后缀的版本号，例如 "1.0.0-beta.1" → "1.0.0" */
 const VERSION_CORE: string = APP_VERSION.split(/[-+]/)[0];
 
-/** 主.次版本，例如 "1.0.0-beta.1" → "1.0"（补丁号在界面上没有信息量，省掉） */
-const VERSION_SHORT: string = VERSION_CORE.split('.').slice(0, 2).join('.');
-
 /**
- * 界面上展示的版本号：
- * 预发布显示 "v1.0 beta"，正式版显示 "v1.0"。
- * 渠道词取 package.json 里的小写原文（beta / alpha / rc），和版本号并排比全大写更好读；
- * 标题栏那个独立徽章仍用大写的 CHANNEL_LABEL。
+ * 界面上展示的版本号：完整三段，例如 "v1.3.2"（预发布再加渠道词，"v1.3.2 beta"）。
+ *
+ * 以前这里只取「主.次」（显示成 v1.3），理由是补丁号没信息量；但界面、安装包
+ * 文件名、更新提示都带三段号，只在侧边栏少一段会让人以为装的是旧版 ——
+ * 反馈「软件里看不到 v1.3.2」就是这么来的。
  */
 export const VERSION_DISPLAY: string = !APP_VERSION
   ? ''
   : IS_BETA
-    ? `v${VERSION_SHORT} ${CHANNEL_LABEL.toLowerCase()}`
-    : `v${VERSION_SHORT}`;
+    ? `v${VERSION_CORE} ${CHANNEL_LABEL.toLowerCase()}`
+    : `v${VERSION_CORE}`;

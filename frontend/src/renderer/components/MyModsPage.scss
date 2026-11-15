@@ -142,7 +142,7 @@
   &__summary {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     margin-left: auto;
     align-self: center;
   }
@@ -159,14 +159,17 @@
   }
 
   &__clear {
-    height: 24px;
-    padding: 0 10px;
+    display: inline-flex;
+    align-items: center;
+    height: 26px;
+    padding: 0 11px;
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: 7px;
     background: transparent;
     color: var(--text-secondary);
-    font-size: 11.5px;
+    font-size: 12px;
     font-family: var(--font-family);
+    white-space: nowrap;
     cursor: pointer;
     transition: color var(--dur-fast) ease, border-color var(--dur-fast) ease;
 
@@ -176,22 +179,36 @@
     }
   }
 
-  // 「检查更新」：轻量文字按钮，平时不抢视线；有更新时旁边会出现实心的「更新全部」
+  // 「检查更新」：次要操作，但**必须有边框**。以前是无边框灰字，和旁边的
+  // 「筛出 99 / 99」统计连成一片，根本看不出是按钮 —— 现在跟「清除筛选」同属
+  // 扁平的描边按钮族，hover 才亮主色。
   &__check {
-    height: 24px;
-    padding: 0 8px;
-    border: none;
-    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 26px;
+    padding: 0 10px;
+    // 边框用中性灰而不是 --border-color：后者是 16% 透明的主色，在白卡上
+    // 几乎看不见，按钮又会退化成「一行文字」
+    border: 1px solid color-mix(in srgb, var(--text-muted) 40%, transparent);
+    border-radius: 7px;
     background: transparent;
-    color: var(--text-muted);
-    font-size: 11.5px;
+    color: var(--text-secondary);
+    font-size: 12px;
     font-family: var(--font-family);
+    white-space: nowrap;
     cursor: pointer;
-    transition: color var(--dur-fast) ease, background-color var(--dur-fast) ease;
+    transition: color var(--dur-fast) ease, border-color var(--dur-fast) ease,
+      background-color var(--dur-fast) ease;
+
+    svg {
+      flex: none;
+    }
 
     &:hover:not(:disabled) {
       color: var(--accent-text);
-      background: color-mix(in srgb, var(--accent) 8%, transparent);
+      border-color: color-mix(in srgb, var(--accent) 50%, var(--border-color));
+      background: color-mix(in srgb, var(--accent) 7%, transparent);
     }
 
     &:disabled {
@@ -203,13 +220,17 @@
   // 检查进行中：按钮本身变成「进度 + 取消」，点了就停 —— 检查是后台线程，
   // 界面不该被它按着不动，所以这里不是禁用态，而是可点的取消入口
   &__check--busy {
-    display: inline-flex;
-    align-items: center;
     gap: 8px;
     padding: 0 10px;
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
     background: color-mix(in srgb, var(--accent) 10%, transparent);
     color: var(--accent-text);
     font-variant-numeric: tabular-nums;
+
+    // 忙起来时左侧自己画转圈，原来那个「刷新」图标就多余了
+    svg {
+      display: none;
+    }
 
     // 左侧小转圈：一眼看出还在跑
     &::before {
@@ -225,6 +246,7 @@
 
     &:hover:not(:disabled) {
       background: color-mix(in srgb, var(--accent) 18%, transparent);
+      border-color: color-mix(in srgb, var(--accent) 62%, transparent);
       color: var(--accent-text);
     }
   }
@@ -244,13 +266,13 @@
   &__update-all {
     display: inline-flex;
     align-items: center;
-    height: 24px;
-    padding: 0 10px;
+    height: 26px;
+    padding: 0 11px;
     border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
-    border-radius: 6px;
+    border-radius: 7px;
     background: color-mix(in srgb, var(--accent) 14%, transparent);
     color: var(--accent-text);
-    font-size: 11.5px;
+    font-size: 12px;
     font-weight: 600;
     font-family: var(--font-family);
     white-space: nowrap;
@@ -267,17 +289,52 @@
     }
   }
 
+  // 「一键混搭」：这一屏的主入口（会把一堆包重新洗牌），跟旁边那些描边次要
+  // 按钮拉开层级 —— 主色实心 + 白字 + 一点投影，扫一眼就知道该点哪儿。
+  &__mix {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 26px;
+    padding: 0 12px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-size: 12px;
+    font-weight: 600;
+    font-family: var(--font-family);
+    white-space: nowrap;
+    cursor: pointer;
+    box-shadow: 0 1px 4px color-mix(in srgb, var(--accent) 30%, transparent);
+    transition: background-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease,
+      transform var(--dur-fast) var(--ease-spring);
+
+    svg {
+      flex: none;
+    }
+
+    &:hover {
+      background: var(--accent-hover);
+      box-shadow: 0 3px 10px color-mix(in srgb, var(--accent) 36%, transparent);
+    }
+
+    &:active {
+      transform: scale(0.97);
+    }
+  }
+
   // 更新进行中：替代「更新全部」，显示 x/y 与当前条目的百分比
   &__updating {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    height: 24px;
-    padding: 0 10px;
-    border-radius: 6px;
+    height: 26px;
+    padding: 0 11px;
+    border-radius: 7px;
     background: color-mix(in srgb, var(--accent) 10%, transparent);
     color: var(--accent-text);
-    font-size: 11.5px;
+    font-size: 12px;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;

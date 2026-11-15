@@ -20,7 +20,7 @@ export interface WorkshopItem {
   description: string;
   filename: string;
   banned: boolean;
-  /** 0~100，只有填了 API Key 才有（网页路径拿不到评分） */
+  /** 0~100，只有填了 API Key 才有（网页路径拿不到评分）；现在只作 tooltip 里的补充信息 */
   score: number | null;
   votes_up: number;
   votes_down: number;
@@ -80,6 +80,45 @@ export function formatDate(unixSeconds: number): string {
   const d = new Date(unixSeconds * 1000);
   const pad = (v: number) => String(v).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
+ * 好评数（绝对条数），不是好评率。
+ *
+ * 为什么弃用好评率：工坊里绝大多数条目都挤在 50%~60% 这十个百分点里，
+ * 卡片上写 55% / 51% 根本分不出好坏，还要用户自己反推「到底有几个人投过票」。
+ * 直接给条数，口碑的分量和样本量一次说清。
+ *
+ * 拿不到就是 0：投票数据只有填了 API Key 的 QueryFiles 才带（网页路径走的
+ * 是 ISteamRemoteStorage/GetPublishedFileDetails，压根没有 vote_data 字段）。
+ */
+export function voteCount(item: WorkshopItem): number {
+  return item.votes_up > 0 ? item.votes_up : 0;
+}
+
+/**
+ * 累计下载量 = Steam 的 `lifetime_subscriptions`（累计订阅过的人数，含后来退订的）。
+ *
+ * 工坊没有真正的「下载次数」字段，这是唯一能量出基数的那个。当前订阅数
+ * （`subscriptions`）只算还订着的人，老 Mod 的这两个数能差好几倍。
+ * 网页路径拿不到 lifetime 字段，这里返回 0 让调用方整块不渲染 ——
+ * 不能退回当前订阅数，否则同一个「下载量」在两页里是两个数。
+ */
+export function downloadCount(item: WorkshopItem): number {
+  return item.lifetime_subscriptions > 0 ? item.lifetime_subscriptions : 0;
+}
+
+/** 好评数的悬浮提示：好评率降级到这里，原来能看到的信息一条都不丢 */
+export function voteTooltip(item: WorkshopItem): string {
+  const parts = [`好评 ${item.votes_up}`, `差评 ${item.votes_down}`];
+  if (item.score !== null) parts.push(`好评率 ${Math.round(item.score)}%`);
+  return parts.join(' · ');
+}
+
+/** 下载量的悬浮提示：顺手把「当前订阅」也带上，两个数一起看才不会误读 */
+export function downloadTooltip(item: WorkshopItem): string {
+  const life = downloadCount(item);
+  return `累计下载 ${life} 次（含已退订）· 当前订阅 ${item.subscriptions}`;
 }
 
 /**

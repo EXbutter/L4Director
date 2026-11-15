@@ -614,8 +614,8 @@ def set_setting(key: str, value):
 def get_settings() -> AppSettings:
     """Get all settings.
 
-    只取 AppSettings 里确实存在的字段：历史上 backend/test_import.py 会往 settings
-    里写入 `test_key` 之类的键，而 `AppSettings(**settings)` 遇到未知键会直接抛
+    只取 AppSettings 里确实存在的字段：测试脚本历史上会往 settings 里写入
+    `test_key` 之类的键，而 `AppSettings(**settings)` 遇到未知键会直接抛
     TypeError（用户环境里 data.json 一旦被污染，这个函数就永远不可用）。
     """
     with _file_lock:

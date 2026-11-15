@@ -185,6 +185,59 @@ html, body, #root {
   transition: opacity 0.3s ease !important;
 }
 
+// === 原生控件统一外观 ===
+// 浏览器默认的 <input type="checkbox"> 是「系统灰方块 + 系统蓝勾」，跟这套扁平主色
+// 控件不是一个语言 —— 工坊顶栏的「只看未下载」、筛选栏的「同时满足」看起来就像
+// 网页里漏了样式的一块（用户也是指着这两个说「不符合软件风格」）。
+// 这里统一画成 14px 圆角小方框，选中 = 主色填充 + 白色对勾，尺寸和圆角沿用混搭
+// 面板里那个类别勾选框（.mix-fam-chip__box），点文字也能切换（它们在 label 里）。
+input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  position: relative;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 45%, transparent);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  }
+
+  &:checked {
+    border-color: var(--accent);
+    background: var(--accent);
+  }
+
+  // 对勾用两条边画，不用「✓」字符：不同字体下字符的基线/字重都不一样，
+  // 画出来的勾在小尺寸里更稳、也不会被字体替换搞歪。
+  &:checked::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 3.5px;
+    height: 7px;
+    border: solid var(--on-accent);
+    border-width: 0 1.8px 1.8px 0;
+    transform: translate(-50%, -58%) rotate(45deg);
+  }
+
+  &:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+    outline-offset: 2px;
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+}
+
 // === 滚动条样式 ===
 ::-webkit-scrollbar {
   width: 6px;

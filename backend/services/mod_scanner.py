@@ -80,6 +80,11 @@ class ModInfo:
     conflict_hints: list[dict] = field(default_factory=list)
     role: str = 'art'                     # campaign / art / script / hud
     role_tags: list[str] = field(default_factory=list)   # 地图 / 脚本 / 音效 / 美术
+    # 整套替换识别：{家族: {'hit': n, 'total': m, 'names': [...]}}
+    # 家族固定是 生还者 / 特感 / 物品 / 武器（见 tagger.COVERAGE_FAMILIES）。
+    # 只在这个包确实替换了该类资源时才有键，`hit == total` 即「整套换完」。
+    # 「我的 Mod」用它标「8/8 生还者」，一键混搭用它挑候选。
+    coverage: dict = field(default_factory=dict)
     unreadable: bool = False              # VPK 解析失败（坏包/非标准编码）
     # 解析失败的具体原因。条目本身仍然留在列表里（带 unreadable=True），
     # 用户能看到"这个包有问题"，而不是"我明明装了却不见了"。
@@ -350,7 +355,12 @@ _METADATA_CACHE_DIR = _CACHE_DIR / 'vpk_metadata'
 #   v4: 自动分类换成 tagger（按人工标注校准），旧缓存里的旧标签必须重算
 #   v5: VPK 路径表非 UTF-8 时改走 latin-1 重试（老 Mod 用 GBK 存中文贴图名），
 #       旧缓存里那些「解析失败 / 没有细分标签」的结果必须重算
-_METADATA_VERSION = 5
+#   v6: 新增 coverage（整套替换识别：8 生还者 / 8 特感 / 4 物品 / 35 武器），
+#       老缓存里没有这个字段 → 不重算的话「混搭」会一个候选都挑不出来
+#   v7/v8: coverage 加了「必须带模型贴图」这道闸（xdr 那类动画库曾被判成
+#       8/8 生还者；v7 先试了按标准材质路径卡，把自定义目录的替换包全卡掉了），
+#       v6/v7 缓存里的错误覆盖结果必须重算
+_METADATA_VERSION = 8
 
 # 旧版分类名（曾作为自动分类）：老缓存里可能残留，展示时一并过滤掉
 _LEGACY_CATEGORY_NAMES = {
@@ -815,6 +825,8 @@ def _get_vpk_data(path: Path) -> dict:
         'vpk_title': None, 'author': None, 'description': None,
         'version': None, 'category': None, 'category_tags': [], 'tags': [],
         'display_name': None, 'thumbnail_url': None,
+        # 整套替换识别：{家族: {hit,total,names}}，见 tagger.coverage
+        'coverage': {},
         '_manifest': None,  # will store parsed manifest to warm the manifest cache
     }
     
@@ -870,8 +882,9 @@ def _get_vpk_data(path: Path) -> dict:
                 fp = _v.get_file(name)
                 return fp.read() if fp else b''
 
-            tag_list, _degraded = tagger.classify(manifest_paths, reader=_read_inner)
+            tag_list, _degraded, cov = tagger.classify_full(manifest_paths, reader=_read_inner)
             result['category_tags'] = tag_list
+            result['coverage'] = cov
         
         # ── 3. Extract cover image (lazy — only if not cached) ──
         cached_cover = _get_vpk_cover_cached_path(cache_key)
@@ -942,7 +955,7 @@ def _get_vpk_data(path: Path) -> dict:
     # 分类兜底：VPK 头损坏 / 条目名非 UTF-8 时上面会抛异常或给出空清单，
     # 退化成字节流关键词扫描，至少还能判出大类（旧版这种情况直接没有标签）。
     if not result.get('category_tags'):
-        tag_list, _degraded = tagger.classify(None, vpk_path=path)
+        tag_list, _degraded, _cov = tagger.classify_full(None, vpk_path=path)
         result['category_tags'] = tag_list
 
     _VPK_METADATA_CACHE[path_str] = result
@@ -2177,13 +2190,34 @@ class ModScanner:
                     continue
                 current_states.append(self._resolve_enabled(name, list_key, addonlist))
             enable = (not all(current_states)) if current_states else False
-        result['enable'] = enable
 
-        states: dict = {}
+        out = self.set_mods_states({name: enable for name in mod_names})
+        out['enable'] = enable
+        return out
+
+    def set_mods_states(self, states: dict) -> dict:
+        """按「每个 mod 一个目标状态」批量写 addonlist（一次读写）。
+
+        和 `set_mods_enabled` 的区别：那边整批只有一个方向，这边允许
+        启用一批、同时禁用另一批 —— 「一键混搭」就是同时要干这两件事
+        （启用选中那套、关掉同类里被顶下去的）。分两次调用也能实现，
+        但那会写两遍 addonlist.txt，中途失败就留下一个半套组合。
+
+        返回 {'changed', 'missing', 'updated'}，语义同 `set_mods_enabled`。
+        """
+        result = {'changed': 0, 'missing': [], 'updated': {}}
+        if not self._addons_path or not states:
+            return result
+
+        keys = self._mod_list_keys()
+        addonlist = self._read_addonlist()
+
         changed_count = 0
         file_changed = False
+        effective: dict = {}
 
-        for name in mod_names:
+        for name, enable in states.items():
+            enable = bool(enable)
             # 先按原名查，再退化到归一化名（兼容 `MYMOD2` / `mod-xx.vpk` 这类历史写法）
             list_key = keys.get(name) or keys.get(_normalize_mod_key(name))
             if not list_key:
@@ -2191,7 +2225,7 @@ class ModScanner:
                 continue
             # 写到文件里真实存在的那个条目（兼容各种历史写法）
             list_key = self._resolve_list_key(addonlist, list_key)
-            states[name] = enable
+            effective[name] = enable
             # 回传给前端的「实际生效状态」：前端据此做局部更新，
             # 不必再触发一次全量流式扫描（那会让界面弹出「正在扫描 Mod」并把按钮锁住）
             result['updated'][name] = enable
@@ -2207,9 +2241,12 @@ class ModScanner:
 
         # 持久化用户选择（整个整合包只写一次 data.json）
         try:
-            set_mods_enabled_bulk(states)
-            # 同单个启停：标记「有改动还没应用」，让界面上的「应用」按钮点亮
-            set_prefs_dirty(True)
+            set_mods_enabled_bulk(effective)
+            # 只有真的写动了 addonlist 才标记「有改动还没应用」——
+            # 一次什么都没改的批量（例如混搭点到的组合本来就是当前状态、
+            # 或者成员名一个都没匹配上）不该把左下角的「应用」点亮。
+            if changed_count > 0:
+                set_prefs_dirty(True)
         except Exception as e:
             print(f"[Packs] Failed to persist mod states: {e}")
         self.invalidate_mod_enabled_cache()
@@ -2780,6 +2817,7 @@ class ModScanner:
                 version=metadata.get('version'),
                 category=(category_tags[0] if category_tags else None),
                 tags_manual=tags_are_manual,
+                coverage=(metadata.get('coverage') or {}),
                 missing_addoninfo=missing_addoninfo,
                 unreadable=bool(metadata.get('unreadable')),
                 unreadable_reason=metadata.get('unreadable_reason'),

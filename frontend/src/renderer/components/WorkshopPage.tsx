@@ -169,7 +169,7 @@ export function WorkshopPage() {
   }, [api]);
 
   const headerHint = meta?.has_key
-    ? `已启用 API（每页 ${meta.page_size} 条，带评分）`
+    ? `已启用 API（每页 ${meta.page_size} 条，带好评数 / 下载量）`
     : '未配置 API Key：走工坊网页，每页 30 条';
 
   return (

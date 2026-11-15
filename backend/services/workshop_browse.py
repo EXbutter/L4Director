@@ -711,7 +711,7 @@ def browse(filters: dict, page_token: str = '', addons_path: Optional[str] = Non
             'page_size': HTML_PAGE_SIZE,
             'next': str(page + 1) if len(ids) >= HTML_PAGE_SIZE else '',
             'has_more': len(ids) >= HTML_PAGE_SIZE,
-            'note': '列表来自工坊网页，每页 30 条；填 API Key 后每页 100 条并带评分',
+            'note': '列表来自工坊网页，每页 30 条；填 API Key 后每页 100 条并带好评数、累计下载量',
         }
 
     done = _downloaded_ids(addons_path)

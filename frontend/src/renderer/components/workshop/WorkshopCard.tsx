@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react';
 import { ThumbImage } from '../ThumbImage';
+import { ItemStats } from './ItemStats';
 import { formatCount, formatSize, thumbnailUrl } from './types';
 import type { WorkshopItem } from './types';
 
@@ -42,18 +43,18 @@ export function WorkshopCard({ item, api, index = 0, onClick }: Props) {
           lazy
         />
         {item.downloaded && <span className="wk-card__badge">已下载</span>}
-        {item.score !== null && (
-          <span className="wk-card__score" title={`好评度 ${item.score}%（赞 ${item.votes_up} / 踩 ${item.votes_down}）`}>
-            {Math.round(item.score)}%
-          </span>
-        )}
+        {/* 原来是好评率角标（55%），换成好评数 + 累计下载量：工坊条目的好评率
+            几乎全挤在 50~60%，百分比给不出区分度，条数才能看出样本量 */}
+        <ItemStats item={item} variant="overlay" />
       </div>
 
       <div className="wk-card__title">{item.title || `（无标题）${item.id}`}</div>
 
       <div className="wk-card__meta">
         <span>{formatSize(item.size)}</span>
-        <span title="订阅数">↓ {formatCount(item.subscriptions)}</span>
+        {/* 这里用文字「订阅」而不是 ↓：↓ 已经代表下载量了（封面上那个）。
+            两个箭头长得一样、含义差好几倍，最容易把老 Mod 看错 */}
+        <span title={`当前订阅 ${item.subscriptions} 人`}>订阅 {formatCount(item.subscriptions)}</span>
       </div>
 
       <div className="wk-card__tags">

@@ -1,6 +1,6 @@
 import { ThumbImage } from '../ThumbImage';
 import { useModalA11y } from '../../hooks/useModalA11y';
-import { cleanDescription, formatCount, formatDate, formatSize, thumbnailUrl } from './types';
+import { cleanDescription, downloadCount, downloadTooltip, formatCount, formatDate, formatSize, thumbnailUrl, voteCount, voteTooltip } from './types';
 import type { WorkshopItem } from './types';
 
 interface Props {
@@ -42,12 +42,21 @@ export function WorkshopDetail({ item, api, onClose, onQueue, onOpenInBrowser, q
 
           <div className="wk-drawer__stats">
             <div><span>大小</span><b>{formatSize(item.size)}</b></div>
-            <div><span>订阅</span><b>{formatCount(item.subscriptions)}</b></div>
+            {/* 累计下载：只有 API 路径有，网页路径整格不出现（别拿当订阅数冒充） */}
+            {downloadCount(item) > 0 && (
+              <div title={downloadTooltip(item)}>
+                <span>下载</span><b>{formatCount(downloadCount(item))}</b>
+              </div>
+            )}
+            <div title={`当前订阅 ${item.subscriptions} 人`}>
+              <span>订阅</span><b>{formatCount(item.subscriptions)}</b>
+            </div>
             <div><span>浏览</span><b>{formatCount(item.views)}</b></div>
             <div><span>更新</span><b>{formatDate(item.updated_at)}</b></div>
-            {item.score !== null && (
-              <div title={`赞 ${item.votes_up} / 踩 ${item.votes_down}`}>
-                <span>好评</span><b>{Math.round(item.score)}%</b>
+            {/* 好评率改成好评数（条数），好评率本身挪进悬浮提示 */}
+            {voteCount(item) > 0 && (
+              <div title={voteTooltip(item)}>
+                <span>好评</span><b>{formatCount(voteCount(item))}</b>
               </div>
             )}
           </div>

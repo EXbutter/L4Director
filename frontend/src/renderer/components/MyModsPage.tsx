@@ -8,16 +8,16 @@ import { ModSwitch } from './ModSwitch';
 import { showToast } from './Toast';
 import { confirmDialog } from './ConfirmDialog';
 import { UnreadableNotice } from './UnreadableNotice';
+import { MixPanel } from './MixPanel';
+import { CoverageBoard } from './CoverageBoard';
 import { useModalA11y } from '../hooks/useModalA11y';
+import {
+  coverageBadges,
+  coverageTooltip,
+  hasFullSet,
+} from '../utils/mix';
 import './ContentArea.scss';
 import './MyModsPage.scss';
-
-/// ── Virtualized list constants ──
-// 说明：这两个常量目前没有参与渲染（列表靠 CSS content-visibility 跳过屏外绘制），
-// 保留是因为做真正的虚拟化时要按它们算窗口。别再新增依赖它们的死代码。
-const ITEM_HEIGHT = 120;        // approximate card height in px
-const OVERSCAN_ITEMS = 10;      // extra items to render above/below viewport
-const SCROLL_THROTTLE_MS = 80;  // throttle scroll handler
 
 // Load dismissed-conflicts set from localStorage
 function loadDismissedConflicts(): Set<string> {
@@ -232,7 +232,7 @@ const isPickableTag = (tag: string) =>
   (VPK_CATEGORIES as readonly string[]).includes(tag) || isFineTag(tag);
 
 export function MyModsPage() {
-  const { mods, packs, fetchMods, refreshAll, loading, scanning, scanProgress, toggleMod, addAddoninfo, addModToPack, addModsToPack, setContextMenu, contextMenu, deleteMod, deleteMods, deleteConfirmMod, setDeleteConfirmMod, confirmDeleteMod, renameModDisplayName, getModDisplayName, setModCategory, setModTags, workshopUpdates, checkWorkshopUpdates, cancelWorkshopCheck, applyWorkshopUpdates } = useStore();
+  const { mods, packs, fetchMods, refreshAll, loading, scanning, scanProgress, toggleMod, addAddoninfo, addModToPack, addModsToPack, setContextMenu, contextMenu, deleteMod, deleteMods, deleteConfirmMod, setDeleteConfirmMod, confirmDeleteMod, renameModDisplayName, getModDisplayName, setModTags, workshopUpdates, checkWorkshopUpdates, cancelWorkshopCheck, applyWorkshopUpdates } = useStore();
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('name-asc');
   // 排版：卡片墙 / 单列列表（记在 localStorage，重启后保持上次选择）
@@ -273,7 +273,6 @@ export function MyModsPage() {
   const [activeSubmenu, setActiveSubmenu] = useState<'category' | 'pack' | 'batch-category' | 'batch-pack' | null>(null);
   // 分类子菜单的当前层级：null = 大类，非空 = 该大类下的细分标签
   const [catParent, setCatParent] = useState<string | null>(null);
-  const [submenuPos, setSubmenuPos] = useState<{ x: number; y: number; onLeft?: boolean } | null>(null);
   const [batchSubmenuOnLeft, setBatchSubmenuOnLeft] = useState(false);
   const [batchCategoryOffset, setBatchCategoryOffset] = useState(0);
   const [batchPackOffset, setBatchPackOffset] = useState(0);
@@ -282,7 +281,12 @@ export function MyModsPage() {
   const [dismissedConflicts, setDismissedConflicts] = useState<Set<string>>(loadDismissedConflicts);
   // Batch selection: set of selected mod names
   const [selectedMods, setSelectedMods] = useState<Set<string>>(new Set());
-  const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false);
+  // 一键混搭面板：给每个角色 / 武器随机挑一个替换包
+  const [mixOpen, setMixOpen] = useState(false);
+  // 从完整度看板的「补齐缺口」进来时带上的初始条件（只补缺口 + 有缺口的类别）
+  const [mixInit, setMixInit] = useState<{ families: string[]; gapOnly: boolean } | null>(null);
+  // 「整套替换」筛选：只留下把某一类整个换完的 Mod（coverage.hit === total）
+  const [fullSetFilter, setFullSetFilter] = useState(false);
   // Conflict tooltip: which mod's conflicts to show in hover tooltip, + position
   const [conflictTooltip, setConflictTooltip] = useState<{ modName: string; x: number; y: number } | null>(null);
   // Conflict dialog: which mod to show conflict details for (null = closed)
@@ -314,7 +318,6 @@ export function MyModsPage() {
       if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
         setContextMenu(null);
         setActiveSubmenu(null);
-        setSubmenuPos(null);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -325,7 +328,6 @@ export function MyModsPage() {
   useEffect(() => {
     if (!contextMenu) {
       setActiveSubmenu(null);
-      setSubmenuPos(null);
       setCatParent(null);
     }
   }, [contextMenu]);
@@ -472,6 +474,11 @@ export function MyModsPage() {
       list = list.filter((m) => updateFor(m)?.update_available);
     }
 
+    if (fullSetFilter) {
+      // 「整套替换」：某一类的清单全命中（8/8 生还者、35/35 武器…）
+      list = list.filter(hasFullSet);
+    }
+
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(
@@ -502,7 +509,7 @@ export function MyModsPage() {
     }
 
     return list;
-  }, [search, sortBy, visibleMods, category, vpkCategory, fineTag, enabledFilter, conflictFilter, dupFilter, updateFilter, updateFor]);
+  }, [search, sortBy, visibleMods, category, vpkCategory, fineTag, enabledFilter, conflictFilter, dupFilter, updateFilter, fullSetFilter, updateFor]);
 
   /** 解析失败的 VPK：不入列表，只在下方提示条里逐条说明（文件名 / 原因 / 处理办法） */
   const unreadableMods = useMemo(() => mods.filter((m) => m.unreadable), [mods]);
@@ -674,7 +681,6 @@ export function MyModsPage() {
     if (submenuTimerRef.current) clearTimeout(submenuTimerRef.current);
     submenuTimerRef.current = window.setTimeout(() => {
       setActiveSubmenu(null);
-      setSubmenuPos(null);
     }, 120);
   };
 
@@ -706,7 +712,8 @@ export function MyModsPage() {
     (enabledFilter !== 'all' ? 1 : 0) +
     (conflictFilter !== 'all' ? 1 : 0) +
     (dupFilter ? 1 : 0) +
-    (updateFilter ? 1 : 0);
+    (updateFilter ? 1 : 0) +
+    (fullSetFilter ? 1 : 0);
 
   const resetFilters = useCallback(() => {
     setVpkCategory(null);
@@ -715,6 +722,7 @@ export function MyModsPage() {
     setConflictFilter('all');
     setDupFilter(false);
     setUpdateFilter(false);
+    setFullSetFilter(false);
   }, []);
 
   return (
@@ -758,6 +766,11 @@ export function MyModsPage() {
             </button>
           </div>
           <div className="filter-panel__summary">
+            {/* 统计放在最左：右边连续排的是「能点的操作」，中间夹一个数字
+                会把按钮断成两截，视觉上找不到重点 */}
+            <span className="filter-panel__result">
+              筛出 <strong>{filtered.length}</strong> / {visibleMods.length}
+            </span>
             {applyingNow ? (
               <span
                 className="filter-panel__updating"
@@ -799,13 +812,35 @@ export function MyModsPage() {
                         : '联网查询创意工坊有没有新版本'
                   }
                 >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12" aria-hidden="true">
+                    <path d="M21 12a9 9 0 1 1-2.64-6.36" strokeLinecap="round" />
+                    <path d="M21 3v6h-6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
                   检查更新
                 </button>
               )
             )}
-            <span className="filter-panel__result">
-              筛出 <strong>{filtered.length}</strong> / {visibleMods.length}
-            </span>
+            <button
+              className="filter-panel__mix"
+              onClick={() => {
+                setMixInit(null);
+                setMixOpen(true);
+              }}
+              title={
+                '给每个角色 / 每把枪单独随机挑一个替换包，凑成一套互相不覆盖的组合。\n'
+                + 'Nick 有 5 个皮肤就从这 5 个里随机挑，8 个生还者各挑一个；'
+                + '地图、音效、界面这些不相干的 Mod 一概不动。'
+              }
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13" aria-hidden="true">
+                <path d="M16 3h5v5" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M4 20 21 3" strokeLinecap="round" />
+                <path d="M21 16v5h-5" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="m15 15 6 6" strokeLinecap="round" />
+                <path d="m4 4 5 5" strokeLinecap="round" />
+              </svg>
+              一键混搭
+            </button>
             {activeFilterCount > 0 && (
               <button className="filter-panel__clear" onClick={resetFilters} title="清空类型、状态、问题上的筛选">
                 清除筛选
@@ -884,6 +919,17 @@ export function MyModsPage() {
               </span>
             </button>
             <button
+              className={`filter-chip filter-chip--ok ${fullSetFilter ? 'filter-chip--on' : ''}`}
+              onClick={() => setFullSetFilter(!fullSetFilter)}
+              title="只留下把某一类整套换完的 Mod：8/8 生还者、8/8 特感、4/4 物品、35/35 武器"
+            >
+              <i className="filter-chip__dot" />
+              整套替换
+              <span className="filter-chip__count">
+                {visibleMods.filter(hasFullSet).length}
+              </span>
+            </button>
+            <button
               className={`filter-chip filter-chip--warn ${dupFilter ? 'filter-chip--on' : ''}`}
               onClick={() => setDupFilter(!dupFilter)}
               title="同一个 Mod 装了多份：工坊订阅了一份，又把同一个 vpk 拖进了 addons"
@@ -953,6 +999,19 @@ export function MyModsPage() {
         </div>
       ) : null}
 
+      {/* ── 当前搭配完整度（常驻）──
+          回答「现在启用着的包换了名单里的谁、还差谁」：彩色 = 已有包在换，
+          虚框 = 还是原版。看板本身只读，不改任何状态；「补齐缺口」把
+          有缺口的类别带进混搭面板，且默认只补缺口（不动已启用的组合）。 */}
+      {mods.length > 0 && (
+        <CoverageBoard
+          onFillGaps={(families) => {
+            setMixInit({ families, gapOnly: true });
+            setMixOpen(true);
+          }}
+        />
+      )}
+
       {(loading || scanning) && mods.length === 0 ? (
         <div className="my-mods-status">
           <div className="my-mods-status__spinner" />
@@ -977,7 +1036,6 @@ export function MyModsPage() {
             const rawConflicts = enabled && !!mod.conflicts && mod.conflicts.length > 0;
             // Filter out dismissed conflicts so the user can hide specific conflict badges
             const hasConflicts = rawConflicts && !dismissedConflicts.has(mod.name);
-            const conflictTitle = rawConflicts ? `冲突: ${mod.conflicts.join(', ')}` : '';
             const addedLabel = formatAddedDate(mod);
             return (
               <div
@@ -1042,8 +1100,19 @@ export function MyModsPage() {
                     {formatSize(mod.size_bytes)}
                     {viewMode === 'list' && addedLabel ? ` · ${addedLabel}` : ''}
                   </span>
-                  {((mod.duplicates?.length ?? 0) > 0 || mod.missing_addoninfo || updateFor(mod)?.update_available || (mod.tags && mod.tags.length > 0)) && (
+                  {((mod.duplicates?.length ?? 0) > 0 || mod.missing_addoninfo || updateFor(mod)?.update_available || (mod.tags && mod.tags.length > 0) || (mod.coverage && Object.keys(mod.coverage).length > 0)) && (
                     <div className="mod-card__tags" title={mod.tags?.join(' / ')}>
+                      {/* 整套替换标记：放在标签最前面 —— 「这是不是一套完整的替换」比
+                          它属于哪个细分类更值得先看到。最多两个，靠 tooltip 补名单。 */}
+                      {coverageBadges(mod).map(({ family, info }) => (
+                        <span
+                          key={family}
+                          className={`mod-card__cov${info.hit >= info.total ? ' mod-card__cov--full' : ''}`}
+                          title={coverageTooltip(family, info)}
+                        >
+                          {family} {info.hit}/{info.total}
+                        </span>
+                      ))}
                       {mod.missing_addoninfo && (
                         <button
                           className="mod-card__addoninfo"
@@ -1925,6 +1994,17 @@ export function MyModsPage() {
           document.body
         );
       })()}
+
+      {mixOpen && (
+        <MixPanel
+          initialFamilies={mixInit?.families}
+          gapOnlyDefault={mixInit?.gapOnly}
+          onClose={() => {
+            setMixOpen(false);
+            setMixInit(null);
+          }}
+        />
+      )}
     </div>
   );
 }
