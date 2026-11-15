@@ -1,7 +1,7 @@
 {
   "name": "l4d2-mod-manager",
   "productName": "L4Director",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "Left 4 Dead 2 Mod Manager",
   "author": "EXbutter",
   "main": "dist/main/main.js",
@@ -48,13 +48,6 @@
           "!.venv/**",
           "!venv/**",
           "!**/get-pip.py"
-        ]
-      },
-      {
-        "from": "public",
-        "to": "public",
-        "filter": [
-          "**/*"
         ]
       }
     ],

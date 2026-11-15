@@ -193,8 +193,18 @@ print('S7. 仓库卫生')
 print('=' * 78)
 
 gitignore = src('.gitignore')
-for pat in ('*.key', 'steam_api_key*', '.tmp_preview/'):
+for pat in ('*.key', 'steam_api_key*', '.tmp_preview/', 'frontend/public/thankyou.png'):
     check(f'.gitignore 含 {pat}', pat in gitignore)
+
+# frontend/public/ 会被 vite 原样复制进 dist/renderer，而 electron-builder 的 files
+# 是 dist/**/* —— 换句话说，放进 public 的图片会进 app.asar，随安装包公开发布。
+# 个人收款码曾经就这样漏出去一次。真需要放图片时（例如应用内赞助页），先说明理由
+# 再改这条断言，别直接删。
+public_dir = ROOT / 'frontend' / 'public'
+IMAGE_EXT = {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.svg'}
+stray = sorted(p.name for p in public_dir.rglob('*')
+               if p.is_file() and p.suffix.lower() in IMAGE_EXT) if public_dir.exists() else []
+check('frontend/public 下没有图片（会随安装包公开）', not stray, ', '.join(stray[:5]))
 
 # 只看「key 形态的赋值」：md5/CRC 校验值也是 32 位十六进制，全量扫会误报
 SUSPECT = re.compile(r'(?:steam_api_key|api_key|apikey|\.key)[\'"]?\s*[=:]\s*[\'"]([0-9A-Fa-f]{32})[\'"]')
