@@ -16,6 +16,7 @@ if sys.stdout.encoding and sys.stdout.encoding.upper() in ('GBK', 'GB2312', 'GB1
 if sys.stderr.encoding and sys.stderr.encoding.upper() in ('GBK', 'GB2312', 'GB18030'):
     sys.stderr.reconfigure(errors='replace')  # type: ignore
 import argparse
+import hashlib
 import re
 import threading
 import time
@@ -33,6 +34,7 @@ from fastapi.responses import Response, FileResponse, StreamingResponse
 from services.mod_scanner import (
     ModScanner, _CACHE_DIR, get_last_scan_perf, invalidate_sidecar_cache,
     cache_stats, cache_gc,
+    is_builtin_tag, invalidate_scan_cache,
 )
 from services.data_store import (
     get_packs, add_pack, delete_pack, rename_pack,
@@ -43,6 +45,7 @@ from services.data_store import (
     get_pending_game_reapply, set_pending_game_reapply,
     get_prefs_dirty, set_prefs_dirty,
     get_last_recovery,
+    get_custom_tags, add_custom_tag, remove_custom_tag,
 )
 from services.workshop_downloader import (
     get_manager as get_download_manager,
@@ -75,7 +78,7 @@ async def _app_lifespan(_app: FastAPI):
 # 这里的默认值只在「直接 python main.py 跑后端」时用到，但必须是**唯一一份** ——
 # 以前 FastAPI 与 /api/health 各写一个默认值（1.1.0 / 1.2.0），两边长期不一致，
 # 排查线上问题时没法确认对面到底是哪个版本。
-_DEFAULT_APP_VERSION = "1.3.2"
+_DEFAULT_APP_VERSION = "1.3.3"
 APP_VERSION = os.environ.get("L4DIRECTOR_APP_VERSION", _DEFAULT_APP_VERSION)
 
 
@@ -1222,6 +1225,63 @@ def set_mod_tags_api(mod_name: str, data: dict):
     return {"status": "ok", "tags": result.tags, "manual": result.tags_manual, "mod": mod}
 
 
+# ===== 自定义标签 API =====
+# 用户自己起的标签（「最爱」「待测试」「某某作者合集」…），和内置分类共用同一套
+# 「给 Mod 打标签」的接口（POST /api/mods/{name}/tags），只是标签名先要在池子里注册。
+
+def _validate_custom_tag_name(raw) -> str:
+    """校验用户输入的标签名，返回去掉首尾空白后的结果。"""
+    name = str(raw if raw is not None else "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="标签名不能为空")
+    # 标签会画在卡片上的小圆角块里，太长会把整行标签挤没；16 字够写清楚一个归类了
+    if len(name) > 16:
+        raise HTTPException(status_code=400, detail="标签名最多 16 个字符")
+    if any(ch in name for ch in "\r\n\t"):
+        raise HTTPException(status_code=400, detail="标签名不能包含换行或制表符")
+    # 「ID: xxx」是创意工坊编号的专用前缀，客户端靠它识别来源
+    if name.startswith("ID: "):
+        raise HTTPException(status_code=400, detail="「ID: 」是创意工坊编号专用前缀，请换个名字")
+    if name in ("外部 Mod", "创意工坊 Mod"):
+        raise HTTPException(status_code=400, detail=f"「{name}」是来源标签，请换个名字")
+    if is_builtin_tag(name):
+        raise HTTPException(status_code=409, detail=f"「{name}」是内置标签，换一个名字吧")
+    return name
+
+
+@app.get("/api/custom-tags")
+def list_custom_tags_api():
+    """自定义标签池（按用户创建顺序）。"""
+    return {"tags": get_custom_tags()}
+
+
+@app.post("/api/custom-tags")
+def create_custom_tag_api(data: dict):
+    """新建一个自定义标签。已存在时幂等返回（不报错，方便前端「输入完直接打勾」）。"""
+    name = _validate_custom_tag_name(data.get("name"))
+    return {"status": "ok", "name": name, "tags": add_custom_tag(name)}
+
+
+@app.delete("/api/custom-tags/{name}")
+def delete_custom_tag_api(name: str):
+    """删除标签定义，并把它从所有 Mod 身上摘掉。
+
+    只删得掉**自定义**标签：内置的大类/细分/收藏标签不在池子里，
+    也不该被一个删除请求顺手抹掉（data_store 那边同样做了兜底）。
+    """
+    from urllib.parse import unquote
+    name = unquote(name).strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="标签名不能为空")
+    if is_builtin_tag(name) or name in ("外部 Mod", "创意工坊 Mod"):
+        raise HTTPException(status_code=400, detail=f"「{name}」是内置标签，不能删除")
+    tags, touched = remove_custom_tag(name)
+    if touched:
+        # 有 Mod 的标签变了 → 作废扫描缓存，否则刷新后卡片上还挂着这个标签
+        invalidate_scan_cache()
+    return {"status": "ok", "tags": tags, "updated_mods": touched}
+
+
 @app.get("/api/mods/apply-state")
 def get_apply_state():
     """「应用」按钮的状态：是否有改动还没写回 addonlist.txt + 游戏是否在运行。"""
@@ -1889,6 +1949,11 @@ def _wb():
     return _mod
 
 
+def _subs():
+    from services import workshop_subscriptions as _mod
+    return _mod
+
+
 @app.get("/api/workshop/meta")
 def workshop_meta():
     """筛选项、排序项、当前是否配了 key（前端首次渲染用）。"""
@@ -1930,11 +1995,113 @@ def workshop_browse(
 
 @app.get("/api/workshop/item/{wid}")
 def workshop_item(wid: str):
-    """单个条目的完整描述（卡片上不显示描述，抽屉里才要）。"""
+    """单个条目的完整详情：完整描述 + 图集（多图）+ 依赖项。
+
+    抽屉打开时才调。带 addons 路径是为了给依赖项标「已下载 / 未下载」。
+    """
     try:
-        return _wb().item_detail(wid)
+        return _wb().item_detail(wid, scanner.get_addons_path())
     except _wb().WorkshopError as e:
         raise HTTPException(status_code=400, detail=_wb().redact(str(e)))
+
+
+def _current_steam_id() -> Optional[str]:
+    """当前 Steam 账号的 64 位 ID。
+
+    优先用界面里「登录」过的那个；没有就回退到本机 loginusers.vdf 里 MostRecent 的账号。
+    注意这两个都只是**认人**（不是授权），够用来读自己的订阅，改订阅则做不到。
+    """
+    user = _steam_auth_state.get("user")
+    if isinstance(user, dict) and user.get("steamId"):
+        return str(user["steamId"])
+    users = read_steam_users()
+    recent = [u for u in users if u.get("mostRecent")] or users
+    return str(recent[0]["steamId"]) if recent else None
+
+
+@app.get("/api/workshop/subscription-diff")
+def workshop_subscription_diff(refresh: bool = False):
+    """对比「Steam 账号订阅」和「本地 workshop 文件」（只读，不动任何文件）。
+
+    返回 to_download（订阅了但本地没有）和 to_delete（本地有但已不在订阅里）。
+    """
+    steam_id = _current_steam_id()
+    if not steam_id:
+        raise HTTPException(
+            status_code=400,
+            detail="找不到 Steam 账号：先用本机 Steam 客户端登录一次，或在设置里填 API Key")
+    if refresh:
+        _subs().clear_cache()
+    try:
+        return _subs().diff(steam_id, scanner.get_addons_path())
+    except _subs().SubscriptionError as e:
+        raise HTTPException(status_code=400, detail=_wb().redact(str(e)))
+
+
+@app.post("/api/workshop/subscriptions/sync")
+def workshop_subscription_sync(payload: dict):
+    """按对账结果执行：缺的入下载队列，多出来的删掉。
+
+    只处理传进来的 ID 列表（前端确认过的那批），不在后端重新算一遍 ——
+    否则用户看到的是 3 个、真要删的时候可能变成 30 个。
+    """
+    p = payload or {}
+    dl_ids = [str(x) for x in (p.get("download_ids") or []) if str(x).isdigit()]
+    rm_ids = [str(x) for x in (p.get("delete_ids") or []) if str(x).isdigit()]
+
+    added = ignored = 0
+    if dl_ids:
+        res = _dl().add_targets("\n".join(dl_ids))
+        added = len(res.get("added") or [])
+        ignored = len(res.get("ignored") or [])
+
+    deleted = 0
+    failed: list[dict] = []
+    if rm_ids:
+        addons = scanner.get_addons_path()
+        ws = Path(addons) / "workshop" if addons else None
+        for sid in rm_ids:
+            if not ws:
+                failed.append({"id": sid, "error": "没有配置 addons 目录"})
+                continue
+            target = ws / f"{sid}.vpk"
+            if not target.is_file():
+                failed.append({"id": sid, "error": "文件已不存在"})
+                continue
+            try:
+                ok = scanner.delete_mod(target.name, path_hint=str(target))
+            except Exception as e:                      # noqa: BLE001
+                print(f"[SubSync] delete failed for {sid}: {e}")
+                ok = False
+            if ok:
+                deleted += 1
+            else:
+                failed.append({"id": sid, "error": "删除失败（文件可能正被游戏占用）"})
+        if deleted:
+            invalidate_scan_cache()
+
+    return {
+        "ok": not failed,
+        "queued": added,
+        "already_queued": ignored,
+        "deleted": deleted,
+        "failed": failed,
+    }
+
+
+@app.post("/api/mods/addonlist/fill")
+def fill_addonlist_endpoint():
+    """一键补全 addonlist.txt：把本地所有 mod 补进去（只补缺失条目）。
+
+    场景：刚拖进 addons 或刚订阅的包，addonlist.txt 里还没有它 ——
+    游戏的「附加内容」列表里看不到，某些机器上还会被当成没装。
+    已有的条目一律不动（启停状态、编码写法都保持原样）。
+    """
+    result = scanner.fill_addonlist()
+    if result.get('ok'):
+        # 补进去的都是启用状态 → 让下一次扫描重新读一遍
+        invalidate_scan_cache()
+    return result
 
 
 @app.get("/api/settings/steam-key")
@@ -2102,6 +2269,18 @@ def _prune_thumb_cache(limit: int = _THUMB_CACHE_LIMIT) -> None:
             continue
 
 
+def _thumb_cache_name(wid: str, url: Optional[str],
+                      w: Optional[int], h: Optional[int]) -> str:
+    """工坊缩略图在磁盘上的缓存文件名。
+
+    键里**必须**带上这张图 URL 的指纹。以前只用 `wid`，同一个 Mod 的多张截图
+    会撞进同一个缓存文件 —— 表现就是详情页图集里每一张都显示成第一张（封面）。
+    """
+    variant = f"_{w}x{h}" if w and h else ""
+    url_tag = hashlib.md5(url.encode('utf-8')).hexdigest()[:12] if url else 'nocover'
+    return f"{wid}_{url_tag}{variant}.jpg"
+
+
 @app.get("/api/download/thumbnail")
 def download_thumbnail(wid: str, url: Optional[str] = None,
                        w: Optional[int] = None, h: Optional[int] = None):
@@ -2119,13 +2298,13 @@ def download_thumbnail(wid: str, url: Optional[str] = None,
 
     cache_headers = {"Cache-Control": "public, max-age=86400"}
     local = Path(_dl().outdir) / f"{wid}.jpg"
-    # 本地这份是 Steam 客户端下载时附带的封面，好坏都得认（用户已经装了这个 Mod），
-    # 但只有请求原图时才用它 —— 卡片要小图时必须走下面的缩放分支。
-    if not w and not h and local.is_file() and local.stat().st_size > 512:
+    # 本地这份是 Steam 客户端下载时附带的**封面**，好坏都得认（用户已经装了这个 Mod）。
+    # 但只有「没指定具体图」时才用它：详情页图集里每张图都带着自己的 url，
+    # 一旦这里无条件优先返回本地封面，整个图集就会全部显示成封面那一张。
+    if not url and not w and not h and local.is_file() and local.stat().st_size > 512:
         return FileResponse(str(local), media_type=_sniff_file_mime(local), headers=cache_headers)
 
-    variant = f"_{w}x{h}" if w and h else ""
-    cached = _DL_THUMB_DIR / f"{wid}{variant}.jpg"
+    cached = _DL_THUMB_DIR / _thumb_cache_name(wid, url, w, h)
     if cached.is_file() and cached.stat().st_size > 512:
         try:
             os.utime(cached, None)      # 记一次访问，LRU 淘汰时不会被误杀

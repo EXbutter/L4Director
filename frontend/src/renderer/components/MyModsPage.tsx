@@ -12,8 +12,6 @@ import { MixPanel } from './MixPanel';
 import { CoverageBoard } from './CoverageBoard';
 import { useModalA11y } from '../hooks/useModalA11y';
 import {
-  coverageBadges,
-  coverageTooltip,
   hasFullSet,
 } from '../utils/mix';
 import './ContentArea.scss';
@@ -122,7 +120,12 @@ function useIntersectionObserver(
 }
 
 
-function ModPreview({ mod, displayName }: { mod: ModData; displayName: string }) {
+function ModPreview({ mod, displayName, favorited, onToggleFavorite }: {
+  mod: ModData;
+  displayName: string;
+  favorited: boolean;
+  onToggleFavorite: () => void;
+}) {
   const [imgError, setImgError] = useState(false);
   const [containerRef, isVisible] = useIntersectionObserver();
   
@@ -156,6 +159,29 @@ function ModPreview({ mod, displayName }: { mod: ModData; displayName: string })
           </svg>
         </div>
       )}
+
+      {/* 收藏：缩略图右下角的一颗心。选这里是因为它是整张卡最「空」的角落，
+          又不压标题和状态角标；点一下就是加/减「我的最爱」标签。
+          没收藏时只描边、半透明，收藏后填实并转成暖红 —— 扫一眼就能分出来。 */}
+      <button
+        type="button"
+        className={`mod-card__fav${favorited ? ' mod-card__fav--on' : ''}`}
+        title={favorited ? '已加入「我的最爱」，点击取消' : '加入「我的最爱」'}
+        aria-label={favorited ? '取消收藏' : '加入我的最爱'}
+        aria-pressed={favorited}
+        onClick={(e) => {
+          // 点卡片本身是打开预览，这颗心不能顺带把预览也打开
+          e.stopPropagation();
+          onToggleFavorite();
+        }}
+      >
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"
+             fill={favorited ? 'currentColor' : 'none'}
+             stroke="currentColor" strokeWidth="2"
+             strokeLinecap="round" strokeLinejoin="round">
+          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+        </svg>
+      </button>
     </div>
   );
 }
@@ -222,17 +248,37 @@ export { isFineTag };
 const isSourceTag = (tag: string) => tag === '外部 Mod' || tag === '创意工坊 Mod' || tag.startsWith('ID: ');
 
 /**
- * 卡片上标签的展示顺序：内容分类（大类 → 细分）在前，来源（外部/工坊/ID）在后。
+ * 「我的最爱」：内置收藏标签（后端 `mod_scanner.FAVORITE_TAG`，两边字符串必须一致）。
+ *
+ * 刻意**不算自定义标签**：它不在可删的标签池里、不进 CATEGORIES —— 收藏是功能，
+ * 不是用户数据。爱心按钮、筛选栏、右键菜单都直接读写这一个标签名。
+ */
+export const FAVORITE_TAG = '我的最爱';
+
+/**
+ * 卡片上标签的展示顺序：最爱 → 大类 → 细分 → 用户自建标签 → 来源（外部/工坊/ID）。
  * 否则「外部 Mod」永远占掉第一个坑位，细分标签天天被 +n 挡住 —— 等于白加。
  */
 export function orderCardTags(tags: string[]): string[] {
-  return [...tags.filter((t) => !isSourceTag(t)), ...tags.filter(isSourceTag)];
+  const rank = (tag: string) =>
+    tag === FAVORITE_TAG ? -1
+      : isSourceTag(tag) ? 3
+        : (VPK_CATEGORIES as readonly string[]).includes(tag) ? 0
+          : isFineTag(tag) ? 1
+            : 2;
+  // Array.prototype.sort 在现代引擎里是稳定排序，同档内保持后端给的先后
+  return [...tags].sort((a, b) => rank(a) - rank(b));
 }
-const isPickableTag = (tag: string) =>
-  (VPK_CATEGORIES as readonly string[]).includes(tag) || isFineTag(tag);
+
+/** 可以手动增删的标签：内置大类、内置细分、收藏标签、用户自建标签（来源标签不算） */
+const isPickableTag = (tag: string, customTags: string[] = []) =>
+  tag === FAVORITE_TAG
+  || (VPK_CATEGORIES as readonly string[]).includes(tag)
+  || isFineTag(tag)
+  || customTags.includes(tag);
 
 export function MyModsPage() {
-  const { mods, packs, fetchMods, refreshAll, loading, scanning, scanProgress, toggleMod, addAddoninfo, addModToPack, addModsToPack, setContextMenu, contextMenu, deleteMod, deleteMods, deleteConfirmMod, setDeleteConfirmMod, confirmDeleteMod, renameModDisplayName, getModDisplayName, setModTags, workshopUpdates, checkWorkshopUpdates, cancelWorkshopCheck, applyWorkshopUpdates } = useStore();
+  const { mods, packs, fetchMods, refreshAll, loading, scanning, scanProgress, toggleMod, addAddoninfo, addModToPack, addModsToPack, setContextMenu, contextMenu, deleteMod, deleteMods, deleteConfirmMod, setDeleteConfirmMod, confirmDeleteMod, renameModDisplayName, getModDisplayName, setModTags, customTags, createCustomTag, deleteCustomTag, workshopUpdates, checkWorkshopUpdates, cancelWorkshopCheck, applyWorkshopUpdates } = useStore();
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('name-asc');
   // 排版：卡片墙 / 单列列表（记在 localStorage，重启后保持上次选择）
@@ -263,6 +309,18 @@ export function MyModsPage() {
   const [vpkCategory, setVpkCategory] = useState<string | null>(null);
   // 二级细分筛选：只在大类有子类时出现（选中「武器」才显示 步枪/霰弹枪…）
   const [fineTag, setFineTag] = useState<string | null>(null);
+  // 自定义标签筛选（用户自己起的归类，单选，交互和类型/细分保持一致）
+  const [customTagFilter, setCustomTagFilter] = useState<string | null>(null);
+  // 「只看收藏」：收藏是内置标签，单独一个开关，不混进自定义标签的单选里
+  const [favoriteFilter, setFavoriteFilter] = useState(false);
+  /** 「补全 Addonlist」正在写文件 */
+  const [fillingAddonlist, setFillingAddonlist] = useState(false);
+  /** 「同步 Steam 订阅」正在拉订阅列表（首次要几秒） */
+  const [syncingSubs, setSyncingSubs] = useState(false);
+  // 右键菜单里「+ 新建标签」的输入框内容（null = 输入框没展开）。
+  // 和筛选栏那个分开存：两处可能同时开着，共用一个状态会互相串内容。
+  const [newTagDraft, setNewTagDraft] = useState<string | null>(null);
+  const [menuTagDraft, setMenuTagDraft] = useState<string | null>(null);
   const [renameModName, setRenameModName] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const contextMenuRef = useRef<HTMLDivElement>(null);
@@ -307,6 +365,7 @@ export function MyModsPage() {
 
   useEffect(() => {
     // 仅当尚无数据时才自动拉取；后端连接后由 App 统一触发首次扫描
+    // （自定义标签池也在那里一起拉，见 App 的 refreshAll 之后）
     if (useStore.getState().mods.length === 0) {
       fetchMods();
     }
@@ -329,6 +388,7 @@ export function MyModsPage() {
     if (!contextMenu) {
       setActiveSubmenu(null);
       setCatParent(null);
+      setMenuTagDraft(null);
     }
   }, [contextMenu]);
 
@@ -426,13 +486,32 @@ export function MyModsPage() {
     [vpkCategory, fineTagCounts, fineTag]
   );
 
+  // 自定义标签计数：和类型不同，这里只统计当前列表里真用得上的（0 个的不占地方）
+  const customTagCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const tag of customTags) {
+      counts[tag] = visibleMods.filter((m) => m.tags.includes(tag)).length;
+    }
+    return counts;
+  }, [visibleMods, customTags]);
+
+  const favoriteCount = useMemo(
+    () => visibleMods.filter((m) => m.tags.includes(FAVORITE_TAG)).length,
+    [visibleMods]
+  );
+
   // 切大类/清空筛选时，二级筛选必须跟着复位，否则会留下一个不存在的组合
   useEffect(() => {
     if (!fineTag) return;
     if (!vpkCategory || !(FINE_TAGS[vpkCategory] || []).includes(fineTag)) setFineTag(null);
   }, [vpkCategory, fineTag]);
 
-  const combinedCategoryKey = useMemo(() => `${category}-${vpkCategory || 'all'}-${fineTag || 'all'}-${enabledFilter}-${conflictFilter}-${dupFilter ? 'dup' : 'all'}-${updateFilter ? 'upd' : 'all'}`, [category, vpkCategory, fineTag, enabledFilter, conflictFilter, dupFilter, updateFilter]);
+  // 标签池里已经没有这个标签了（在别处删掉 / 后端换了数据）→ 别把筛选卡在一个空条件上
+  useEffect(() => {
+    if (customTagFilter && !customTags.includes(customTagFilter)) setCustomTagFilter(null);
+  }, [customTags, customTagFilter]);
+
+  const combinedCategoryKey = useMemo(() => `${category}-${vpkCategory || 'all'}-${fineTag || 'all'}-${customTagFilter || 'all'}-${favoriteFilter ? 'fav' : 'all'}-${enabledFilter}-${conflictFilter}-${dupFilter ? 'dup' : 'all'}-${updateFilter ? 'upd' : 'all'}`, [category, vpkCategory, fineTag, customTagFilter, favoriteFilter, enabledFilter, conflictFilter, dupFilter, updateFilter]);
 
   const enabledCounts = useMemo(() => ({
     enabled: visibleMods.filter((m) => m.enabled).length,
@@ -451,6 +530,15 @@ export function MyModsPage() {
     if (vpkCategory) {
       list = list.filter((m) => m.tags.includes(vpkCategory));
       if (fineTag) list = list.filter((m) => m.tags.includes(fineTag));
+    }
+
+    // 自定义标签是独立维度：和类型/状态取交集（「武器」∩「最爱」就看最爱里的武器）
+    if (customTagFilter) {
+      list = list.filter((m) => m.tags.includes(customTagFilter));
+    }
+
+    if (favoriteFilter) {
+      list = list.filter((m) => m.tags.includes(FAVORITE_TAG));
     }
 
     if (enabledFilter === 'enabled') {
@@ -509,7 +597,7 @@ export function MyModsPage() {
     }
 
     return list;
-  }, [search, sortBy, visibleMods, category, vpkCategory, fineTag, enabledFilter, conflictFilter, dupFilter, updateFilter, fullSetFilter, updateFor]);
+  }, [search, sortBy, visibleMods, category, vpkCategory, fineTag, customTagFilter, favoriteFilter, enabledFilter, conflictFilter, dupFilter, updateFilter, fullSetFilter, updateFor]);
 
   /** 解析失败的 VPK：不入列表，只在下方提示条里逐条说明（文件名 / 原因 / 处理办法） */
   const unreadableMods = useMemo(() => mods.filter((m) => m.unreadable), [mods]);
@@ -704,11 +792,13 @@ export function MyModsPage() {
     fetchMods();
   };
 
-  // 二级筛选（类型/状态/问题/细分）里生效的项数：>0 时面板右上角才出现「清除筛选」，
+  // 二级筛选（类型/状态/问题/细分/自定义标签）里生效的项数：>0 时面板右上角才出现「清除筛选」，
   // 平时不占位置，也让用户一眼看出「现在到底被几个条件卡着」
   const activeFilterCount =
     (vpkCategory ? 1 : 0) +
     (fineTag ? 1 : 0) +
+    (customTagFilter ? 1 : 0) +
+    (favoriteFilter ? 1 : 0) +
     (enabledFilter !== 'all' ? 1 : 0) +
     (conflictFilter !== 'all' ? 1 : 0) +
     (dupFilter ? 1 : 0) +
@@ -718,12 +808,209 @@ export function MyModsPage() {
   const resetFilters = useCallback(() => {
     setVpkCategory(null);
     setFineTag(null);
+    setCustomTagFilter(null);
+    setFavoriteFilter(false);
     setEnabledFilter('all');
     setConflictFilter('all');
     setDupFilter(false);
     setUpdateFilter(false);
     setFullSetFilter(false);
   }, []);
+
+  /**
+   * 新建自定义标签。
+   *
+   * 传了 modName 就是「在这个 Mod 的右键菜单里顺手起的名字」——建完立刻给它打上，
+   * 否则用户还要再点一次刚出现的那个勾，白白多一步。
+   * 返回创建出来的标签名（失败返回 null，原因已经 toast 过）。
+   */
+  const handleCreateCustomTag = useCallback(async (rawName: string, modName?: string) => {
+    const name = rawName.trim();
+    if (!name) return null;
+    const created = await createCustomTag(name);
+    if (!created) return null;
+    if (!modName) return created;
+
+    const target = mods.find((m) => m.name === modName);
+    const current = (target?.tags || []).filter((t) => isPickableTag(t, [...customTags, created]));
+    if (!current.includes(created)) void setModTags(modName, [...current, created]);
+    return created;
+  }, [createCustomTag, mods, customTags, setModTags]);
+
+  /**
+   * 爱心：切换「我的最爱」。
+   *
+   * 走和右键标签同一条接口 —— 收藏只是一个标签，不需要单独的存储字段；
+   * 这样它能直接被筛选、也能在右键菜单里看到勾选状态，不用维护第二套真相。
+   */
+  const toggleFavorite = useCallback((mod: ModData) => {
+    const tags = mod.tags || [];
+    const tagged = tags.includes(FAVORITE_TAG);
+    // 只保留「能手动增删」的那些，避免把来源标签（外部 Mod / ID: xxx）写进 override
+    const rest = tags.filter((t) => t !== FAVORITE_TAG && isPickableTag(t, customTags));
+    void setModTags(mod.name, tagged ? rest : [...rest, FAVORITE_TAG]);
+  }, [customTags, setModTags]);
+
+  /**
+   * 一键补全 addonlist.txt。
+   *
+   * 为什么放在这一页：addonlist.txt 是「本地 Mod 的启用清单」，和侧栏的
+   * 创意工坊是两件事。刚拖进 addons 或刚订阅下载回来的包常常还没有条目 ——
+   * 游戏的「附加内容」列表里看不到它，某些机器上还会被当成没装。
+   * 这里一次补齐缺失条目，已有条目的启停状态和编码写法都不动。
+   */
+  const fillAddonlist = useCallback(async () => {
+    setFillingAddonlist(true);
+    try {
+      const res = await fetch(`${getApiBase()}/api/mods/addonlist/fill`, { method: 'POST' });
+      const data = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok || data.ok === false) {
+        showToast(`补全失败：${data.error || data.detail || `HTTP ${res.status}`}`, 'error');
+        return;
+      }
+      const added = Number(data.added) || 0;
+      if (added > 0) {
+        showToast(`已补全 ${added} 个条目到 addonlist.txt`, 'success');
+        // 补进去的都是「启用」→ 列表里的状态要跟着刷新，别让用户以为没生效
+        fetchMods();
+      } else {
+        showToast(`addonlist.txt 已经齐了（本地 ${Number(data.scanned) || 0} 个 Mod 都在里面）`, 'info');
+      }
+    } catch (e) {
+      showToast(`补全失败：${(e as Error).message || '无法连接到后端服务'}`, 'error');
+    } finally {
+      setFillingAddonlist(false);
+    }
+  }, [fetchMods]);
+
+  /**
+   * 同步 Steam 订阅。
+   *
+   * 只读方向是真同步（Steam 上是订阅了哪些，这里读得到）；写入方向做不到 ——
+   * SubscribePublishedFile 要用户级 OAuth token，API Key 只给到 403。
+   * 所以这里的「同步」定义为：把本地对齐到 Steam 的订阅状态 ——
+   * 缺的进下载队列，多出来的（已取消订阅）删掉。
+   */
+  const syncSteamSubscriptions = useCallback(async () => {
+    setSyncingSubs(true);
+    try {
+      const res = await fetch(`${getApiBase()}/api/workshop/subscription-diff`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data.detail || `读取订阅失败（HTTP ${res.status}）`, 'error');
+        return;
+      }
+
+      const toDownload: Array<{ id: string; title?: string }> = data.to_download || [];
+      const toDelete: Array<{ id: string; name?: string }> = data.to_delete || [];
+
+      if (!toDownload.length && !toDelete.length) {
+        showToast(`已经和 Steam 订阅一致（${data.total_subscribed || 0} 个）`, 'info');
+        return;
+      }
+
+      const Preview = ({ items, label, tone }: {
+        items: Array<{ id: string; title?: string; name?: string }>;
+        label: string;
+        tone: 'add' | 'del';
+      }) => (
+        <div className="sub-sync__block">
+          <span className={`sub-sync__label sub-sync__label--${tone}`}>{label}</span>
+          <ul>
+            {items.slice(0, 5).map((x) => (
+              <li key={x.id} title={x.title || x.name}>{x.title || x.name || `#${x.id}`}</li>
+            ))}
+          </ul>
+          {items.length > 5 && <span className="sub-sync__more">…还有 {items.length - 5} 个</span>}
+        </div>
+      );
+
+      const ok = await confirmDialog({
+        title: '同步 Steam 订阅',
+        tone: toDelete.length ? 'danger' : 'primary',
+        confirmText: '执行同步',
+        description: (
+          <div className="sub-sync">
+            <p>
+              Steam 上订阅了 <b>{data.total_subscribed || 0}</b> 个，本地有 <b>{data.total_local || 0}</b> 个。
+            </p>
+            {toDownload.length > 0 && (
+              <Preview items={toDownload} label={`加入下载队列 ${toDownload.length} 个`} tone="add" />
+            )}
+            {toDelete.length > 0 && (
+              <Preview items={toDelete} label={`从硬盘删除 ${toDelete.length} 个`} tone="del" />
+            )}
+          </div>
+        ),
+        note: toDelete.length
+          ? '「删除」的是已经不在你 Steam 订阅里的条目（取消订阅或被作者隐藏），文件会直接移除。'
+            + '想留住的话先取消这次同步，把文件挪出 addons 目录。'
+          : '只是加入下载队列，不会自动开始 —— 到「下载」页点开始。',
+      });
+      if (!ok) return;
+
+      const syncRes = await fetch(`${getApiBase()}/api/workshop/subscriptions/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          download_ids: toDownload.map((x) => x.id),
+          delete_ids: toDelete.map((x) => x.id),
+        }),
+      });
+      const out = await syncRes.json().catch(() => ({}));
+      if (!syncRes.ok) {
+        showToast(out.detail || '同步失败', 'error');
+        return;
+      }
+
+      const parts: string[] = [];
+      if (out.queued) parts.push(`${out.queued} 个已加入队列`);
+      if (out.already_queued) parts.push(`${out.already_queued} 个本来就在队列里`);
+      if (out.deleted) parts.push(`${out.deleted} 个已删除`);
+      const failed = (out.failed || []).length;
+      if (failed) parts.push(`${failed} 个失败`);
+
+      showToast(
+        parts.length ? `同步完成：${parts.join('、')}` : '没有需要变更的条目',
+        failed ? 'warning' : 'success',
+      );
+      if (out.deleted) refreshAll();
+    } catch (e) {
+      showToast(`同步失败：${(e as Error).message || '无法连接到后端服务'}`, 'error');
+    } finally {
+      setSyncingSubs(false);
+    }
+  }, [refreshAll]);
+
+  /** 筛选行里新建标签：只是丰富标签池，不关联具体 Mod */
+  const handleCreateTagFromFilter = useCallback(async () => {
+    const created = await handleCreateCustomTag(newTagDraft || '');
+    setNewTagDraft(null);
+    if (created) showToast(`已新建标签「${created}」，右键 Mod 就能打上`, 'success');
+  }, [handleCreateCustomTag, newTagDraft]);
+
+  /** 右键菜单里新建标签：建完直接打到这个 Mod 上 */
+  const handleCreateTagForMod = useCallback(async () => {
+    const created = await handleCreateCustomTag(menuTagDraft || '', contextMenu?.modName);
+    setMenuTagDraft(null);
+    if (created) setContextMenu(null);
+  }, [handleCreateCustomTag, menuTagDraft, contextMenu, setContextMenu]);
+
+  /** 删除自定义标签：会从所有 Mod 身上摘掉，属于不可撤销操作，先确认 */
+  const handleDeleteCustomTag = useCallback(async (tag: string) => {
+    const used = visibleMods.filter((m) => m.tags.includes(tag)).length;
+    const ok = await confirmDialog({
+      title: `删除标签「${tag}」？`,
+      description:
+        used > 0
+          ? `会同时从 ${used} 个 Mod 上摘掉这个标签（Mod 本身不会被动到）。`
+          : '这个标签目前还没有打在任何 Mod 上。',
+      note: used > 0 ? '如果某个 Mod 只挂着这一个标签，它会恢复成按内容自动分类。' : undefined,
+      tone: 'danger',
+      confirmText: '删除标签',
+    });
+    if (ok) void deleteCustomTag(tag);
+  }, [visibleMods, deleteCustomTag]);
 
   return (
     <div className="content-area">
@@ -820,6 +1107,41 @@ export function MyModsPage() {
                 </button>
               )
             )}
+            {/* 补全 addonlist.txt：只补缺失条目，已有条目的启停/写法不动 */}
+            <button
+              className="filter-panel__check"
+              onClick={() => void fillAddonlist()}
+              disabled={fillingAddonlist}
+              title={
+                '把本地 addons 里还没写进 addonlist.txt 的 Mod 一次补齐。\n'
+                + '只补缺失的条目：已有条目的启停状态和编码写法都不动。\n'
+                + '刚拖进 addons / 刚订阅下载回来的包在游戏「附加内容」里看不到时用它。'
+              }
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12" aria-hidden="true">
+                <path d="M4 5h9M4 11h6M4 17h5" strokeLinecap="round" />
+                <path d="M16 12v7M12.5 15.5h7" strokeLinecap="round" />
+              </svg>
+              {fillingAddonlist ? '补全中…' : '补全 Addonlist'}
+            </button>
+            {/* 同步 Steam 订阅：只读 Steam 的订阅列表，把本地对齐过去 */}
+            <button
+              className="filter-panel__check"
+              onClick={() => void syncSteamSubscriptions()}
+              disabled={syncingSubs}
+              title={
+                '读取你 Steam 账号的工坊订阅，和本地文件对一遍：\n'
+                + '订阅了但本地没有的 → 加入下载队列；\n'
+                + '本地有但已取消订阅的 → 从硬盘删除。\n'
+                + '（Steam 不允许第三方改订阅，所以只能把本地对齐到 Steam，反向做不到）'
+              }
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12" aria-hidden="true">
+                <path d="M4 14.5A4 4 0 0 1 5.2 6.7 5.5 5.5 0 0 1 15.6 8a3.6 3.6 0 0 1 3.4 6.3" strokeLinecap="round" />
+                <path d="M12 12v7M9 16l3 3 3-3" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              {syncingSubs ? '同步中…' : '同步 Steam 订阅'}
+            </button>
             <button
               className="filter-panel__mix"
               onClick={() => {
@@ -983,6 +1305,102 @@ export function MyModsPage() {
             </div>
           </div>
         )}
+        {/* ── 标签 ──
+            这一行放两样东西，都是「我怎么看这个包」而不是「这个包是什么」（后者是上面的类型）：
+              1) 我的最爱 —— 内置的收藏标签，只有一个，固定在最前面；
+              2) 用户自建标签 —— 可新建、可删除，可跨 Mod 复用。
+            图标标签只写两个字：左侧说明列宽 30px，写「我的标签」会顶到 chip 上去
+            （四个字 ~44px，overflow 直接压在第一个 chip 上）。 */}
+        <div className="filter-panel__row filter-panel__row--sub filter-panel__row--custom">
+          <span className="filter-panel__label" title="收藏与自定义标签">标签</span>
+          <div className="filter-panel__chips">
+            <button
+              className={`filter-chip filter-chip--fav ${favoriteFilter ? 'filter-chip--on' : ''}${favoriteCount === 0 ? ' filter-chip--empty' : ''}`}
+              onClick={() => setFavoriteFilter(!favoriteFilter)}
+              title={favoriteCount === 0
+                ? '还没有收藏：卡片缩略图右下角的心形图标点一下就收进来'
+                : `${favoriteCount} 个收藏`}
+            >
+              <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true"
+                   fill={favoriteFilter ? 'currentColor' : 'none'}
+                   stroke="currentColor" strokeWidth="2.2"
+                   strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+              </svg>
+              我的最爱
+              {favoriteCount > 0 && <span className="filter-chip__count">{favoriteCount}</span>}
+            </button>
+
+            {customTags.length > 0 && <span className="filter-panel__vsep" />}
+
+            {customTags.length > 0 && (
+              <button
+                className={`filter-chip filter-chip--sub ${!customTagFilter ? 'filter-chip--on' : ''}`}
+                onClick={() => setCustomTagFilter(null)}
+              >
+                全部
+              </button>
+            )}
+            {customTags.map((tag) => {
+              const n = customTagCounts[tag] || 0;
+              const on = customTagFilter === tag;
+              return (
+                <span key={tag} className={`filter-tag${on ? ' filter-tag--on' : ''}`}>
+                  <button
+                    className={`filter-chip filter-chip--custom ${on ? 'filter-chip--on' : ''}${n === 0 ? ' filter-chip--empty' : ''}`}
+                    onClick={() => setCustomTagFilter(on ? null : tag)}
+                    title={n === 0 ? `还没有 Mod 打上「${tag}」` : `${n} 个 Mod`}
+                  >
+                    {tag}
+                    {n > 0 && <span className="filter-chip__count">{n}</span>}
+                  </button>
+                  <button
+                    className="filter-tag__del"
+                    title={`删除标签「${tag}」`}
+                    aria-label={`删除标签 ${tag}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleDeleteCustomTag(tag);
+                    }}
+                  >
+                    ×
+                  </button>
+                </span>
+              );
+            })}
+            {newTagDraft === null ? (
+              <button
+                className="filter-chip filter-chip--ghost"
+                onClick={() => setNewTagDraft('')}
+                title="起一个只有自己看得懂的归类，之后可在任意 Mod 的右键菜单里勾选"
+              >
+                ＋ 新建标签
+              </button>
+            ) : (
+              <input
+                className="filter-tag__input"
+                autoFocus
+                maxLength={16}
+                value={newTagDraft}
+                placeholder="标签名，回车确认"
+                onChange={(e) => setNewTagDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void handleCreateTagFromFilter();
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setNewTagDraft(null);
+                  }
+                }}
+                onBlur={() => {
+                  // 空着失焦就当放弃；有内容时保留，让用户切个窗口回来还能接着按回车
+                  if (!newTagDraft.trim()) setNewTagDraft(null);
+                }}
+              />
+            )}
+          </div>
+        </div>
       </div>
 
       {scanning && scanProgress && scanProgress.total ? (
@@ -1073,7 +1491,12 @@ export function MyModsPage() {
                     </svg>
                   </div>
                 )}
-                <ModPreview mod={mod} displayName={displayName} />
+                <ModPreview
+                  mod={mod}
+                  displayName={displayName}
+                  favorited={(mod.tags || []).includes(FAVORITE_TAG)}
+                  onToggleFavorite={() => toggleFavorite(mod)}
+                />
                 <div className="mod-card__info">
                   <div className="mod-card__info-header">
                     <span className="mod-card__name">{displayName}</span>
@@ -1100,19 +1523,12 @@ export function MyModsPage() {
                     {formatSize(mod.size_bytes)}
                     {viewMode === 'list' && addedLabel ? ` · ${addedLabel}` : ''}
                   </span>
-                  {((mod.duplicates?.length ?? 0) > 0 || mod.missing_addoninfo || updateFor(mod)?.update_available || (mod.tags && mod.tags.length > 0) || (mod.coverage && Object.keys(mod.coverage).length > 0)) && (
+                  {((mod.duplicates?.length ?? 0) > 0 || mod.missing_addoninfo || updateFor(mod)?.update_available || (mod.tags && mod.tags.length > 0)) && (
                     <div className="mod-card__tags" title={mod.tags?.join(' / ')}>
-                      {/* 整套替换标记：放在标签最前面 —— 「这是不是一套完整的替换」比
-                          它属于哪个细分类更值得先看到。最多两个，靠 tooltip 补名单。 */}
-                      {coverageBadges(mod).map(({ family, info }) => (
-                        <span
-                          key={family}
-                          className={`mod-card__cov${info.hit >= info.total ? ' mod-card__cov--full' : ''}`}
-                          title={coverageTooltip(family, info)}
-                        >
-                          {family} {info.hit}/{info.total}
-                        </span>
-                      ))}
+                      {/* 这里不再显示「武器 12/35」这类完整度徽标：
+                          它字号比标签大一档、又总是排在标签行最前，一张卡上最抢眼的
+                          成了覆盖率而不是 Mod 本身。完整度改由上面的常驻看板回答，
+                          卡片这里只保留标签。 */}
                       {mod.missing_addoninfo && (
                         <button
                           className="mod-card__addoninfo"
@@ -1184,7 +1600,7 @@ export function MyModsPage() {
                       {mod.tags && orderCardTags(mod.tags).slice(0, 4).map((tag, idx) => (
                         <span
                           key={idx}
-                          className={`mod-card__tag${isFineTag(tag) ? ' mod-card__tag--fine' : ''}`}
+                          className={`mod-card__tag${isFineTag(tag) ? ' mod-card__tag--fine' : ''}${customTags.includes(tag) ? ' mod-card__tag--custom' : ''}${tag === FAVORITE_TAG ? ' mod-card__tag--fav' : ''}`}
                         >
                           {tag}
                         </span>
@@ -1389,7 +1805,7 @@ export function MyModsPage() {
                           // 这里要连细分标签一起保留，否则批量加大类会把细分冲掉
                           selectedMods.forEach((modName) => {
                             const cur = (mods.find((m) => m.name === modName)?.tags || []).filter(
-                              isPickableTag
+                              (t) => isPickableTag(t, customTags)
                             );
                             if (!cur.includes(cat)) void setModTags(modName, [...cur, cat]);
                           });
@@ -1489,9 +1905,10 @@ export function MyModsPage() {
               {/* Submenu: 分类标签（大类 → 细分两级）——点一下加上、再点一下去掉 */}
               {activeSubmenu === 'category' && (() => {
                 const target = mods.find((m) => m.name === contextMenu.modName);
-                // 大类与细分都算「可编辑标签」：只 filter 大类的话，点一次细分标签就会
-                // 把之前手动加过的细分标签全冲掉
-                const currentTags = (target?.tags || []).filter(isPickableTag);
+                // 大类、细分、自定义标签都算「可编辑标签」：只 filter 大类的话，
+                // 点一次细分标签就会把之前手动加过的细分标签全冲掉；
+                // 自定义标签更是必须带上，否则「改一次分类」就把自建标签抹掉了
+                const currentTags = (target?.tags || []).filter((t) => isPickableTag(t, customTags));
                 const isManual = !!target?.tags_manual;
                 const apply = (next: string[]) => {
                   void setModTags(contextMenu.modName, next);
@@ -1564,6 +1981,68 @@ export function MyModsPage() {
                               </div>
                             );
                           })}
+
+                          {/* ── 我的标签 ──
+                              内置分类是「这个包是什么」，这里是「我怎么看它」。
+                              勾选逻辑复用上面的 toggle：加/减一个标签，不牵扯类别父子关系。 */}
+                          <div className="context-menu__submenu-divider" />
+                          <div className="context-menu__submenu-hint">我的标签</div>
+                          {/* 收藏固定排第一：它和自建标签共用 tags_override，
+                              所以放在同一个区块里勾选，不会出现「两套标签」的割裂感 */}
+                          {(() => {
+                            const on = currentTags.includes(FAVORITE_TAG);
+                            return (
+                              <button
+                                className={`context-menu__item context-menu__item--checkable${on ? ' context-menu__item--checked' : ''}`}
+                                onClick={() => toggle(FAVORITE_TAG)}
+                              >
+                                <span className="context-menu__check">{on ? '✓' : ''}</span>
+                                <span className="context-menu__tag-fav">我的最爱</span>
+                              </button>
+                            );
+                          })()}
+                          {customTags.length === 0 && menuTagDraft === null && (
+                            <div className="context-menu__empty">还没有自建标签</div>
+                          )}
+                          {customTags.map((tag) => {
+                            const on = currentTags.includes(tag);
+                            return (
+                              <button
+                                key={tag}
+                                className={`context-menu__item context-menu__item--checkable${on ? ' context-menu__item--checked' : ''}`}
+                                onClick={() => toggle(tag)}
+                              >
+                                <span className="context-menu__check">{on ? '✓' : ''}</span>
+                                <span className="context-menu__tag-custom">{tag}</span>
+                              </button>
+                            );
+                          })}
+                          {menuTagDraft === null ? (
+                            <button
+                              className="context-menu__item context-menu__item--new"
+                              onClick={() => setMenuTagDraft('')}
+                            >
+                              ＋ 新建标签…
+                            </button>
+                          ) : (
+                            <input
+                              className="context-menu__tag-input"
+                              autoFocus
+                              maxLength={16}
+                              value={menuTagDraft}
+                              placeholder="标签名，回车确认"
+                              onChange={(e) => setMenuTagDraft(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  void handleCreateTagForMod();
+                                } else if (e.key === 'Escape') {
+                                  e.preventDefault();
+                                  setMenuTagDraft(null);
+                                }
+                              }}
+                            />
+                          )}
                         </>
                       ) : (
                         <>

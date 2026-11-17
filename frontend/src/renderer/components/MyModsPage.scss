@@ -526,6 +526,128 @@
   }
 }
 
+/* ── 自定义标签（我的标签）──
+   和内置分类 chip 的区别就靠一个「#」前缀 + 次强调色边框：
+   不加标记的话，用户根本分不清「武器」是自动检测的还是自己起的。 */
+.filter-chip--custom {
+  &::before {
+    content: '#';
+    font-weight: 700;
+    opacity: 0.5;
+    // chip 内有 5px gap，这个负边距让「#」和标签名连成一个词（#最爱），
+    // 否则看起来像两个独立的符号
+    margin-right: -3px;
+  }
+
+  &:hover {
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--border-color));
+  }
+
+  &.filter-chip--on {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 15%, var(--bg-card));
+    color: var(--text-primary);
+
+    &::before {
+      opacity: 0.85;
+    }
+  }
+}
+
+/* 「我的最爱」筛选 chip：红系（收藏 = 喜欢，不是分类），心形用 SVG 画在 JSX 里 */
+.filter-chip--fav {
+  border-color: color-mix(in srgb, #ef4444 32%, var(--border-color));
+  color: var(--text-secondary);
+
+  &:hover {
+    border-color: color-mix(in srgb, #ef4444 62%, var(--border-color));
+    background: color-mix(in srgb, #ef4444 8%, transparent);
+    color: #ff8095;
+  }
+
+  &.filter-chip--on {
+    border-color: #ef4444;
+    background: color-mix(in srgb, #ef4444 16%, var(--bg-card));
+    color: #ff8095;
+  }
+
+  svg {
+    flex: none;
+  }
+}
+
+/* 「＋ 新建标签」：虚线，看起来就是个入口而不是一个已存在的选项 */
+.filter-chip--ghost {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border-color));
+  color: var(--text-muted);
+
+  &:hover {
+    border-color: var(--accent);
+    color: var(--text-primary);
+  }
+}
+
+/* 标签 + 删除按钮的组合：× 平时透明，鼠标进到这一小块才显形，
+   否则一排标签后面挂一排 × ，比标签本身还吵 */
+.filter-tag {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+
+  &__del {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    margin-left: -3px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity var(--dur-fast) ease, color var(--dur-fast) ease,
+      background-color var(--dur-fast) ease;
+
+    &:hover {
+      color: #fff;
+      background: #ef4444;
+    }
+  }
+
+  &:hover &__del,
+  &:focus-within &__del {
+    opacity: 1;
+  }
+}
+
+.filter-tag__input {
+  width: 132px;
+  height: 22px;
+  padding: 0 10px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 60%, var(--border-color));
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 11.5px;
+  font-family: var(--font-family);
+  outline: none;
+
+  &::placeholder {
+    color: var(--text-muted);
+  }
+
+  &:focus {
+    border-style: solid;
+    border-color: var(--accent);
+  }
+}
+
 /* ===== Mod Cards Grid =====
    卡片尺寸统一收敛成三个变量，网格与卡片本体共用，改一处即可整体缩放。
    230px 起分：默认窗口 1440×900（内容区约 1160px）下每行 4 张、卡片约 280×288
@@ -905,6 +1027,68 @@
   flex-shrink: 0;
 }
 
+/* ── 收藏心（缩略图右下角）──
+   压在封面图上，所以必须有底色：纯描边在浅色封面上直接消失。
+   默认半透明、悬停卡片才全亮；已收藏时始终可见 —— 收藏状态是需要一眼看到的。 */
+.mod-card__fav {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 50%;
+  background: rgba(12, 16, 24, 0.52);
+  color: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  opacity: 0.62;
+  backdrop-filter: blur(6px);
+  transition: color var(--dur-fast) ease, background-color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease, transform var(--dur-fast) ease, opacity var(--dur-fast) ease;
+
+  &:hover {
+    opacity: 1;
+    color: #ff7a8f;
+    border-color: color-mix(in srgb, #ff5c74 65%, transparent);
+    background: rgba(12, 16, 24, 0.74);
+    transform: scale(1.08);
+  }
+
+  &:active {
+    transform: scale(0.94);
+  }
+
+  .mod-card:hover & {
+    opacity: 1;
+  }
+
+  // 已收藏：填实 + 暖红，和「未收藏」的空心灰白拉开距离
+  &--on {
+    opacity: 1;
+    color: #ff5c74;
+    border-color: color-mix(in srgb, #ff5c74 78%, transparent);
+    background: rgba(255, 92, 116, 0.18);
+  }
+}
+
+/* 列表模式的缩略图只有 104×58：26px 的圆会盖掉小半个封面，缩到 20px 并贴角 */
+.my-mods-grid--list .mod-card__fav {
+  width: 20px;
+  height: 20px;
+  right: 4px;
+  bottom: 4px;
+
+  svg {
+    width: 12px;
+    height: 12px;
+  }
+}
+
 /* Preview area - fixed height to keep cards uniform */
 .mod-card__preview {
   height: 100%;
@@ -1135,6 +1319,33 @@
   font-weight: 500;
 }
 
+// 自定义标签：实线细框 + 「#」前缀 —— 和「大类色块 / 细分虚框」都不撞，
+// # 和筛选栏、右键菜单里是同一个记号，三处对得上
+.mod-card__tag--custom {
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--accent) 52%, transparent);
+  color: var(--text-secondary);
+
+  &::before {
+    content: '#';
+    margin-right: 1px;
+    opacity: 0.6;
+  }
+}
+
+// 收藏标签：红系 + 实心心形前缀，位置固定在标签行最前（见 orderCardTags）
+.mod-card__tag--fav {
+  background: color-mix(in srgb, #ef4444 15%, transparent);
+  border: 1px solid color-mix(in srgb, #ef4444 38%, transparent);
+  color: #ff8095;
+
+  &::before {
+    content: '♥';
+    margin-right: 3px;
+    font-size: 11px;
+  }
+}
+
 .mod-card__conflict-icon {
   position: absolute;
   top: 8px;
@@ -1295,6 +1506,43 @@
 
 .context-menu__item--checked {
   color: var(--accent-text);
+}
+
+/* 子菜单里的自定义标签：和卡片、筛选栏用同一个「#」记号，三处一眼能对上 */
+.context-menu__tag-custom::before {
+  content: '#';
+  margin-right: 1px;
+  opacity: 0.5;
+}
+
+/* 收藏项：实心心形，和上面一排 # 标签区分开 */
+.context-menu__tag-fav::before {
+  content: '♥';
+  margin-right: 5px;
+  color: #ff5c74;
+}
+
+/* 「＋ 新建标签…」：入口性质，压暗一档，不和真正的选项抢注意力 */
+.context-menu__item--new {
+  color: var(--text-muted);
+}
+
+.context-menu__tag-input {
+  display: block;
+  width: calc(100% - 12px);
+  margin: 4px 6px 6px;
+  padding: 7px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font-family);
+  outline: none;
+
+  &::placeholder {
+    color: var(--text-muted);
+  }
 }
 
 /* 大类行：左边点「加/去标签」，右边小箭头进入细分标签层级 */
@@ -2642,5 +2890,61 @@
     border-color: rgba(239, 68, 68, 0.5);
     background: rgba(239, 68, 68, 0.12);
     color: #ef4444;
+  }
+}
+
+/* ── 「同步 Steam 订阅」确认弹窗 ──
+   一个弹窗里同时要说清「加什么」和「删什么」，所以分成两个小块；
+   各自最多列 5 条，其余折成「还有 N 个」，避免弹窗被 50 个标题撑爆。 */
+.sub-sync {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+
+  p {
+    margin: 0;
+  }
+
+  &__block {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+  }
+
+  &__label {
+    font-size: 11.5px;
+    font-weight: 600;
+
+    &--add {
+      color: #34d399;
+    }
+
+    &--del {
+      color: #f87171;
+    }
+  }
+
+  ul {
+    margin: 0;
+    padding-left: 16px;
+    max-height: 108px;
+    overflow-y: auto;
+    font-size: 12px;
+    color: var(--text-secondary);
+
+    li {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  &__more {
+    font-size: 11px;
+    color: var(--text-muted);
   }
 }

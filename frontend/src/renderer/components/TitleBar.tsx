@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store/useStore';
+import { BrandLogo } from './BrandLogo';
 import { IS_BETA, CHANNEL_LABEL, VERSION_LABEL } from '../utils/appVersion';
 import './TitleBar.scss';
 
@@ -58,11 +59,10 @@ export function TitleBar() {
     <div className="titlebar">
       <div className="titlebar-drag">
         <div className="titlebar-title">
-          <svg className="titlebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <rect x="3" y="3" width="18" height="18" rx="4" strokeLinecap="round" strokeLinejoin="round"/>
-            <polygon points="10,8 16,12 10,16" fill="currentColor" stroke="none"/>
-          </svg>
-          <span>L4Director</span>
+          {/* 字标是画出来的 path，不是文字：两段不同字号并排时，字体自带的字面留白
+              会让 D 的右边和 i 的左边贴在一起（上一版就是这样重叠的），转成 path
+              后间距硬编码，任何机器上都不会变。生成脚本见 BrandLogo.tsx 顶部注释。 */}
+          <BrandLogo className="titlebar-brand" />
           {IS_BETA && (
             <span className="titlebar-beta" title={`预发布版本 ${VERSION_LABEL}，可能有未完成的功能`}>
               {CHANNEL_LABEL}

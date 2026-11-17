@@ -5,6 +5,15 @@ export interface WorkshopTag {
   label: string;
 }
 
+/** 依赖项（工坊的 children）：标题要后端再查一次才拿得到 */
+export interface WorkshopDependency {
+  id: string;
+  title: string;
+  preview_url: string;
+  size: number;
+  downloaded: boolean;
+}
+
 export interface WorkshopItem {
   id: string;
   title: string;
@@ -25,6 +34,13 @@ export interface WorkshopItem {
   votes_up: number;
   votes_down: number;
   downloaded: boolean;
+  /**
+   * 图集：封面 + 作者上传的截图。
+   * 只有 `/api/workshop/item/{id}` 会返回 —— 列表接口不带（一页 100 条，没必要）。
+   */
+  previews?: string[];
+  /** 依赖的前置 Mod。同样只有详情接口返回，没配 API Key 时为空 */
+  dependencies?: WorkshopDependency[];
 }
 
 export interface WorkshopSort {
@@ -154,6 +170,16 @@ export function cleanDescription(raw: string): string {
 }
 
 /**
+ * 缩略图代理地址的版本号。
+ *
+ * 后端这个接口的 `Cache-Control` 是 24 小时，浏览器按完整 URL 缓存响应。
+ * 一旦服务端的取图/缓存逻辑变了（比如修过「多图共用一份缓存」那个 bug），
+ * 旧 URL 上仍然躺着错误的那份字节，改完后端也看不出来 —— 必须换一版 URL。
+ * 以后只要动了 `/api/download/thumbnail` 的返回内容，就把这个数字加一。
+ */
+const THUMB_URL_REV = 2;
+
+/**
  * 封面统一走本地代理：既命中磁盘缓存，也避免渲染进程直接访问外网 CDN。
  *
  * 关于 `w`/`h`：后端支持让 Steam 图床先缩放（省流量），但**默认不要传**。
@@ -170,5 +196,5 @@ export function thumbnailUrl(
   h?: number,
 ): string {
   const size = w && h ? `&w=${w}&h=${h}` : '';
-  return `${api}/api/download/thumbnail?wid=${encodeURIComponent(id)}&url=${encodeURIComponent(previewUrl || '')}${size}`;
+  return `${api}/api/download/thumbnail?wid=${encodeURIComponent(id)}&url=${encodeURIComponent(previewUrl || '')}${size}&v=${THUMB_URL_REV}`;
 }

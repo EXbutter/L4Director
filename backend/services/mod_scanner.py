@@ -41,6 +41,7 @@ _ALERT_SEVERITIES = (SEVERITY_HARD, SEVERITY_SCRIPT)
 from .data_store import (
     get_mod_category, set_mod_category,
     get_mod_tags_override, set_mod_tags_override,
+    get_custom_tags,
     set_mod_enabled, set_mods_enabled_bulk,
     get_all_mod_metas,
     get_scan_manifest, save_scan_manifest, ScanManifest,
@@ -279,8 +280,13 @@ def _encode_key_for(ansi_encoding: Optional[str], key: str) -> str:
 
     转成代理字符后，写入方的 `.encode('utf-8', 'surrogateescape')` 会把它还原成原始
     ANSI 字节 —— 游戏才认得出这是同一个 Mod；该编码表示不了时退回 UTF-8。
+
+    路径分隔符保持 Windows 风格的反斜杠：游戏自己写出来的就是
+    `"workshop\\2841019256.vpk"`。这里以前统一换成 `/`，于是同一个文件里
+    游戏写的和软件补的两种写法并存 —— Source 引擎两种都读得懂，但混着写
+    会让「为什么这条补不进去 / 怎么冒出两条」这种问题极难排查。
     """
-    text = str(key).replace('\\', '/')
+    text = str(key)
     if not ansi_encoding or text.isascii():
         return text
     try:
@@ -625,10 +631,41 @@ CATEGORIES = {
 }
 
 _ALL_CATEGORY_NAMES = set(CATEGORIES.keys())
+# 内置的收藏标签：卡片缩略图右下角的爱心直接切换它。
+# 刻意**不放进 CATEGORIES** —— 它不描述内容（不是「这个包是什么」），只表达
+# 「我收藏了」，所以不该出现在类型筛选和右键的大类列表里。
+FAVORITE_TAG = '我的最爱'
 # 注：自动分类不再走 CATEGORIES 的前缀命中打分（那套会把地图判成皮肤），
 # 改由 services/tagger.py 判定；这里保留词表，用于校验手动改标签的合法性。
-# 二级细分标签（AK-47/Tank/Zoey/Medkit…）同样允许手动增删，所以一并放行。
-_ALL_TAG_NAMES = _ALL_CATEGORY_NAMES | tagger.FINE_TAG_NAMES
+# 二级细分标签（AK-47/Tank/Zoey/Medkit…）与收藏标签同样允许手动增删，一并放行。
+_ALL_TAG_NAMES = _ALL_CATEGORY_NAMES | tagger.FINE_TAG_NAMES | {FAVORITE_TAG}
+
+
+def all_tag_names() -> set[str]:
+    """当前允许的标签名 = 内置分类/细分 + 用户自建的标签。
+
+    内置词表是常量，自定义标签却存在 data.json 里、随时会变，所以这个集合
+    **不能**缓存成模块级常量：用户新建一个标签后立刻给它打勾，如果校验用的还是
+    旧常量，那个标签会被当成非法值悄悄过滤掉 —— 界面表现为「点了没反应」。
+    """
+    return _ALL_TAG_NAMES | set(get_custom_tags())
+
+
+def is_builtin_tag(name: str) -> bool:
+    """是不是代码里预置的标签（大类或细分）。"""
+    return name in _ALL_TAG_NAMES
+
+
+def invalidate_scan_cache() -> None:
+    """作废整份扫描结果缓存，让下一次扫描重新判定。
+
+    典型场景：删掉一个自定义标签（要把所有 Mod 的 tags_override 一起摘掉）。
+    只改 data.json 不动缓存的话，界面刷新拿到的还是带旧标签的那份结果。
+    """
+    global _LAST_SCAN_KEY, _LAST_SCAN_RESULT, _LAST_CONFLICT_KEY
+    _LAST_SCAN_KEY = None
+    _LAST_SCAN_RESULT = []
+    _LAST_CONFLICT_KEY = None
 
 
 def _get_vpk_cache_key(vpk_path: Path) -> str:
@@ -1947,6 +1984,50 @@ class ModScanner:
             print(f"[Prefs] Failed to clear dirty flag: {e}")
         return applied
 
+    def fill_addonlist(self) -> dict:
+        """一键补全 addonlist.txt：把本地所有 mod 补进去，只补缺失的条目。
+
+        为什么需要单独一个入口：`apply_mod_prefs_to_addonlist` 只处理「用户在软件里
+        点过启停」的 mod。刚拖进 addons 或刚订阅的包从来没被点过 → prefs 里没有它 →
+        addonlist.txt 里也就一直没有条目，游戏的「附加内容」列表里看不到它。
+
+        只把「缺失的键」交给 `_write_addonlist`：它只改命中的行、其余原样保留，
+        所以已有条目的启用状态和编码写法都不会被动到。
+
+        补进去的一律是启用（"1"）—— 新装的 Mod 默认就是启用的，这也正是
+        游戏自己补条目时的行为，用户之后要用软件禁用随时可以改。
+        """
+        addonlist_path = self._get_addonlist_path()
+        if not addonlist_path:
+            return {'ok': False, 'added': 0, 'missing': [], 'path': None,
+                    'error': '还没有配置 addons 目录，找不到 addonlist.txt'}
+
+        list_keys = sorted(set(self._mod_list_keys().values()))
+        if not list_keys:
+            return {'ok': True, 'added': 0, 'missing': [], 'path': str(addonlist_path),
+                    'error': None, 'scanned': 0}
+
+        addonlist = self._read_addonlist()
+        missing: dict[str, bool] = {}
+        for list_key in list_keys:
+            # 兼容 workshop/<id>/<name>.vpk 这类写法：文件名相同就算同一条目
+            real_key = self._resolve_list_key(addonlist, list_key)
+            if real_key not in addonlist:
+                missing[real_key] = True
+
+        if not missing:
+            return {'ok': True, 'added': 0, 'missing': [], 'path': str(addonlist_path),
+                    'error': None, 'scanned': len(list_keys)}
+
+        if not self._write_addonlist(missing):
+            return {'ok': False, 'added': 0, 'missing': sorted(missing),
+                    'path': str(addonlist_path), 'error': self._last_addonlist_error,
+                    'scanned': len(list_keys)}
+
+        print(f'[AddonList] Filled {len(missing)} missing entr(ies)')
+        return {'ok': True, 'added': len(missing), 'missing': sorted(missing),
+                'path': str(addonlist_path), 'error': None, 'scanned': len(list_keys)}
+
     def _collect_addonlist_changes(self) -> tuple[str, list[dict]]:
         """算出「addonlist.txt 与软件记录不一致」的条目（只计算，不写任何数据）。
 
@@ -2763,8 +2844,10 @@ class ModScanner:
                 legacy = get_mod_category(name)      # 兼容早期版本的「单值手动分类」
                 if legacy:
                     override_tags = [legacy]
+            # 手动标签里可能混着用户自建标签，校验词表必须带上当前的标签池
+            allowed_tags = all_tag_names()
             if override_tags is not None:
-                category_tags = [t for t in override_tags if t in _ALL_TAG_NAMES]
+                category_tags = [t for t in override_tags if t in allowed_tags]
                 tags_are_manual = True
             else:
                 category_tags = list(metadata.get('category_tags') or [])
@@ -2775,9 +2858,10 @@ class ModScanner:
                 tags_are_manual = False
 
             # addoninfo 里作者自定义的标签（排除分类名/细分名与旧分类名，避免重复/过时）
+            # 也排除用户自建标签：用户已经手动打上的标签不该被 addoninfo 的同名条目顶到前面
             extra_tags = [
                 t for t in (metadata.get('tags') or [])
-                if t not in _ALL_TAG_NAMES and t not in _LEGACY_CATEGORY_NAMES
+                if t not in allowed_tags and t not in _LEGACY_CATEGORY_NAMES
             ]
 
             # Merge tags（不改 metadata 本身：它是缓存对象，就地修改会污染缓存）
@@ -2983,7 +3067,8 @@ class ModScanner:
         """设置 / 清除某个 Mod 的分类标签（传 None = 恢复「跟随内容自动检测」）。
 
         支持多标签：传进来的列表就是最终的标签集合（可以只留一个，也可以同时留多个）。
-        只接受合法的分类名（见 CATEGORIES 与 tagger.FINE_TAGS），自动去重并保持传入顺序。
+        只接受合法的分类名（见 CATEGORIES、tagger.FINE_TAGS 与用户自建的标签池），
+        自动去重并保持传入顺序。
         """
         if not self._addons_path:
             return None
@@ -2998,7 +3083,8 @@ class ModScanner:
                 set_mod_tags_override(file_path.name, None)
             else:
                 cleaned = [str(t).strip() for t in tags if str(t).strip()]
-                valid = [t for t in dict.fromkeys(cleaned) if t in _ALL_TAG_NAMES]
+                allowed = all_tag_names()
+                valid = [t for t in dict.fromkeys(cleaned) if t in allowed]
                 set_mod_tags_override(file_path.name, valid)
         except Exception as e:
             print(f"[Tags] Failed to persist tags for {file_path.name}: {e}")

@@ -138,35 +138,74 @@ export function WorkshopPage() {
     void el?.openExternal?.(url);
   }, []);
 
-  const queue = useCallback(async (item: WorkshopItem) => {
+  /** 加入下载队列（只入队、不开始）。返回是否真的进队了。 */
+  const enqueue = useCallback(async (item: { id: string; title?: string }) => {
+    const res = await fetch(`${api}/api/download/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: item.id }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      // 这个接口连「解析失败」都是 200 + error 字段返回的，所以两个都要看
+      showToast(data.detail || data.error || '加入队列失败', 'error');
+      return false;
+    }
+    const added = (data.added || []).length;
+    const ignored = (data.ignored || []).length;
+    if (added > 0) {
+      setQueued((s) => ({ ...s, [item.id]: true }));
+      return true;
+    }
+    // 已经在队列里 / 已在本地：这不是错，但要说清为什么没进去
+    showToast(ignored ? '这个 Mod 已经在下载队列里，或本地已有' : '没有加入任何任务', 'warning');
+    return false;
+  }, [api]);
+
+  /** 只加入队列，等用户到「下载」页点开始 */
+  const queue = useCallback(async (item: { id: string; title?: string }) => {
     setQueueing(true);
     try {
-      const res = await fetch(`${api}/api/download/resolve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: item.id }),
-      });
-      const data = await res.json();
-      if (!res.ok || data.error) {
-        // 这个接口连「解析失败」都是 200 + error 字段返回的，所以两个都要看
-        showToast(data.detail || data.error || '加入队列失败', 'error');
-        return;
-      }
-      const added = (data.added || []).length;
-      const ignored = (data.ignored || []).length;
-      if (added > 0) {
-        setQueued((s) => ({ ...s, [item.id]: true }));
-        showToast(`已加入下载队列：${item.title || item.id}`, 'success');
-      } else {
-        // 已经在队列里 / 已在本地：这不是错，但要说清为什么没进去
-        showToast(ignored ? '这个 Mod 已经在下载队列里，或本地已有' : '没有加入任何任务', 'warning');
-      }
+      if (await enqueue(item)) showToast(`已加入下载队列：${item.title || item.id}`, 'success');
     } catch (e) {
       showToast(`加入队列失败：${(e as Error).message}`, 'error');
     } finally {
       setQueueing(false);
     }
-  }, [api]);
+  }, [enqueue]);
+
+  /**
+   * 直接下载：入队 + 立刻开始。
+   *
+   * 开始失败（比如队列里已经有一个任务在跑、或输出目录不可写）时并不取消入队 ——
+   * 条目还在队列里，用户到「下载」页点一下就能继续，所以这里只提示「已入队但没开始」。
+   */
+  const downloadNow = useCallback(async (item: { id: string; title?: string }) => {
+    setQueueing(true);
+    try {
+      // 不看返回值：条目「已经在队列里」时 enqueue 会返回 false，
+      // 但这时仍然应该让它开始下载 —— 用户点的是「开始」，不是「再入一次队」。
+      await enqueue(item);
+      const res = await fetch(`${api}/api/download/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.ok === false) {
+        showToast(
+          `没能开始下载：${data.error || data.detail || `HTTP ${res.status}`}。条目已在队列里，可到「下载」页处理。`,
+          'warning',
+        );
+        return;
+      }
+      showToast(`开始下载：${item.title || item.id}`, 'success');
+    } catch (e) {
+      showToast(`下载失败：${(e as Error).message}`, 'error');
+    } finally {
+      setQueueing(false);
+    }
+  }, [api, enqueue]);
 
   const headerHint = meta?.has_key
     ? `已启用 API（每页 ${meta.page_size} 条，带好评数 / 下载量）`
@@ -332,6 +371,7 @@ export function WorkshopPage() {
           api={api}
           onClose={() => setDetail(null)}
           onQueue={queue}
+          onDownloadNow={downloadNow}
           onOpenInBrowser={openInBrowser}
           queued={!!queued[detail.id]}
           busy={queueing}

@@ -403,6 +403,17 @@ interface AppState {
    */
   setModTags: (modName: string, tags: string[] | null) => Promise<void>;
   /**
+   * 用户自建的标签池（「最爱」「待测试」这类自己起的归类）。
+   * 与内置分类的区别：内置词表写死在代码里，这里的是纯用户数据，
+   * 可新建、可删除，给任意 Mod 打，还能出现在筛选栏里。
+   */
+  customTags: string[];
+  fetchCustomTags: () => Promise<void>;
+  /** 新建自定义标签，成功返回标签名（重名也返回原名，便于「输完直接打勾」） */
+  createCustomTag: (name: string) => Promise<string | null>;
+  /** 删除自定义标签，同时把它从所有 Mod 身上摘掉 */
+  deleteCustomTag: (name: string) => Promise<void>;
+  /**
    * 「应用到游戏」：把软件里记录的启停状态写入 addonlist.txt。
    *
    * L4D2 会在「启动时加载完创意工坊订阅」「进入/退出附加内容（Add-ons）菜单」时重读该文件，
@@ -831,6 +842,7 @@ export const useStore = create<AppState>((set, get) => ({
   applyingPrefs: false,
   modsDirty: false,
   coverageRoster: [],
+  customTags: [],
   uiFontKey: loadUiFontKey(),
   
   exportLogs: async () => {
@@ -1285,6 +1297,75 @@ export const useStore = create<AppState>((set, get) => ({
     } catch (e: any) {
       console.error('setModTags error:', e);
       showToast(`分类修改失败：${e?.message || '无法连接到后端服务'}`, 'error');
+    }
+  },
+
+  fetchCustomTags: async () => {
+    if (!get().backendConnected) return;
+    try {
+      const res = await fetchWithTimeout(`${API_BASE}/api/custom-tags`);
+      if (!res.ok) return;
+      const data = await res.json().catch(() => null);
+      const tags = data?.tags;
+      set({ customTags: Array.isArray(tags) ? tags.map(String) : [] });
+    } catch {
+      // 后端不可用就保持现状：标签池是锦上添花，不该挡住列表加载
+    }
+  },
+
+  createCustomTag: async (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    try {
+      const res = await fetch(`${API_BASE}/api/custom-tags`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => null);
+        throw new Error((detail && detail.detail) || `HTTP ${res.status}`);
+      }
+      const data = await res.json().catch(() => ({} as any));
+      const tags: string[] = Array.isArray(data?.tags) ? data.tags.map(String) : [];
+      set({ customTags: tags });
+      // 后端会把名字 trim 一遍；以它返回的为准，避免「结尾多个空格」打不上勾
+      return typeof data?.name === 'string' ? data.name : trimmed;
+    } catch (e: any) {
+      showToast(`新建标签失败：${e?.message || '无法连接到后端服务'}`, 'error');
+      return null;
+    }
+  },
+
+  deleteCustomTag: async (name: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/custom-tags/${encodeURIComponent(name)}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => null);
+        throw new Error((detail && detail.detail) || `HTTP ${res.status}`);
+      }
+      const data = await res.json().catch(() => ({} as any));
+      const tags: string[] = Array.isArray(data?.tags) ? data.tags.map(String) : [];
+      // 本地同步摘掉：卡片上的这个标签也要一起消失，不能等下次扫描
+      set((state) => ({
+        customTags: tags,
+        mods: state.mods.map((m) =>
+          m.tags?.includes(name)
+            ? { ...m, tags: m.tags.filter((t) => t !== name) }
+            : m
+        ),
+      }));
+      const touched = Number(data?.updated_mods) || 0;
+      showToast(
+        touched > 0
+          ? `已删除标签「${name}」，并从 ${touched} 个 Mod 上摘掉（自动分类刷新后恢复）`
+          : `已删除标签「${name}」`,
+        'info'
+      );
+    } catch (e: any) {
+      showToast(`删除标签失败：${e?.message || '无法连接到后端服务'}`, 'error');
     }
   },
 

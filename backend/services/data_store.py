@@ -88,6 +88,10 @@ class AppData:
     # 「软件里的启停设置还没写回 addonlist.txt」的标记：改动 Mod 后置位、点「应用」后清除。
     # 界面上的「应用」按钮据此点亮，提醒用户还有改动没同步给游戏。
     prefs_dirty: bool = False
+    # 用户自建的标签池（「最爱」「待测试」「某某系列」这类只有自己看得懂的归类）。
+    # 和内置分类分开放：内置词表跟着代码走，自定义标签是纯用户数据 ——
+    # 升级不该覆盖它，删标签也不该动内置词表。
+    custom_tags: list[str] = field(default_factory=list)
 
 
 def _get_default_data() -> dict:
@@ -354,6 +358,92 @@ def set_mod_tags_override(mod_name: str, tags: Optional[list[str]]):
     meta = get_mod_meta(mod_name)
     meta.tags_override = list(tags) if tags is not None else None
     set_mod_meta(mod_name, meta)
+
+
+# ===== 自定义标签池 =====
+# 内置分类（CATEGORIES / tagger.FINE_TAGS）是代码里的词表，用户改不了。
+# 自定义标签是用户自己起的名字，存在 data.json 顶层，可跨 Mod 复用、可筛选。
+
+def get_custom_tags() -> list[str]:
+    """用户自建的标签池。"""
+    with _file_lock:
+        data = _read_data_raw()
+        raw = data.get('custom_tags')
+        return [str(t) for t in raw] if isinstance(raw, list) else []
+
+
+def set_custom_tags(tags: list[str]) -> list[str]:
+    """整体覆盖自定义标签池（去重、保序、丢掉空串）。"""
+    with _file_lock:
+        data = _read_data_raw()
+        cleaned = [str(t).strip() for t in tags if str(t).strip()]
+        data['custom_tags'] = list(dict.fromkeys(cleaned))
+        _write_data_raw(data)
+        return list(data['custom_tags'])
+
+
+def add_custom_tag(name: str) -> list[str]:
+    """把标签加进池子（已存在就原样返回，不写盘）。"""
+    name = str(name or '').strip()
+    if not name:
+        return get_custom_tags()
+    with _file_lock:
+        data = _read_data_raw()
+        raw = data.get('custom_tags')
+        current = [str(t) for t in raw] if isinstance(raw, list) else []
+        if name in current:
+            return list(current)
+        current.append(name)
+        data['custom_tags'] = current
+        _write_data_raw(data)
+        return list(current)
+
+
+def remove_custom_tag(name: str) -> tuple[list[str], int]:
+    """删除标签定义，并把它从所有 Mod 身上一起摘掉。
+
+    只删池子里的条目是不够的：Mod 的 tags_override 里还留着这个名字，
+    卡片会继续显示一个「筛选栏里已经不存在」的标签，点它又筛不出任何东西。
+    返回 (剩余标签, 被清理的 Mod 数)。
+    """
+    name = str(name or '').strip()
+    with _file_lock:
+        data = _read_data_raw()
+        raw = data.get('custom_tags')
+        current = [str(t) for t in raw] if isinstance(raw, list) else []
+        # 池子里没有这个标签 = 它要么是内置标签（大类/细分/收藏），要么从来不存在。
+        # 这种情况下**什么都不做**：以前会继续往下遍历所有 Mod 摘引用，
+        # 一个 DELETE /api/custom-tags/我的最爱 就能把全库的收藏标签抹掉。
+        if name not in current:
+            return list(current), 0
+
+        remaining = [t for t in current if t != name]
+
+        touched = 0
+        for raw_meta in data.get('mod_metas', {}).values():
+            override = raw_meta.get('tags_override')
+            if isinstance(override, list) and name in override:
+                kept = [t for t in override if t != name]
+                # 摘完一个标签都不剩 = 这个 Mod 本来只挂着自定义标签。
+                # 此时回落成 None（恢复自动检测），否则它会变成「什么分类都没有」，
+                # 在按类型筛选时彻底消失 —— 而用户只是删掉了一个标签而已。
+                raw_meta['tags_override'] = kept or None
+                touched += 1
+
+        if remaining != current or touched:
+            data['custom_tags'] = remaining
+            _write_data_raw(data)
+        if touched:
+            # 扫描结果里嵌着每个 Mod 的最终标签，删完标签必须作废那份缓存，
+            # 否则界面刷新拿到的还是「带着这个标签」的旧结果。
+            # data_store 不能直接 import mod_scanner（mod_scanner 反过来依赖它，
+            # 会循环导入），所以延迟到真正用到时再导。
+            try:
+                from .mod_scanner import invalidate_scan_cache
+                invalidate_scan_cache()
+            except Exception:
+                pass
+        return remaining, touched
 
 
 def get_mod_enabled(mod_name: str) -> Optional[bool]:

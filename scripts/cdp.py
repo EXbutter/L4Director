@@ -156,9 +156,52 @@ def screenshot(out_path: str, clip: tuple[float, float, float, float] | None = N
     return 0
 
 
+def screencast(out_path: str, timeout: float = 10.0):
+    """抓一帧合成器输出（`Page.startScreencast`）。
+
+    什么时候用：窗口被别的窗口完全盖住时（`visibilityState=hidden`），
+    `Page.captureScreenshot` 不会产新帧，会一直等到超时；
+    而 screencast 走的是合成器推流，通常还能拿到最后一帧。
+    """
+    s = handshake(get_ws_url())
+    s.settimeout(timeout)
+    send_text(s, json.dumps({
+        'id': 1, 'method': 'Page.startScreencast',
+        'params': {'format': 'png', 'quality': 92, 'everyNthFrame': 1},
+    }))
+    try:
+        for _ in range(60):
+            try:
+                msg = json.loads(recv_text(s))
+            except Exception:
+                break
+            if msg.get('method') != 'Page.screencastFrame':
+                continue
+            params = msg.get('params') or {}
+            if params.get('sessionId') is not None:
+                send_text(s, json.dumps({
+                    'id': 2, 'method': 'Page.screencastFrameAck',
+                    'params': {'sessionId': params['sessionId']},
+                }))
+            data = params.get('data')
+            if data:
+                with open(out_path, 'wb') as f:
+                    f.write(base64.b64decode(data))
+                print('saved', out_path)
+                return 0
+    finally:
+        try:
+            send_text(s, json.dumps({'id': 3, 'method': 'Page.stopScreencast'}))
+        except Exception:
+            pass
+        s.close()
+    print('screencast 没拿到帧（窗口可能完全不可见）')
+    return 1
+
+
 def main():
     if len(sys.argv) < 2:
-        print('用法: cdp.py "<js>" | --file <path> | --shot <out.png> [x y w h] [scale]')
+        print('用法: cdp.py "<js>" | --file <path> | --shot <out.png> [x y w h] [scale] | --cast <out.png>')
         return 2
     if sys.argv[1] == '--file':
         expr = open(sys.argv[2], encoding='utf-8').read()
@@ -171,6 +214,8 @@ def main():
             if len(sys.argv) >= 8:
                 scale = float(sys.argv[7])
         return screenshot(out, clip, scale)
+    elif sys.argv[1] == '--cast':
+        return screencast(sys.argv[2])
     else:
         expr = sys.argv[1]
 

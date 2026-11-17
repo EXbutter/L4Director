@@ -733,6 +733,9 @@ function App() {
   useEffect(() => {
     // 拉数据放在最前：它决定列表能否尽快出现
     refreshAll();
+    // 自定义标签池：筛选栏和 Mod 右键菜单都依赖它。
+    // 跟着这一轮一起拉，而不是等用户打开「我的 Mod」——否则第一眼会以为标签没了。
+    useStore.getState().fetchCustomTags();
     // Steam 登录要发外网请求（网络差时会等到超时）：一定不能挡住首屏，
     // 延迟到空闲时再发起（失败也只会让左下角显示「登录 Steam」）
     deferNonCritical(() => useStore.getState().initiateSteamLogin(), 600);

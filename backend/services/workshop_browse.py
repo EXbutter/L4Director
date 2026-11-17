@@ -59,7 +59,11 @@ APP_ID = 550
 # 国内优先：实测 100 条 1.0s，国际站 1.5s 起且抖动大
 API_ENDPOINTS = ("api.steamchina.com", "api.steampowered.com")
 QUERY_FILES_PATH = "/IPublishedFileService/QueryFiles/v1/"
+# 详情页专用：只有 GetDetails 支持 includeadditionalpreviews / includechildren，
+# 下载解析用的 ISteamRemoteStorage/GetPublishedFileDetails 这两样都不返回。
+DETAILS_PATH = "/IPublishedFileService/GetDetails/v1/"
 HTML_BROWSE_URL = "https://steamcommunity.com/workshop/browse/"
+HTML_DETAIL_URL = "https://steamcommunity.com/sharedfiles/filedetails/"
 
 HTML_PAGE_SIZE = 30          # 网页恒定 30 条/页，numperpage 参数无效
 API_PAGE_SIZE = 100          # 服务端硬上限就是 100
@@ -723,22 +727,136 @@ def browse(filters: dict, page_token: str = '', addons_path: Optional[str] = Non
     return payload
 
 
-def item_detail(wid: str) -> dict:
-    """单个条目的详情（HTML 路径下卡片字段已够用，这里补描述）。"""
+def _detail_raw(wid: str) -> Optional[dict]:
+    """取单个条目的原始详情。
+
+    有 API Key 走 `IPublishedFileService/GetDetails`：只有它能 `includechildren`
+    （依赖）和 `includeadditionalpreviews`（图集）。没配 key 就退回免 key 的
+    `GetPublishedFileDetails` —— 拿不到图集和依赖，但标题/描述/封面还在，
+    抽屉至少不会空着。
+    """
+    key = get_api_key()
+    if key:
+        params = {
+            'key': key,
+            'publishedfileids[0]': wid,
+            'includeadditionalpreviews': 'true',
+            'includechildren': 'true',
+            'includetags': 'true',
+            'includevotes': 'true',
+            'short_description': 'true',
+        }
+        for host in API_ENDPOINTS:
+            try:
+                data = _http_get_json(host, DETAILS_PATH, params, timeout=15)
+                details = (data.get('response') or {}).get('publishedfiledetails') or []
+                if details and _num(details[0].get('result')) == 1:
+                    return details[0]
+            except urllib.error.HTTPError as e:
+                if e.code in (401, 403):
+                    # key 失效了：换主机也是同样的 401，直接退到免 key 路径
+                    break
+            except Exception:
+                continue
+
+    try:
+        got = fetch_details([wid])
+    except Exception as e:
+        print(f'[Workshop] detail fetch failed: {e}')
+        return None
+    return got[0] if got else None
+
+
+def _detail_previews(raw: dict) -> list[str]:
+    """图集：封面 + 作者上传的截图，去重后最多 12 张。
+
+    GetDetails 的 `previews[]` 里字段名是 `url`（不是 `preview_url`），
+    而免 key 的 `GetPublishedFileDetails` 根本不返回这个数组 ——
+    所以封面要单独放第一位，两种情况都至少有一张可看。
+    """
+    out: list[str] = []
+    cover = (raw.get('preview_url') or '').strip()
+    if cover:
+        out.append(cover)
+
+    for p in (raw.get('previews') or []):
+        if not isinstance(p, dict):
+            continue
+        url = (p.get('url') or p.get('preview_url') or '').strip()
+        if url and url not in out:
+            out.append(url)
+        if len(out) >= 12:
+            break
+    return out
+
+
+def _detail_dependencies(raw: dict, downloaded: set[str]) -> list[dict]:
+    """工坊的 `children` = 这个 Mod 依赖的前置（合集则是它的成员）。
+
+    返回里只有 publishedfileid，标题要再批量查一次免 key 的详情接口。
+    查不到就只显示 ID —— 总比「依赖 1 项，看不出是什么」强。
+    """
+    ids: list[str] = []
+    for c in (raw.get('children') or []):
+        if isinstance(c, dict) and c.get('publishedfileid'):
+            ids.append(str(c['publishedfileid']))
+    ids = list(dict.fromkeys(ids))[:20]
+    if not ids:
+        return []
+
+    meta: dict[str, dict] = {}
+    try:
+        for x in fetch_details(ids):
+            meta[str(x.get('publishedfileid'))] = x
+    except Exception as e:
+        print(f'[Workshop] dependency lookup failed: {e}')
+
+    out = []
+    for cid in ids:
+        m = meta.get(cid) or {}
+        out.append({
+            'id': cid,
+            'title': (m.get('title') or '').strip(),
+            'preview_url': m.get('preview_url') or '',
+            'size': _num(m.get('file_size')),
+            'downloaded': cid in downloaded,
+        })
+    return out
+
+
+def item_detail(wid: str, addons_path: Optional[str] = None) -> dict:
+    """单个条目的详情：完整描述 + 图集 + 依赖。
+
+    卡片字段够看了，抽屉里额外要三样：多图预览、作者的完整描述、
+    以及它依赖哪些前置。后两样只有 GetDetails 给（见 `_detail_raw`）。
+    """
     wid = str(wid or '').strip()
     if not wid.isdigit():
         raise WorkshopError('工坊 ID 必须是纯数字')
+
+    downloaded = _downloaded_ids(addons_path)
+
     ck = f'item:{wid}'
     cached = _cache_get(ck)
     if cached is not None:
-        return cached
+        data = dict(cached)
+    else:
+        raw = _detail_raw(wid)
+        if not raw:
+            # _detail_raw 已经把 result != 1 的条目过滤掉了，走到这里就是查不到
+            raise WorkshopError('这个条目在 Steam 上取不到（可能已下架、被作者隐藏，或 ID 不对）')
+        data = _normalize(raw)
+        data['previews'] = _detail_previews(raw)
+        # 缓存里不存 downloaded：「已下载」会随本地文件增删变化，
+        # 存进 8 分钟 TTL 的缓存里会让刚下完的依赖继续显示「未下载」
+        data['dependencies'] = _detail_dependencies(raw, set())
+        _cache_put(ck, data)
 
-    raw = fetch_details([int(wid)])
-    if not raw:
-        # fetch_details 已经把 result != 1 的条目过滤掉了，走到这里就是查不到
-        raise WorkshopError('这个条目在 Steam 上取不到（可能已下架、被作者隐藏，或 ID 不对）')
-    data = _normalize(raw[0])
-    _cache_put(ck, data)
+    data['downloaded'] = data['id'] in downloaded
+    data['dependencies'] = [
+        {**d, 'downloaded': d['id'] in downloaded}
+        for d in (data.get('dependencies') or [])
+    ]
     return data
 
 

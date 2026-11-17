@@ -44,10 +44,15 @@
     user-select: none;
   }
 
-  &-icon {
-    width: 20px;
+  /* 字标：整块 SVG（L4D + irector 已合并成一条 path）。
+     高度 20px、宽度按 viewBox 比例自动 —— 比 44px 的标题栏略小，
+     视觉上贴着左侧内边距起，和右边的窗口按钮不抢。 */
+  &-brand {
+    display: block;
     height: 20px;
+    width: auto;
     color: var(--titlebar-fg);
+    flex: none;
   }
 
   &-actions {

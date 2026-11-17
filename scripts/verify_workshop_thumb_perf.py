@@ -96,15 +96,16 @@ big = b'\xff\xd8\xff\xe0' + b'\x00' * (backend_main._THUMB_CACHE_MAX_FILE + 1024
 backend_main.download_fetch_bytes = lambda url, **kw: big
 resp = backend_main.download_thumbnail('900000001', cdn, 320, 200)
 check('超大封面不落盘（避免 28 MB 的动图把磁盘吃满）',
-      not (cache / '900000001_320x200.jpg').exists())
+      not (cache / backend_main._thumb_cache_name('900000001', cdn, 320, 200)).exists())
 check('超大封面仍照常返回', getattr(resp, 'body', b'')[:2] == b'\xff\xd8')
 
 small = GIF_HEAD * 4
 backend_main.download_fetch_bytes = lambda url, **kw: small
 resp = backend_main.download_thumbnail('900000002', cdn, 320, 200)
-saved = cache / '900000002_320x200.jpg'
+saved = cache / backend_main._thumb_cache_name('900000002', cdn, 320, 200)
 check('常见尺寸的封面会落盘', saved.is_file() and saved.stat().st_size == len(small))
-check('落盘文件名带尺寸后缀（同一工坊条目的大图/小图分开放）', saved.name == '900000002_320x200.jpg')
+check('落盘文件名带尺寸后缀（同一工坊条目的大图/小图分开放）',
+      saved.name.endswith('_320x200.jpg'), saved.name)
 check('按尺寸请求时响应类型取自文件头', resp.media_type == 'image/gif', str(resp.media_type))
 
 # 命中缓存：第二次不再联网
@@ -116,10 +117,25 @@ backend_main.download_fetch_bytes = boom
 r2 = backend_main.download_thumbnail('900000002', cdn, 320, 200)
 check('第二次直接命中磁盘缓存，不再联网', calls['n'] == 0 and r2.media_type == 'image/gif')
 
-# 不传尺寸时行为不变（兼容旧调用）
+# ---------------------------------------------------------------- 3b. 缓存键必须区分「同一个 Mod 的不同图」
+# 回归：以前缓存名只有 <id>（+尺寸），一个 Mod 的多张截图会撞进同一个文件，
+# 详情页图集里每张都显示成第一张（封面），用户看到的就是「多图全一样」。
+print('\n== 缓存键：同 id 的不同图必须分开 ==')
+n_a = backend_main._thumb_cache_name('900000003', 'https://cdn/a.jpg', None, None)
+n_b = backend_main._thumb_cache_name('900000003', 'https://cdn/b.jpg', None, None)
+check('同 id 不同图 → 不同缓存名', n_a != n_b, f'{n_a} vs {n_b}')
+check('同 id 同图 → 同名（缓存仍然生效）',
+      n_a == backend_main._thumb_cache_name('900000003', 'https://cdn/a.jpg', None, None))
+check('没有 url 时用固定标记', backend_main._thumb_cache_name('900000003', None, None, None),
+      '900000003_nocover.jpg')
+check('尺寸不同 → 不同缓存名',
+      backend_main._thumb_cache_name('900000003', 'https://cdn/a.jpg', 320, 200) != n_a)
+
+# 旧的 <id>.jpg 不再命中是对的：那份是「多图共用一份」时代留下的，内容可能是错的
 backend_main.download_fetch_bytes = lambda url, **kw: small
-backend_main.download_thumbnail('900000003', cdn)
-check('不传尺寸时缓存名保持 <id>.jpg（兼容旧缓存）', (cache / '900000003.jpg').is_file())
+backend_main.download_thumbnail('900000004', cdn)
+check('不带 url 的旧缓存名 <id>.jpg 不再被写入',
+      not (cache / '900000004.jpg').exists())
 
 
 # ---------------------------------------------------------------- 4. 容量回收

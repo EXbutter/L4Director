@@ -7,7 +7,7 @@ import { showToast } from './Toast';
 import { ThumbImage } from './ThumbImage';
 import { isCampaignMod } from '../utils/modRole';
 import { ModSwitch } from './ModSwitch';
-import { isFineTag, orderCardTags } from './MyModsPage';
+import { FAVORITE_TAG, isFineTag, orderCardTags } from './MyModsPage';
 import { useModalA11y } from '../hooks/useModalA11y';
 import './ContentArea.scss';
 import './MyModsPage.scss';
@@ -136,6 +136,7 @@ export function PacksPage() {
     setPackContextMenu,
     getModDisplayName,
     refreshAll,
+    customTags,
   } = useStore();
   const [exportError, setExportError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -712,7 +713,7 @@ export function PacksPage() {
                           {orderCardTags(mod.tags).slice(0, 4).map((tag, idx) => (
                             <span
                               key={idx}
-                              className={`mod-card__tag${isFineTag(tag) ? ' mod-card__tag--fine' : ''}`}
+                              className={`mod-card__tag${isFineTag(tag) ? ' mod-card__tag--fine' : ''}${customTags.includes(tag) ? ' mod-card__tag--custom' : ''}${tag === FAVORITE_TAG ? ' mod-card__tag--fav' : ''}`}
                             >
                               {tag}
                             </span>

@@ -769,6 +769,8 @@
   background: var(--bg-card-solid, var(--bg-primary));
   border-left: 1px solid var(--border-color);
   box-shadow: -12px 0 32px rgba(0, 0, 0, 0.28);
+  // 抽屉自身裁边：内容再长也只在中段滚动，不会从圆角/边框下面漏出来
+  overflow: hidden;
   // 原来是 0.17s ease-out —— 比项目里任何面板都快一档，关掉/打开像被「啪」地贴上去。
   // 统一成 0.26s + --ease-soft（快速起步、长尾巴），和其它弹窗面板同一个手感；
   // 起点 34px 比旧版 26px 略远，让「从右侧推进来」的方向在被裁切时也看得出来。
@@ -813,7 +815,12 @@
 
 .wk-drawer__scroll {
   flex: 1;
+  // 关键：flex 子项默认 min-height: auto，会被内容撑到实际高度 ——
+  // 那样 overflow-y 永远不触发，长描述直接被底部按钮栏截断（用户就是这么遇到的）。
+  min-height: 0;
   overflow-y: auto;
+  // 滚到底后不要把整个页面/列表带着一起滚
+  overscroll-behavior: contain;
   padding: 0 14px 16px;
 }
 
@@ -827,6 +834,150 @@
   max-height: 46vh;
 
   img { width: 100%; display: block; }
+}
+
+/* ── 图集缩略条 ──
+   贴在主图下方，横向滚动：抽屉只有 min(460px, 92vw)，热门 Mod 动辄 8~12 张图，
+   竖着列出来会把描述挤到屏幕外几屏。 */
+.wk-gallery {
+  display: flex;
+  gap: 6px;
+  margin: -4px 0 12px;
+  padding-bottom: 2px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+
+  &__thumb {
+    flex: 0 0 auto;
+    width: 64px;
+    height: 40px;
+    padding: 0;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--bg-secondary);
+    cursor: pointer;
+    // 未选中的压暗一档：一整排小图都亮着反而看不出「当前是哪张」
+    opacity: 0.62;
+    transition: opacity 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+
+    img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+    &:hover { opacity: 0.92; }
+
+    &.is-active {
+      opacity: 1;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+    }
+  }
+}
+
+/* ── 依赖（工坊 children）──
+   放在描述**前面**：装漏前置时主 Mod 往往「看着能用、实际少东西」，
+   所以先让用户确认依赖齐不齐，再决定要不要下。 */
+.wk-deps {
+  margin: 12px 0 4px;
+  padding: 10px 10px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-card);
+
+  &__head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+
+    h3 {
+      margin: 0;
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+  }
+
+  &__count {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  &__item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px;
+    border-radius: 8px;
+    background: var(--bg-primary-solid, var(--bg-primary));
+
+    &.is-ready { opacity: 0.7; }
+  }
+
+  &__cover {
+    flex: none;
+    width: 48px;
+    height: 32px;
+    border-radius: 5px;
+    overflow: hidden;
+    background: var(--bg-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+    &--empty { font-size: 12px; color: var(--text-muted); }
+  }
+
+  &__body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  &__name {
+    font-size: 12px;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__meta {
+    font-size: 10.5px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__ok {
+    flex: none;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-size: 11px;
+    color: #10b981;
+    background: rgba(16, 185, 129, 0.12);
+  }
+}
+
+/* 依赖行里的「下载」要小一号，否则一行只剩下按钮 */
+.wk-btn--mini {
+  flex: none;
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-size: 11px;
 }
 
 .wk-drawer__title {
@@ -865,6 +1016,13 @@
   color: #10b981;
   background: rgba(16, 185, 129, 0.1);
   border: 1px solid rgba(16, 185, 129, 0.3);
+
+  // 同一个位置也会用来报「详情没取到」，换成红色 —— 绿框里写错误信息最容易被当成成功
+  &--err {
+    color: #f87171;
+    background: rgba(239, 68, 68, 0.1);
+    border-color: rgba(239, 68, 68, 0.32);
+  }
 }
 
 .wk-drawer__desc {
@@ -886,6 +1044,10 @@
   background: var(--bg-primary-solid, var(--bg-primary));
 
   .wk-btn { flex: 1; padding: 9px 12px; }
+
+  // 「工坊 ↗」只有三个字，跟两个下载按钮平分宽度会显得空一大块；
+  // 收成定宽后，两个主操作各占剩下的空间，视觉上主次更明确。
+  .wk-btn--link { flex: 0 0 auto; padding: 9px 10px; }
 }
 
 /* 窄窗口：筛选栏收到窄一档，卡片下限也降一档，否则每行只剩 2 张、列表拉得特别长 */
