@@ -235,22 +235,6 @@ def test_导出空整合包报_400(client):
     assert '没有 Mod' in res.json()['detail']
 
 
-def test_日志导出返回可解压的_zip(client):
-    """export_logs 里有一段「按平台收集日志」的逻辑，拆分时清掉了函数内的重复
-    import，这条用例保证它没有因此 NameError。"""
-    res = client.get('/api/logs/export')
-    assert res.status_code == 200
-    assert res.content[:2] == b'PK'
-    assert res.headers['content-type'].startswith('application/zip')
-
-
-def test_导出空整合包报_400(client):
-    created = client.post('/api/packs', json={'name': '空包'}).json()['pack']
-    res = client.post('/api/packs/export', json={'pack_id': created['id']})
-    assert res.status_code == 400
-    assert '没有 Mod' in res.json()['detail']
-
-
 def test_mod_列表带闪退风险字段(client, addons_dir):
     """崩溃风险是独立信号：两个包可以没有任何路径冲突，但装在一起会崩。"""
     from support import vpkbuild
@@ -309,61 +293,3 @@ def test_冲突条目带类型与具体文件(client, addons_dir):
     advice = detail['advice']
     assert advice['action'] in ('disable', 'keep_one', 'disable_all', 'ignore')
 
-
-def test_mod_列表带闪退风险字段(client, addons_dir):
-    """崩溃风险是独立信号：两个包可以没有任何路径冲突，但装在一起会崩。"""
-    from support import vpkbuild
-
-    # A 只带模型的一半（.mdl + .vvd），B 只带 .vtx —— 没有一条相同路径
-    vpkbuild.write_vpk(addons_dir / 'a.vpk', {
-        'addoninfo.txt': vpkbuild.addoninfo('A'),
-        'models/props/test/tree.mdl': b'mdl-a',
-        'models/props/test/tree.vvd': b'vvd-a',
-    })
-    vpkbuild.write_vpk(addons_dir / 'b.vpk', {
-        'addoninfo.txt': vpkbuild.addoninfo('B'),
-        'models/props/test/tree.vtx': b'vtx-b',
-    })
-
-    mods = {m['name']: m for m in client.get('/api/mods').json()['mods']}
-    a = mods['a.vpk']
-    assert a['crash_risk'] == 'high'
-    assert a['crash_with'] == 'b.vpk'
-    assert a['crash_bundle'] == 'models/props/test/tree'
-    assert any(f.endswith('.vtx') for f in a['crash_files'])
-    assert a['crash_reason']
-
-
-def test_冲突条目带类型与具体文件(client, addons_dir):
-    """提示要能说清「这是什么冲突、哪几个文件」。"""
-    from support import vpkbuild
-
-    shared = 'models/w_models/weapons/w_m60.mdl'
-    vpkbuild.write_vpk(addons_dir / 'a.vpk', {
-        'addoninfo.txt': vpkbuild.addoninfo('A'),
-        shared: b'm60-a',
-        'materials/models/weapons/w_m60/body.vmt': b'vmt-a',
-        'sound/weapons/m60/fire.wav': b'wav-a',
-    })
-    vpkbuild.write_vpk(addons_dir / 'b.vpk', {
-        'addoninfo.txt': vpkbuild.addoninfo('B'),
-        shared: b'm60-b',
-        'materials/models/weapons/w_m60/body.vmt': b'vmt-b',
-        'sound/weapons/m60/fire.wav': b'wav-b',
-    })
-
-    mods = {m['name']: m for m in client.get('/api/mods').json()['mods']}
-    a = mods['a.vpk']
-    # 测试环境没有游戏本体 → 官方基准缺失 → 这些重叠只能判 soft（进 hints），
-    # 但类型/文件/风险这些字段必须齐备
-    detail = (a['conflict_details'] or a['conflict_hints'])[0]
-    assert detail['kind'] in ('model', 'material', 'sound')
-    assert detail['kind_label']
-    assert detail['count'] >= 2
-    assert all('/' in f for f in detail['files'])
-    assert detail['risk'] in ('high', 'medium', 'low')
-    assert isinstance(detail['kinds'], dict)
-    advice = detail['advice']
-    assert advice['action'] in ('disable', 'keep_one', 'disable_all', 'ignore')
-    advice = detail['advice']
-    assert advice['action'] in ('disable', 'keep_one', 'disable_all', 'ignore')

@@ -188,27 +188,6 @@ def test_未配置路径时扫描返回空(caplog):
 def test_拿不到官方基准时硬冲突会降级成提示(scanner, make_mod, monkeypatch):
     """没有 pak01_dir.vpk = 不知道哪些路径是官方的 → 只能判「私有路径重名」。
 
-    这是排查过的真实误判：把 Mod 放在非游戏目录（测试库 D:////Sample）扫描时，
-    hard 会静默消失，界面上只是「没有红点」，脚本冲突还在。用例把这条降级语义钉住。
-    """
-    from services import mod_scanner as ms
-
-    shared = 'models/weapons/melee/v_chainsaw.mdl'
-    make_mod('a.vpk', title='A', extra={shared: b'aaaa'})
-    make_mod('b.vpk', title='B', extra={shared: b'bbbb'})
-
-    monkeypatch.setattr(ms, '_get_official_index', lambda _addons: None)
-    ms.invalidate_scan_cache()
-
-    mods = {m.name: m for m in scanner.scan_mods()}
-    assert mods['a.vpk'].conflicts == []
-    assert mods['a.vpk'].conflict_hints, '降级后必须仍然出现在提示里，不能当作没冲突'
-    assert mods['a.vpk'].conflict_hints[0]['severity'] == 'soft'
-
-
-def test_拿不到官方基准时硬冲突会降级成提示(scanner, make_mod, monkeypatch):
-    """没有 pak01_dir.vpk = 不知道哪些路径是官方的 → 只能判「私有路径重名」。
-
     这是排查过的真实误判：把 Mod 放在非游戏目录（测试库 `D:/Sample`）扫描时，
     hard 会静默消失，界面上只是「没有红点」，脚本冲突还在。用例把这条降级语义钉住。
     """
