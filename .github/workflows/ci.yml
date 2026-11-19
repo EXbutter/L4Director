@@ -1,0 +1,84 @@
+name: CI
+
+# 只在 main 上有 push / PR / 手动触发时跑。
+# 三个 job 互相独立：后端测试、前端测试、构建冒烟，任何一个挂了立刻能看出是哪一层。
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - 'docs-internal/**'
+      - '**/*.md'
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend / pytest
+    # 用 windows runner：被测代码有 tasklist、winreg、ANSI 代码页这些 Windows 专有分支，
+    # 换到 ubuntu 只能测到兜底路径，等于没测。
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+
+      - name: Lint (undefined names only)
+        # 只保留「会直接崩」的规则：未定义名 / 语法错误 / assert 元组。
+        # 拆 router 这类纯搬运最容易留下 F821（漏一个 import 就 500）。
+        run: ruff check backend --select F821,F811,E9,F63,F7,F82 --no-cache
+
+      - name: pytest（功能用例）
+        run: pytest -m "not perf" -q --durations=10
+
+      - name: pytest（性能预算）
+        # 独立一步：性能预算失败时能一眼区分「功能坏了」还是「变慢了」
+        run: pytest -m perf -q --durations=5
+
+  frontend:
+    name: frontend / vitest
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        # --ignore-scripts 跳过 electron-builder install-app-deps：
+        # 类型检查 / 单测 / vite build 都用不到 Electron 二进制，装它只白等几分钟。
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck（渲染层）
+        run: npx tsc --noEmit
+
+      - name: Typecheck（主进程 + preload）
+        run: npx tsc --noEmit -p tsconfig.main.json
+
+      - name: vitest
+        run: npx vitest run
+
+      - name: Build（渲染层产物冒烟）
+        # 只建渲染层：主进程的 build:main 已在类型检查里覆盖，打包（electron-builder）不在 CI 做。
+        run: npx vite build

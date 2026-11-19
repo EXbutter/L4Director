@@ -1,0 +1,8 @@
+# 开发 / CI 专用依赖（不进打包产物：electron-builder 只带 requirements.txt 里的运行时依赖）
+#
+# httpx 必须 <0.28：Starlette 0.35 的 TestClient 传 app= 关键字，0.28 之后改成
+# transport=，装了 0.28 会直接 `TypeError: Client.__init__() got an unexpected
+# keyword argument 'app'` —— 表现是「所有接口测试在收集阶段就崩」。
+pytest>=8.0,<10
+httpx>=0.27,<0.28
+ruff>=0.6
