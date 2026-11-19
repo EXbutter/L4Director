@@ -71,6 +71,141 @@ SEVERITY_ORDER = {
 }
 
 
+# ── 冲突类型（kind）与闪退风险（risk）─────────────────────────────────
+# kind 说明「这是什么资源」，用于在提示里说清「哪几个文件、什么类型」，
+# 也是界面分组/图标的基础。风险（risk）与严重度（severity）是**两件不同的事**：
+# 严重度看「是不是互斥」，风险看「装到一起会不会崩」。两个包整份替换同一模型
+# 是 hard 冲突（互斥），但因为双方都成套，谁赢都不崩（risk=low）；反过来 A 只带
+# .mdl、B 只带 .vtx —— 甚至没有一条相同路径（不是路径冲突），最终磁盘上却是
+# A 的网格配 B 的顶点数据，加载时崩（risk=high）。样本里 74 组闪退全是这种「包
+# 只打了半个模型」造成的。
+RISK_HIGH = 'high'
+RISK_MEDIUM = 'medium'
+RISK_LOW = 'low'
+
+KIND_LABELS = {
+    'model': '模型',
+    'material': '材质',
+    'texture': '贴图',
+    'particle': '粒子',
+    'sound': '音效',
+    'script': '脚本',
+    'map': '地图',
+    'ui': '界面',
+    'other': '其他',
+}
+
+# 主类型并列时的优先顺序（让「模型/材质」这类主资源排在前面，便于展示）
+KIND_ORDER = ['model', 'material', 'texture', 'particle', 'sound', 'script', 'map', 'ui', 'other']
+
+# 模型文件集：一个 .mdl 必须配齐 .vtx/.vvd 才能被正确加载；.phy 可选。
+# DX90/DX80 是同一模型的另一套 LOD，必须归到同一个桶（见 bundle_of）。
+_CRITICAL_EXTS = frozenset({'mdl', 'vtx', 'vvd'})
+_OPTIONAL_EXTS = frozenset({'phy'})
+_RISK_RANK = {RISK_HIGH: 3, RISK_MEDIUM: 2, RISK_LOW: 1}
+
+
+def classify_path(path: str) -> str:
+    """把资源路径归到一个粗粒度类型（kind）。顺序敏感：先判 UI，再判其它。"""
+    p = path.lower().replace('\\', '/')
+    if p.startswith(('materials/vgui/', 'resource/')):
+        return 'ui'
+    if p.startswith('models/'):
+        return 'model'
+    if p.startswith('materials/'):
+        return 'texture' if p.endswith('.vtf') else 'material'
+    if p.startswith('sound/'):
+        return 'sound'
+    if p.startswith('particles/'):
+        return 'particle'
+    if p.startswith(('scripts/', 'missions/')):
+        return 'script'
+    if p.startswith('maps/'):
+        return 'map'
+    return 'other'
+
+
+def bundle_of(path: str) -> Optional[tuple[str, str]]:
+    """模型文件集归一化：返回 (家族 stem, 扩展名)；非模型文件返回 None。
+
+    `models/x/y.mdl`        -> ('models/x/y', 'mdl')
+    `models/x/y.dx90.vtx`   -> ('models/x/y', 'dx90.vtx')   # DX90 LOD 同桶
+    `materials/x/y.vmt`     -> None
+    `models/x/y.txt`        -> None
+    """
+    p = path.lower().replace('\\', '/')
+    if not p.startswith('models/'):
+        return None
+    for ext in ('dx90.vtx', 'dx80.vtx', 'dx90.vvd', 'dx80.vvd'):
+        if p.endswith('.' + ext):
+            return p[: -(len(ext) + 1)], ext
+    base, dot, ext = p.rpartition('.')
+    if not dot:
+        return None
+    if ext in ('mdl', 'vtx', 'vvd', 'phy', 'ani'):
+        return base, ext
+    return None
+
+
+def path_facts(path: str) -> tuple[bool, Optional[tuple[str, str]]]:
+    """(是否参与判定, 模型文件集归属)。元数据 / UI / 生成文件一律 (False, None)。"""
+    if not is_relevant_path(path):
+        return False, None
+    return True, bundle_of(path)
+
+
+def dominant_kind(paths: Iterable[str]) -> tuple[str, dict[str, int]]:
+    """一组文件的主类型（按数量最多者，并列按 KIND_ORDER）与各类型计数。"""
+    counts: dict[str, int] = {}
+    for p in paths:
+        k = classify_path(p)
+        counts[k] = counts.get(k, 0) + 1
+    if not counts:
+        return 'other', {}
+    kind = sorted(
+        counts,
+        key=lambda k: (-counts[k], KIND_ORDER.index(k) if k in KIND_ORDER else 99),
+    )[0]
+    return kind, counts
+
+
+def _ext_family(ext: str) -> str:
+    if 'vtx' in ext:
+        return 'vtx'
+    if 'vvd' in ext:
+        return 'vvd'
+    return ext
+
+
+def _label(labels: Optional[dict], name: str) -> str:
+    if labels and name in labels:
+        return labels[name]
+    return name
+
+
+def _pair_bundle_risk(ex_a: set, ex_b: set):
+    """比较两方在同一个模型文件集里各自提供的扩展名，返回 (risk, diff_exts, cross)。
+
+    * 双方提供的集合完全一致：齐全(⊇mdl/vtx/vvd)→low；都不全→medium
+    * 一方缺少的关键扩展恰好是另一方提供的（cross）→ high（拼出不匹配的模型）
+    * 只差 .phy 等可选扩展 → medium
+    """
+    if ex_a == ex_b:
+        if _CRITICAL_EXTS <= ex_a:
+            return RISK_LOW, set(), False
+        return RISK_MEDIUM, set(_CRITICAL_EXTS - ex_a), False
+    miss_a = _CRITICAL_EXTS - ex_a
+    miss_b = _CRITICAL_EXTS - ex_b
+    cross = (miss_a & ex_b) | (miss_b & ex_a)
+    if cross:
+        return RISK_HIGH, cross, True
+    return RISK_MEDIUM, (ex_a ^ ex_b) & _OPTIONAL_EXTS, False
+
+
+def _is_ui_path(path: str) -> bool:
+    return path.lower().replace('\\', '/').startswith(UI_PREFIXES)
+
+
 @dataclass
 class ModFiles:
     name: str
@@ -93,6 +228,12 @@ class PairConflict:
     severity: str
     files: list[str]
     pristine_of: Optional[str] = None   # copy 级专用：哪一方携带的是官方原版副本
+    # 类型 / 风险 / 建议（v2）：让「冲突条目」也能说清「哪几类文件、装一起崩不崩、怎么办」。
+    kind: str = 'other'                       # 主类型（classify_path 聚合）
+    kinds: dict = field(default_factory=dict)  # 多类型计数（仅当 >1 种时回传）
+    risk: str = RISK_LOW                      # 该冲突的闪退风险
+    reason: str = ''                          # 风险说明（human readable）
+    advice: dict = field(default_factory=dict)  # {action, target?, text?}
 
     @property
     def count(self) -> int:
@@ -106,9 +247,16 @@ class ModReport:
     conflicts: list[PairConflict] = field(default_factory=list)   # hard / script
     entries: list[PairConflict] = field(default_factory=list)     # 单实例入口文件重叠
     copies: list[PairConflict] = field(default_factory=list)      # 对方或我是原版副本，单向覆盖
-    overlaps: list[PairConflict] = field(default_factory=list)    # 私有路径重名
+    overlaps: list[PairConflict] = field(default_factory=list)    # 私有路径重名 / UI 重叠
     role: str = 'art'             # campaign / script / art / hud
     pristine_count: int = 0       # 携带的「官方原版副本」文件数（不影响任何人）
+    # 包级闪退风险（v2）：即使两条路径毫不重叠，各自只带半个模型也会崩。
+    crash_risk: str = RISK_LOW
+    crash_with: str = ''          # 与之拼出闪退的另一个包
+    crash_reason: str = ''
+    crash_files: list[str] = field(default_factory=list)
+    crash_bundle: str = ''        # 出问题的模型文件集 stem
+    crash_advice: dict = field(default_factory=dict)
 
     @property
     def worst(self) -> Optional[str]:
@@ -257,7 +405,8 @@ def analyze(
     mods: dict[str, dict[str, tuple[int, int]]],
     official: 'OfficialIndex | frozenset[str] | set[str]',
     *,
-    skip_hud: bool = True,
+    skip_hud: bool = False,
+    labels: Optional[dict] = None,
 ) -> dict[str, ModReport]:
     """返回 {mod 名: ModReport}。冲突只在 `conflicts` 里，无害重叠放 `overlaps`。
 
@@ -265,6 +414,12 @@ def analyze(
     说明它对这条路径没有修改意图（典型场景：材质包顺手打包了原版模型、地图包
     打包了原版音效）。这类文件赢了等于没装，输了也没有任何外观变化，不该参与
     冲突配对 —— 否则会出现「A 带原版模型 × B 改过模型」这种假冲突。
+
+    v2 起：
+    * `skip_hud` 默认 False —— 不再整包跳过 HUD 包（HUD 包常混着模型/材质，
+      整包跳过会漏判它和别的包的模型冲突）；纯 UI 覆盖改走 `overlaps`。
+    * 新增「模型文件集」闪退风险：即使两条路径毫不重叠，一方只带 .mdl、另一方
+      只带 .vtx，装到一起也会崩。`labels` 用于给提示里的 mod 起友好名。
     """
     reports = {
         name: ModReport(name=name, role=detect_role(files))
@@ -299,19 +454,93 @@ def analyze(
             owners[path].append((name, crc, size))
         reports[name].pristine_count = pristine
 
+    # ── 模型文件集分桶（用于闪退风险判定）────────────────────────
+    # name -> {stem: {ext_family: path}}
+    bundles_by_mod: dict[str, dict[str, dict[str, str]]] = {}
+    for name, files in considered.items():
+        bmap: dict[str, dict[str, str]] = defaultdict(dict)
+        for path in files:
+            relevant, bundle = path_facts(path)
+            if not relevant or bundle is None:
+                continue
+            stem, ext = bundle
+            bmap[stem][_ext_family(ext)] = path
+        bundles_by_mod[name] = dict(bmap)
+
+    stem_providers: dict[str, dict[str, set]] = defaultdict(dict)
+    for name, bmap in bundles_by_mod.items():
+        for stem, extmap in bmap.items():
+            stem_providers[stem][name] = set(extmap)
+
+    crash_best: dict[str, dict] = {}
+
+    def _consider_crash(mod, other, risk, stem, files, reason, advice):
+        cur = crash_best.get(mod)
+        if cur is None or _RISK_RANK[risk] > _RISK_RANK[cur['risk']]:
+            crash_best[mod] = {
+                'risk': risk, 'other': other, 'bundle': stem,
+                'files': list(files), 'reason': reason, 'advice': dict(advice),
+            }
+
+    for stem, provs in stem_providers.items():
+        names = sorted(provs)
+        if len(names) < 2:
+            continue
+        base_mods = [m for m in names if 'mdl' in provs[m]]
+        if len(base_mods) == 1:
+            advice = {
+                'action': 'disable',
+                'target': base_mods[0],
+                'text': (f"建议禁用 {_label(labels, base_mods[0])}：它只带了模型的一部分，"
+                         f"单独保留会和另一方的文件拼出不完整的模型"),
+            }
+        else:
+            advice = {
+                'action': 'disable_all',
+                'target': '',
+                'text': "两个包都只带了模型的一部分文件，建议都禁用",
+            }
+        stem_short = stem.rsplit('/', 1)[-1]
+        for i in range(len(names)):
+            for j in range(i + 1, len(names)):
+                a, b = names[i], names[j]
+                risk, diff, _cross = _pair_bundle_risk(provs[a], provs[b])
+                if risk == RISK_LOW:
+                    continue
+                for x, y in ((a, b), (b, a)):
+                    ex_x = provs[x]
+                    files_x = [
+                        p for ext, p in bundles_by_mod[y][stem].items()
+                        if ext not in ex_x
+                    ]
+                    if risk == RISK_HIGH:
+                        miss = _CRITICAL_EXTS - ex_x
+                        reason = (
+                            f"{_label(labels, x)} 和 {_label(labels, y)} 各自只提供了"
+                            f"模型「{stem_short}」的一部分（{_label(labels, x)} 缺 "
+                            f"{'/'.join(sorted(miss)) or '—'}），装在一起会加载到不匹配的"
+                            f"模型部件，导致闪退"
+                        )
+                    else:
+                        diff_show = sorted(diff) or sorted(_CRITICAL_EXTS - ex_x)
+                        reason = (
+                            f"{_label(labels, x)} 和 {_label(labels, y)} 的模型「{stem_short}」"
+                            f"只差 {'/'.join(diff_show) or '部分文件'}，可能出现轻微异常"
+                        )
+                    _consider_crash(x, y, risk, stem, files_x, reason, advice)
+
+    # ── 路径级冲突 / 原版副本覆盖 ─────────────────────────────
     pairs: dict[tuple[str, str], dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
     copy_sides: dict[tuple[str, str], str] = {}
     for path, holders in owners.items():
         names = sorted({n for n, _c, _s in holders})
         fingerprints = {(crc, size) for _n, crc, size in holders}
         if len(names) >= 2 and len(fingerprints) >= 2:
-            # 双方都改过、内容还不同 → 真互斥
             sev = severity_of(path, official)
             for i in range(len(names)):
                 for j in range(i + 1, len(names)):
                     pairs[(names[i], names[j])][sev].append(path)
         elif len(names) == 1 and pristine_owners.get(path):
-            # 一方改过、另一方是原版副本 → 单向覆盖：原版那份赢了只会抹掉改过的
             mod = names[0]
             for keeper in pristine_owners[path]:
                 if keeper == mod:
@@ -320,12 +549,75 @@ def analyze(
                 pairs[key][SEVERITY_COPY].append(path)
                 copy_sides[key] = keeper
 
+    # ── UI 重叠（共享界面资源，内容不同且 >=3 个才算）────────────
+    ui_owners: dict[str, list[tuple[str, int, int]]] = defaultdict(list)
+    for name, files in considered.items():
+        for path, fp in files.items():
+            if _is_ui_path(path):
+                ui_owners[path].append((name, fp[0], fp[1]))
+    ui_pairs: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for path, holders in ui_owners.items():
+        names = sorted({n for n, _c, _s in holders})
+        fingerprints = {(crc, size) for _n, crc, size in holders}
+        if len(names) >= 2 and len(fingerprints) >= 2:
+            for i in range(len(names)):
+                for j in range(i + 1, len(names)):
+                    ui_pairs[(names[i], names[j])].append(path)
+
+    def _make_pair(a: str, b: str, sev: str, files, pristine_of=None) -> PairConflict:
+        files_sorted = sorted(files)
+        kind, counts = dominant_kind(files_sorted)
+        kinds_out = dict(counts) if len(counts) > 1 else {}
+        risk = RISK_LOW
+        reason = ''
+        advice: dict = {}
+        if sev in (SEVERITY_HARD, SEVERITY_SCRIPT):
+            stems = {bundle_of(p)[0] for p in files_sorted if bundle_of(p) is not None}
+            worst_rank = -1
+            worst_stem = None
+            target = ''
+            for stem in stems:
+                ex_a = set(bundles_by_mod.get(a, {}).get(stem, {}))
+                ex_b = set(bundles_by_mod.get(b, {}).get(stem, {}))
+                if not ex_a or not ex_b:
+                    continue
+                r, _diff, _c = _pair_bundle_risk(ex_a, ex_b)
+                if _RISK_RANK[r] > worst_rank:
+                    worst_rank = _RISK_RANK[r]
+                    worst_stem = stem
+                    na = len(_CRITICAL_EXTS & ex_a)
+                    nb = len(_CRITICAL_EXTS & ex_b)
+                    target = a if na < nb else (b if nb < na else min(a, b))
+            if worst_rank >= 0:
+                risk = {3: RISK_HIGH, 2: RISK_MEDIUM, 1: RISK_LOW}[worst_rank]
+            if kind == 'script':
+                advice = {'action': 'keep_one', 'target': '', 'text': ''}
+            elif risk == RISK_HIGH:
+                stem_short = (worst_stem or '').rsplit('/', 1)[-1]
+                reason = (
+                    f"{_label(labels, a)} 和 {_label(labels, b)} 的模型「{stem_short}」"
+                    f"只提供了部分文件，装在一起可能闪退"
+                )
+                advice = {'action': 'disable', 'target': target,
+                          'text': '只保留完整的那个，避免模型部件不匹配'}
+            elif risk == RISK_MEDIUM:
+                advice = {'action': 'keep_one', 'target': '',
+                          'text': '两方模型文件都不完整，建议只保留一个'}
+            else:
+                advice = {'action': 'keep_one', 'target': '', 'text': ''}
+        elif sev == SEVERITY_COPY:
+            advice = {'action': 'ignore', 'text': '原版副本，谁生效都不改变外观'}
+        else:  # SEVERITY_ENTRY / SEVERITY_SOFT（私有路径重名）
+            advice = {'action': 'ignore', 'text': ''}
+        return PairConflict(
+            other=b, severity=sev, files=files_sorted, pristine_of=pristine_of,
+            kind=kind, kinds=kinds_out, risk=risk, reason=reason, advice=advice,
+        )
+
     for (a, b), by_sev in pairs.items():
         for sev, files in by_sev.items():
-            hit = PairConflict(other=b, severity=sev, files=sorted(files),
-                               pristine_of=copy_sides.get((a, b)))
-            mirror = PairConflict(other=a, severity=sev, files=hit.files,
-                                  pristine_of=hit.pristine_of)
+            hit = _make_pair(a, b, sev, files, copy_sides.get((a, b)))
+            mirror = _make_pair(b, a, sev, files, copy_sides.get((a, b)))
             for name, item in ((a, hit), (b, mirror)):
                 bucket = reports[name]
                 if sev == SEVERITY_SOFT:
@@ -336,6 +628,32 @@ def analyze(
                     bucket.copies.append(item)
                 else:
                     bucket.conflicts.append(item)
+
+    _ui_text = '界面资源重叠，谁生效看加载顺序，一般不影响游戏'
+    for (a, b), files in ui_pairs.items():
+        if len(files) < 3:
+            continue
+        reports[a].overlaps.append(PairConflict(
+            other=b, severity=SEVERITY_SOFT, files=sorted(files),
+            kind='ui', kinds={}, risk=RISK_LOW,
+            advice={'action': 'ignore', 'text': _ui_text},
+        ))
+        reports[b].overlaps.append(PairConflict(
+            other=a, severity=SEVERITY_SOFT, files=sorted(files),
+            kind='ui', kinds={}, risk=RISK_LOW,
+            advice={'action': 'ignore', 'text': _ui_text},
+        ))
+
+    # ── 写回包级闪退风险 ─────────────────────────────────────
+    for name, rep in reports.items():
+        info = crash_best.get(name)
+        if info and info['risk'] != RISK_LOW:
+            rep.crash_risk = info['risk']
+            rep.crash_with = info['other']
+            rep.crash_reason = info['reason']
+            rep.crash_files = info['files']
+            rep.crash_bundle = info['bundle']
+            rep.crash_advice = info['advice']
 
     for rep in reports.values():
         rep.conflicts.sort(key=lambda c: (SEVERITY_ORDER[c.severity], -c.count))

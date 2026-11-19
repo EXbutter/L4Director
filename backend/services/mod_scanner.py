@@ -26,6 +26,7 @@ from .conflict_engine import (
     analyze as analyze_conflicts,
     detect_role,
     role_tags,
+    KIND_LABELS,
     SEVERITY_COPY,
     SEVERITY_ENTRY,
     SEVERITY_HARD,
@@ -104,6 +105,16 @@ class ModInfo:
     # 本地 Mod 的 VPK 里没有 addoninfo.txt → 游戏不收录它，addonlist.txt 里写 "0"
     # 会被游戏改回 "1"（「附加内容」里也看不到）。界面据此提示风险并提供「补 addoninfo」。
     missing_addoninfo: bool = False
+    # ── 闪退风险（v2）────────────────────────────────────────────────
+    # 与「冲突」不同：两个包各带半个模型、路径毫不重叠也算冲突之外的高风险。
+    # crash_risk: low / medium / high；crash_with：与之拼出闪退的另一方包名；
+    # crash_files：为了让对方模型完整、本包缺少的文件；crash_bundle：出问题的模型文件集。
+    crash_risk: str = 'low'
+    crash_with: str = ''
+    crash_reason: str = ''
+    crash_files: list[str] = field(default_factory=list)
+    crash_bundle: str = ''
+    crash_advice: dict = field(default_factory=dict)
 
 
 _VPK_COVER_NAMES = [
@@ -1162,17 +1173,27 @@ def _get_official_index(addons_path: Optional[str]):
     return idx
 
 
-def _conflict_entry(other: str, sev: str, files: list[str],
-                    reports: dict, indices: dict) -> dict:
-    """给前端的一份冲突明细。files 只带前 12 个，避免 JSON 过大。"""
+def _conflict_entry(c, reports: dict, indices: dict) -> dict:
+    """给前端的一份冲突明细。files 只带前 12 个，避免 JSON 过大。
+
+    c 是 conflict_engine.PairConflict；v2 起额外带类型（kind/kind_label）、
+    多类型计数（kinds）、闪退风险（risk/reason）与处理建议（advice）。
+    """
+    other = c.other
     other_rep = reports.get(other)
     return {
         'other': other,
-        'severity': sev,
-        'count': len(files),
-        'files': files[:12],
+        'severity': c.severity,
+        'count': len(c.files),
+        'files': c.files[:12],
         'other_role': getattr(other_rep, 'role', 'art') if other_rep else 'art',
         'other_role_tags': role_tags(indices.get(other, {})),
+        'kind': getattr(c, 'kind', 'other'),
+        'kind_label': KIND_LABELS.get(getattr(c, 'kind', 'other'), getattr(c, 'kind', 'other')),
+        'kinds': getattr(c, 'kinds', {}) or {},
+        'risk': getattr(c, 'risk', 'low'),
+        'reason': getattr(c, 'reason', ''),
+        'advice': getattr(c, 'advice', {}) or {},
     }
 
 
@@ -1315,6 +1336,12 @@ def _detect_conflicts(mods: list[ModInfo], addons_path: Optional[str] = None):
         mod.conflict_details = []
         mod.conflict_hints = []
         mod.role_tags = []
+        mod.crash_risk = 'low'
+        mod.crash_with = ''
+        mod.crash_reason = ''
+        mod.crash_files = []
+        mod.crash_bundle = ''
+        mod.crash_advice = {}
         # 刻意**不**在这里清 unreadable / unreadable_reason：
         # 「这个包读不出来」是事实，不是冲突检测的中间结果。每轮重算都清一遍，
         # 坏包就会在界面上看起来一切正常，用户永远不知道它其实没被识别。
@@ -1342,26 +1369,39 @@ def _detect_conflicts(mods: list[ModInfo], addons_path: Optional[str] = None):
     if len(indices) < 2:
         return
 
-    # 2) 判定
+    # 2) 判定（labels 用于闪退风险提示里的友好名）
     official = _get_official_index(addons_path)
-    reports = analyze_conflicts(indices, official if official is not None else frozenset())
+    labels = {m.name: (m.display_name or Path(m.name).stem) for m in enabled_mods}
+    reports = analyze_conflicts(
+        indices,
+        official if official is not None else frozenset(),
+        labels=labels,
+    )
 
     # 3) 写回
     for mod in enabled_mods:
         rep = reports.get(mod.name)
         if rep is None:
             continue
+        # 包级闪退风险（与路径冲突无关，也要展示）
+        mod.crash_risk = getattr(rep, 'crash_risk', 'low')
+        mod.crash_with = getattr(rep, 'crash_with', '')
+        mod.crash_reason = getattr(rep, 'crash_reason', '')
+        mod.crash_files = list(getattr(rep, 'crash_files', []) or [])
+        mod.crash_bundle = getattr(rep, 'crash_bundle', '')
+        mod.crash_advice = dict(getattr(rep, 'crash_advice', {}) or {})
+
         alerts: list[dict] = []
         hints: list[dict] = []
         for c in rep.conflicts:
-            item = _conflict_entry(c.other, c.severity, c.files, reports, indices)
+            item = _conflict_entry(c, reports, indices)
             (alerts if c.severity in _ALERT_SEVERITIES else hints).append(item)
         for c in rep.copies:
-            hints.append(_conflict_entry(c.other, c.severity, c.files, reports, indices))
+            hints.append(_conflict_entry(c, reports, indices))
         for c in rep.entries:
-            hints.append(_conflict_entry(c.other, c.severity, c.files, reports, indices))
+            hints.append(_conflict_entry(c, reports, indices))
         for c in rep.overlaps:
-            hints.append(_conflict_entry(c.other, c.severity, c.files, reports, indices))
+            hints.append(_conflict_entry(c, reports, indices))
 
         # 严重度从高到低，同级按涉及文件数排序
         order = {SEVERITY_HARD: 0, SEVERITY_SCRIPT: 1, SEVERITY_COPY: 2,
