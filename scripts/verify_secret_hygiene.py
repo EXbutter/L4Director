@@ -155,11 +155,20 @@ meta = wb.meta()
 check('meta 不含原文', FAKE not in json.dumps(meta, ensure_ascii=False))
 check('meta 只带掩码', meta.get('key_masked') == MASKED)
 
-main_py = src('backend/main.py')
+# b8cd3ef 把设置/工坊路由从 main.py 拆到了 routers/，这两条断言必须跟着走：
+# 再盯着 main.py 只会恒 FAIL（断言「没有 main.py 里的那行代码」并不能证明接口安全，
+# 只会证明文件里没这句话）。所以这里直接读拆分后的路由文件。
+settings_py = src('backend/routers/settings.py')
+workshop_py = src('backend/routers/workshop.py')
 check('GET /api/settings/steam-key 返回的是 key_status()',
-      'def get_steam_key' in main_py and '_wb().key_status()' in main_py)
-check('错误出口都过 redact', main_py.count('_wb().redact(str(e))') >= 4,
-      f'count={main_py.count("_wb().redact(str(e))")}')
+      'def get_steam_key' in settings_py and 'wb().key_status()' in settings_py)
+
+# 阈值仍是 >= 4（与拆分前一致），但额外要求两个文件都至少有 1 处：
+# 只数总数的话，把 workshop 的错误出口全删掉、在 settings 里多抄几行也能过。
+REDACT_CALL = 'wb().redact(str(e))'
+redact_counts = (settings_py.count(REDACT_CALL), workshop_py.count(REDACT_CALL))
+check('错误出口都过 redact', sum(redact_counts) >= 4 and min(redact_counts) >= 1,
+      f'settings={redact_counts[0]} workshop={redact_counts[1]}')
 
 wb_py = src('backend/services/workshop_browse.py')
 check('_query_files 的 errs 只拼主机名/异常类型，不拼 URL',
