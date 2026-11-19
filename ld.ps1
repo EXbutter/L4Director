@@ -7,6 +7,15 @@
 $rootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $script:projectRoot = $rootDir
 
+# 某些宿主/终端会把 ELECTRON_RUN_AS_NODE=1 注入环境。若带此变量启动，`electron .`
+# 会被当成纯 Node 进程运行：不开窗口、不加载 URL、也不 spawn Python 后端，
+# 表现为“npm run dev 没报错但前端页面打不开、8288 无监听”。
+# 启动前强制清除，确保 Electron 以 GUI 模式运行。
+if ($null -ne $env:ELECTRON_RUN_AS_NODE) {
+    Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+    Write-Host "[准备] 已清除 ELECTRON_RUN_AS_NODE（否则 Electron 会以 Node 模式运行、打不开窗口）" -ForegroundColor DarkGray
+}
+
 function Get-ProjectProcesses {
     # 只结束「可执行文件位于项目目录内」的进程（项目自带的 Electron / 内置或虚拟环境 Python）。
     # 关键：绝不按“命令行里出现项目路径”去杀 node.exe —— 那会误伤编辑器 / 终端 / 其它工具
