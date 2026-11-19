@@ -9,6 +9,7 @@ import {
   subscribeCardAnimation,
 } from '../utils/animationPreference';
 import { isAnimatedPlaybackSupported } from '../utils/animatedThumbnail';
+import { observeViewport } from '../utils/viewportObserver';
 import { AnimatedThumb } from './AnimatedThumb';
 
 interface ThumbImageProps {
@@ -106,14 +107,16 @@ export function ThumbImage({
       return;
     }
     if (ready || !frameEl) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) setReady(true);
+    // 交给共享观察器池（utils/viewportObserver.ts）：边距值不变，但 root 由池
+    // 自动选成最近的滚动容器 —— 卡片在 .content-area 里内滚，root: null 时
+    // 祖先的 overflow 裁剪会让 rootMargin 完全失效（预取边距形同虚设）。
+    return observeViewport(
+      frameEl,
+      (isIntersecting) => {
+        if (isIntersecting) setReady(true);
       },
-      { root: null, rootMargin: `${LAZY_MARGIN} 0px`, threshold: 0 },
+      { rootMargin: `${LAZY_MARGIN} 0px`, threshold: 0 },
     );
-    observer.observe(frameEl);
-    return () => observer.disconnect();
   }, [lazy, ready, frameEl]);
 
   useEffect(() => {
@@ -149,14 +152,11 @@ export function ThumbImage({
       return;
     }
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        setInView(entries[0]?.isIntersecting ?? false);
-      },
-      { root: null, rootMargin: `${VIEW_MARGIN} 0px`, threshold: 0 },
+    return observeViewport(
+      frameEl,
+      (isIntersecting) => setInView(isIntersecting),
+      { rootMargin: `${VIEW_MARGIN} 0px`, threshold: 0 },
     );
-    observer.observe(frameEl);
-    return () => observer.disconnect();
   }, [frameEl, animated, enabled, animUnavailable, animation]);
 
   // 第一帧上屏：这时才允许静态首帧让位

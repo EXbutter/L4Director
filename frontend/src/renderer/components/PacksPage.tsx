@@ -9,6 +9,7 @@ import { isCampaignMod } from '../utils/modRole';
 import { ModSwitch } from './ModSwitch';
 import { FAVORITE_TAG, isFineTag, orderCardTags } from './MyModsPage';
 import { useModalA11y } from '../hooks/useModalA11y';
+import { observeViewport } from '../utils/viewportObserver';
 import './ContentArea.scss';
 import './MyModsPage.scss';
 
@@ -44,7 +45,8 @@ function resolveUrl(url: string | null): string | null {
 
 /// ── Intersection observer hook (same as MyModsPage) ──
 function useIntersectionObserver(
-  options?: IntersectionObserverInit
+  // 同 MyModsPage：池只支持单一 threshold，把 IntersectionObserverInit 收窄
+  options?: { rootMargin?: string; threshold?: number }
 ): [React.RefCallback<HTMLDivElement>, boolean] {
   const elementRef = useRef<HTMLDivElement | null>(null);
   const [isVisible, setIsVisible] = useState(false);
@@ -56,19 +58,21 @@ function useIntersectionObserver(
   useEffect(() => {
     const el = elementRef.current;
     if (!el) return;
-    
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setIsVisible(true);
-          observer.disconnect();
-        }
+
+    // 共享观察器池（utils/viewportObserver.ts），与 MyModsPage 同一实现。
+    // 一次性触发：首次相交后退订（池里的 observe 记录随之摘除，不再持续观测）。
+    let stop: (() => void) | null = null;
+    stop = observeViewport(
+      el,
+      (isIntersecting) => {
+        if (!isIntersecting) return;
+        setIsVisible(true);
+        stop?.();
       },
       { rootMargin: '200px', threshold: 0, ...options }
     );
-    
-    observer.observe(el);
-    return () => observer.disconnect();
+
+    return () => stop?.();
   }, [elementRef.current, options?.rootMargin, options?.threshold]);
 
   return [callbackRef, isVisible];

@@ -15,6 +15,7 @@ import { useModalA11y } from '../hooks/useModalA11y';
 import {
   hasFullSet,
 } from '../utils/mix';
+import { observeViewport } from '../utils/viewportObserver';
 import './ContentArea.scss';
 import './MyModsPage.scss';
 
@@ -89,7 +90,9 @@ function resolveUrl(url: string | null): string | null {
 }
 
 function useIntersectionObserver(
-  options?: IntersectionObserverInit
+  // 只暴露观察器池支持的两种配置：threshold 在 IntersectionObserverInit 里可以是
+  // 数组（多阈值），池按单一 threshold 合并，这里直接收窄，避免把数组悄悄传进去。
+  options?: { rootMargin?: string; threshold?: number }
 ): [React.RefCallback<HTMLDivElement>, boolean] {
   const elementRef = useRef<HTMLDivElement | null>(null);
   const [isVisible, setIsVisible] = useState(false);
@@ -102,24 +105,26 @@ function useIntersectionObserver(
   useEffect(() => {
     const el = elementRef.current;
     if (!el) return;
-    
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setIsVisible(true);
-          observer.disconnect();
-        }
+
+    // 共享观察器池（utils/viewportObserver.ts）：按 (root, rootMargin, threshold)
+    // 合并成一个 IntersectionObserver，98 张卡不再各建一个。
+    // 缩略图懒加载：卡片真正进入视口前 200px 才去「取原图 → createImageBitmap
+    // 解码 → 编码 WebP」，视口外一律不碰图片，避免一进页面就把上百张图全解码/绘制。
+    // 试过把提前量放大到 800px 想「提前备好」，实测反而拖累快速滚动的稳态帧率
+    // （预热请求在同一时间窗内扎堆、和滚动抢绘制），所以保留 200px。
+    // 一次性触发：首次相交后退订（池里的 observe 记录随之摘除，不再持续观测）。
+    let stop: (() => void) | null = null;
+    stop = observeViewport(
+      el,
+      (isIntersecting) => {
+        if (!isIntersecting) return;
+        setIsVisible(true);
+        stop?.();
       },
-      // 缩略图懒加载：卡片真正进入视口前 200px 才去「取原图 → createImageBitmap
-      // 解码 → 编码 WebP」，视口外一律不碰图片，避免一进页面就把上百张图全解码/绘制。
-      // 一次性触发（首次相交后 disconnect），不会持续观测。
-      // 试过把提前量放大到 800px 想「提前备好」，实测反而拖累快速滚动的稳态帧率
-      // （预热请求在同一时间窗内扎堆、和滚动抢绘制），所以保留 200px。
       { rootMargin: '200px', threshold: 0, ...options }
     );
-    
-    observer.observe(el);
-    return () => observer.disconnect();
+
+    return () => stop?.();
   }, [elementRef.current, options?.rootMargin, options?.threshold]);
 
   return [callbackRef, isVisible];
