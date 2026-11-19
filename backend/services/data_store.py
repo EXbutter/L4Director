@@ -467,23 +467,66 @@ def get_all_mod_enabled() -> dict[str, bool]:
     return result
 
 
+def commit_mod_state_changes(
+    states: Optional[dict[str, Optional[bool]]] = None,
+    prefs_dirty: Optional[bool] = None,
+    addonlist_state: Optional[dict] = None,
+) -> bool:
+    """把「一次 Mod 启停切换」涉及的多类改动合成**一次** data.json 写盘。
+
+    一次批量启停会同时改动三样东西：addonlist.txt 的内容指纹、每个 Mod 的启用偏好、
+    「有改动还没应用」标记。它们本来就住在同一份 data.json 里，但以前分三次调用
+    （set_addonlist_state / set_mods_enabled_bulk / set_prefs_dirty），
+    于是每次开关要 3 次「读 → 原子写（fsync + .bak 备份）」。这里收进同一个
+    _file_lock 与同一次 _write_data_raw：要么全部落盘、要么一个字节都不动，
+    也不会留下「偏好写进去了、脏标记没写」这种半截状态。
+
+    参数都可选，None = 本次不改那一部分。返回是否真的写了盘
+    （传进来的东西都已经一致时不写，避免空转 fsync）。
+    """
+    has_states = bool(states)
+    with _file_lock:
+        data = _read_data_raw()
+        # 先判断「要不要写」，再改 data —— _read_data_raw() 返回的就是缓存本体，
+        # 先改后不写会让内存与磁盘不一致（下一次别的写入会把这份未确认的改动带出去）。
+        states_need_write = has_states and any(
+            (data['mod_metas'].get(name) or {}).get('enabled') != enabled
+            for name, enabled in states.items()
+        )
+        dirty_needs_write = prefs_dirty is not None and bool(data.get('prefs_dirty')) != bool(prefs_dirty)
+        state_needs_write = bool(addonlist_state)
+        if not states_need_write and not dirty_needs_write and not state_needs_write:
+            return False
+
+        if states_need_write:
+            now = datetime.now().isoformat()
+            for name, enabled in states.items():
+                meta = dict(data['mod_metas'].get(name) or {})
+                meta['enabled'] = enabled
+                meta['last_updated'] = now
+                data['mod_metas'][name] = meta
+        if dirty_needs_write:
+            data['prefs_dirty'] = bool(prefs_dirty)
+        if state_needs_write:
+            data['addonlist_state'] = {
+                'fingerprint': addonlist_state.get('fingerprint') or '',
+                'path': addonlist_state.get('path'),
+                'updated_at': datetime.now().isoformat(),
+            }
+        _write_data_raw(data)
+        return True
+
+
 def set_mods_enabled_bulk(states: dict[str, Optional[bool]]):
     """批量持久化 mod 启用状态（整个整合包一次写盘，而不是逐个 mod 写一次）。
 
     逐个 set_mod_enabled() 会每个 mod 都读写一遍 data.json，整合包里有几百个 mod 时
     会明显卡顿，甚至因为请求乱序导致界面状态回退。
+
+    只是 commit_mod_state_changes() 的单用途包装：一次切换里还要顺手写
+    「未应用标记 / addonlist 指纹」时，直接调那个入口就能省掉多余的写盘。
     """
-    if not states:
-        return
-    with _file_lock:
-        data = _read_data_raw()
-        now = datetime.now().isoformat()
-        for name, enabled in states.items():
-            meta = dict(data['mod_metas'].get(name) or {})
-            meta['enabled'] = enabled
-            meta['last_updated'] = now
-            data['mod_metas'][name] = meta
-        _write_data_raw(data)
+    commit_mod_state_changes(states=states)
 
 
 def get_mod_display_name(mod_name: str) -> Optional[str]:
@@ -748,14 +791,7 @@ def get_addonlist_state() -> dict:
 
 def set_addonlist_state(fingerprint: str, path: Optional[str] = None):
     """记录 addonlist.txt 的内容指纹（软件写入文件后 / 采纳外部改动后调用）。"""
-    with _file_lock:
-        data = _read_data_raw()
-        data['addonlist_state'] = {
-            'fingerprint': fingerprint,
-            'path': path,
-            'updated_at': datetime.now().isoformat(),
-        }
-        _write_data_raw(data)
+    commit_mod_state_changes(addonlist_state={'fingerprint': fingerprint, 'path': path})
 
 
 # ===== 「游戏退出后需要以软件设置为准重新写回」标记 =====

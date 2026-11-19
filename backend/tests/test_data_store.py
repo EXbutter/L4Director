@@ -102,6 +102,53 @@ def test_重复设置同一个标记不重复写盘(ds, monkeypatch):
     assert len(calls) == 1
 
 
+def test_一次切换只写一次盘(scanner, make_mod, monkeypatch):
+    """开关一批 Mod 只该碰一次 data.json（指纹 + 偏好 + 脏标记合成一次写）。
+
+    以前 `set_mods_states` 分三次写：写 addonlist.txt 后记指纹、写每个 Mod 的启用
+    偏好、置「有改动还没应用」标记 —— 三次 fsync + 三次 .bak 备份。它们本来就住在
+    同一份 data.json 里，合成一次既快，也不会留下「偏好写进去了、指纹没写」的半截状态。
+    """
+    from services import data_store as ds
+
+    make_mod('alpha.vpk')
+    make_mod('beta.vpk')
+    scanner.scan_mods()
+
+    calls = []
+    original = ds._write_data_raw
+    monkeypatch.setattr(ds, '_write_data_raw', lambda d: (calls.append(dict(d)), original(d))[1])
+
+    result = scanner.set_mods_states({'alpha.vpk': False})
+    assert result['changed'] == 1
+
+    assert len(calls) == 1, f'一次切换应该只写一次 data.json，实际 {len(calls)} 次'
+    written = calls[0]
+    assert written['mod_metas']['alpha.vpk']['enabled'] is False
+    assert written['prefs_dirty'] is True
+    assert written['addonlist_state']['fingerprint']
+
+
+def test_空操作切换不写盘(scanner, make_mod, monkeypatch):
+    """已经是目标状态 → 不改文件、不写盘、也不点亮「应用」按钮。"""
+    from services import data_store as ds
+
+    make_mod('alpha.vpk')
+    scanner.scan_mods()
+    # 先真的禁用一次（第一次要写 addonlist.txt，因为文件还不存在）
+    assert scanner.set_mods_states({'alpha.vpk': False})['changed'] == 1
+
+    calls = []
+    original = ds._write_data_raw
+    monkeypatch.setattr(ds, '_write_data_raw', lambda d: (calls.append(1), original(d))[1])
+
+    result = scanner.set_mods_states({'alpha.vpk': False})   # 重复同一次禁用
+    assert result['changed'] == 0
+
+    assert calls == [], '什么都没变还写盘，等于白做一次 fsync + 备份'
+    assert ds.get_prefs_dirty() is True
+
+
 def test_删除自定义标签会从所有_mod_上摘掉_内置标签摘不动(ds):
     ds.add_custom_tag('收藏')
     ds.set_mod_tags_override('a.vpk', ['我的最爱', '收藏'])

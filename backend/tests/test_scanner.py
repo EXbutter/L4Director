@@ -177,6 +177,94 @@ def test_流式扫描的事件序列(scanner, make_mod):
     assert kinds.count('conflict') == 2
 
 
+def test_切换_mod_之后不触发全量重扫(scanner, make_mod):
+    """批量启停之后紧接着的那次扫描必须命中缓存。
+
+    以前 `set_mods_states` 结尾把 `_LAST_SCAN_KEY / _LAST_SCAN_RESULT` 一起清空，
+    于是「开关一个 Mod」之后紧跟着的 `/api/mods` 必然走全量重扫并持全局扫描锁：
+    98 个 Mod 实测 ~200ms，1000 个 Mod 约 1.5s。开关只改了一个布尔值，不该重建整份结果。
+    """
+    from services import mod_scanner as ms
+
+    make_mod('alpha.vpk')
+    make_mod('beta.vpk')
+
+    first = {m.name: m for m in scanner.scan_mods()}
+    assert ms.get_last_scan_perf()['mode'] not in ('cached', 'stream-cached'), '首次扫描不该命中缓存'
+
+    scanner.set_mods_states({'alpha.vpk': False})
+
+    # 缓存里的对象要就地更新，而不是等下一次扫描才纠正
+    assert first['alpha.vpk'].enabled is False
+    assert first['beta.vpk'].enabled is True
+
+    mods = {m.name: m for m in scanner.scan_mods()}
+    perf = ms.get_last_scan_perf()
+    assert perf['mode'] in ('cached', 'stream-cached'), perf
+    assert mods['alpha.vpk'].enabled is False
+    assert mods['beta.vpk'].enabled is True
+
+
+def test_启用集合变了才让冲突缓存失效(scanner, make_mod):
+    """冲突指纹只跟「参与判定的启用集合」有关，空操作不该让它失效。
+
+    `_conflict_fingerprint()` 把每个 Mod 的 enabled 位都算进指纹，所以「真的翻转了」
+    就必须让 `_LAST_CONFLICT_KEY` 失效（下一次缓存命中时自动重算冲突）；
+    而一次「什么都没翻转」的调用（重复启用同一个 Mod）不该白算一遍 O(N^3) 的冲突分析。
+    """
+    from services import mod_scanner as ms
+
+    make_mod('alpha.vpk')
+    make_mod('beta.vpk')
+    scanner.scan_mods()
+    assert ms._LAST_CONFLICT_KEY is not None
+
+    # 1) 重复设置当前状态 → 什么都没翻转 → 冲突指纹原样保留
+    scanner.set_mods_states({'alpha.vpk': True})
+    assert ms._LAST_CONFLICT_KEY is not None
+    assert ms._LAST_SCAN_KEY is not None
+
+    # 2) 真的翻转了一个 Mod 的启用状态 → 冲突指纹失效，但扫描结果缓存仍然保留
+    scanner.set_mods_states({'alpha.vpk': False})
+    assert ms._LAST_CONFLICT_KEY is None, '启用集合变了，冲突结果必须重算'
+    assert ms._LAST_SCAN_KEY is not None, '不该顺手把文件指纹缓存也作废'
+    assert ms._LAST_SCAN_RESULT, '不该清空扫描结果'
+
+    # 下一次扫描命中缓存并自动把冲突指纹补回来
+    scanner.scan_mods()
+    assert ms._LAST_CONFLICT_KEY is not None
+
+
+def test_没有扫描结果时切换不会凭空造缓存(scanner, make_mod):
+    """从没扫过（或刚被 invalidate）时切换，不该留下半份「看起来有效」的缓存。"""
+    from services import mod_scanner as ms
+
+    make_mod('alpha.vpk')
+    ms.invalidate_scan_cache()
+
+    scanner.set_mods_states({'alpha.vpk': False})
+
+    assert ms._LAST_SCAN_RESULT == []
+    assert ms._LAST_SCAN_KEY is None
+    assert ms._LAST_CONFLICT_KEY is None
+
+
+def test_流式扫描在切换后也命中缓存(scanner, make_mod):
+    """`/api/mods/stream` 走的是另一套实现，局部失效对它同样要生效。"""
+    from services import mod_scanner as ms
+
+    make_mod('alpha.vpk')
+    make_mod('beta.vpk')
+    list(scanner.stream_mods())
+
+    scanner.set_mods_states({'alpha.vpk': False})
+
+    events = list(scanner.stream_mods())
+    assert events[-1]['type'] == 'done'
+    assert ms.get_last_scan_perf()['mode'] == 'stream-cached', ms.get_last_scan_perf()
+    assert {e['mod']['name']: e['mod']['enabled'] for e in events if e['type'] == 'mod'}['alpha.vpk'] is False
+
+
 def test_未配置路径时扫描返回空(caplog):
     from services.mod_scanner import ModScanner
 

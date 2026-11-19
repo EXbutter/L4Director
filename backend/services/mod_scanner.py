@@ -44,6 +44,7 @@ from .data_store import (
     get_mod_tags_override, set_mod_tags_override,
     get_custom_tags,
     set_mod_enabled, set_mods_enabled_bulk,
+    commit_mod_state_changes,
     get_all_mod_metas,
     get_scan_manifest, save_scan_manifest, ScanManifest,
     get_addons_path,
@@ -677,6 +678,45 @@ def invalidate_scan_cache() -> None:
     _LAST_SCAN_KEY = None
     _LAST_SCAN_RESULT = []
     _LAST_CONFLICT_KEY = None
+
+
+def _apply_enabled_to_scan_cache(updated: dict[str, bool]) -> None:
+    """把一次批量启停的结果**就地**写进扫描结果缓存，而不是整份作废。
+
+    以前 `set_mods_states` 结尾把 `_LAST_SCAN_KEY / _LAST_SCAN_RESULT` 一起清空，
+    于是「开关一个 Mod」之后紧跟着的那次 `/api/mods` 必然走全量重扫，还要持着
+    全局 `_ScanLock`：98 个 Mod 实测 ~200ms，1000 个 Mod 约 1.5s，而且期间界面
+    上任何别的扫描请求都得排队。开关本身只是改了一个布尔值，没必要重建整份结果。
+
+    现在只更新本次真正匹配上的 Mod 的 `enabled`，`_LAST_SCAN_KEY` 原样保留，
+    下一次扫描照常命中缓存（缓存命中分支还会按 addonlist + 偏好重新 resolve 一遍
+    全部 enabled，所以这里即便漏改/多改，也会在下一次请求时自愈）。
+
+    冲突缓存单独处理：`_conflict_fingerprint()` 把**每个** Mod 的 enabled 位都算进
+    指纹，所以只要有一个 Mod 的启用状态真的翻转了，「参与冲突判定的启用集合」
+    就可能变了 → 置 `_LAST_CONFLICT_KEY = None`，下一次缓存命中分支发现
+    `fp != None` 就自动重算冲突（只重算冲突，不重扫文件）。
+    反过来，一次「什么都没翻转」的调用（例如重复启用同一个 Mod、或者混搭点到的
+    组合本来就是当前状态）不该让冲突缓存失效 —— 否则一次空操作也要白算一遍
+    O(N^3) 的冲突分析。
+    """
+    global _LAST_CONFLICT_KEY
+    if not updated or not _LAST_SCAN_RESULT:
+        return
+
+    wanted = {_normalize_mod_key(name): bool(value) for name, value in updated.items()}
+    flipped = False
+    for mod in _LAST_SCAN_RESULT:
+        key = _normalize_mod_key(mod.name)
+        if key not in wanted:
+            continue
+        target = wanted[key]
+        if bool(mod.enabled) != target:
+            mod.enabled = target
+            flipped = True
+
+    if flipped:
+        _LAST_CONFLICT_KEY = None
 
 
 def _get_vpk_cache_key(vpk_path: Path) -> str:
@@ -1574,6 +1614,9 @@ class ModScanner:
         self._pref_lock = threading.Lock()
         # 最近一次写 addonlist.txt 失败的原因（None = 上次写成功/还没写过）
         self._last_addonlist_error: Optional[str] = None
+        # 最近一次写 addonlist.txt 得到的内容指纹。写文件时不立刻落盘，
+        # 而是由调用方连同偏好/脏标记合并成一次 data.json 写（见 set_mods_states）。
+        self._last_addonlist_fingerprint: Optional[str] = None
 
     def last_addonlist_error(self) -> Optional[str]:
         """最近一次写 addonlist.txt 的失败原因（供路由层如实回报给界面）。"""
@@ -1641,11 +1684,15 @@ class ModScanner:
         except Exception:
             return ''
 
-    def _write_addonlist(self, entries: dict[str, bool]) -> bool:
+    def _write_addonlist(self, entries: dict[str, bool], record_state: bool = True) -> bool:
         """把 entries 里的启用状态写回 addonlist.txt（只改匹配到的行，其余原样保留）。
 
         返回是否真的写成功了。失败原因记在 self._last_addonlist_error 里 ——
         调用方必须据此决定要不要告诉界面「这次没生效」，而不是照样回一句成功。
+
+        ``record_state=False`` 时**不**立刻把内容指纹写进 data.json，而是留在
+        `self._last_addonlist_fingerprint` 里，由调用方和别的改动合并成一次写盘
+        （见 set_mods_states：一次切换原本要写 3 次 data.json）。
 
         以前是「用解析结果重建整个文件」：只要某个条目解析不到（编码差异、格式变体），
         它就会从文件里消失 —— 游戏随后会把「文件里不存在的 addon」当成默认启用写回，
@@ -1727,10 +1774,13 @@ class ModScanner:
 
             # 记下「软件自己写出来的内容」：下次扫描时若指纹对不上，
             # 就说明文件被外部（游戏 / Steam 云 / 手动编辑）改过，需要把改动采纳回来。
-            try:
-                set_addonlist_state(hashlib.md5(data).hexdigest(), str(addonlist_path))
-            except Exception as e:
-                print(f"[AddonList] Failed to record fingerprint: {e}")
+            fingerprint = hashlib.md5(data).hexdigest()
+            self._last_addonlist_fingerprint = fingerprint
+            if record_state:
+                try:
+                    set_addonlist_state(fingerprint, str(addonlist_path))
+                except Exception as e:
+                    print(f"[AddonList] Failed to record fingerprint: {e}")
             self._last_addonlist_error = None
             return True
         except Exception as e:
@@ -2355,28 +2405,44 @@ class ModScanner:
                 file_changed = True
                 changed_count += 1
 
-        if file_changed and not self._write_addonlist(addonlist):
-            # 文件没写成：state 照旧持久化（下次启动游戏前还会再试一次），
-            # 但必须把「这次没生效」带回去，否则界面会显示成功、游戏里却毫无变化。
-            result['write_error'] = self._last_addonlist_error or '写入 addonlist.txt 失败'
+        wrote_addonlist = False
+        self._last_addonlist_fingerprint = None
+        if file_changed:
+            # record_state=False：文件指纹先留在 self._last_addonlist_fingerprint 里，
+            # 下面和偏好 / 脏标记合并成一次 data.json 写盘。
+            wrote_addonlist = self._write_addonlist(addonlist, record_state=False)
+            if not wrote_addonlist:
+                # 文件没写成：state 照旧持久化（下次启动游戏前还会再试一次），
+                # 但必须把「这次没生效」带回去，否则界面会显示成功、游戏里却毫无变化。
+                result['write_error'] = self._last_addonlist_error or '写入 addonlist.txt 失败'
 
-        # 持久化用户选择（整个整合包只写一次 data.json）
+        # 持久化用户选择：一次切换只写一次 data.json。
+        # addonlist 指纹、每个 Mod 的启用偏好、「有改动还没应用」标记本来就住在同一份
+        # data.json 里，以前分三次调用 → 三次 fsync + 三次 .bak 备份；这里合成一次，
+        # 既快，也不会留下「偏好写进去了、指纹没写」这种半截状态。
+        addonlist_state = None
+        if wrote_addonlist and self._last_addonlist_fingerprint:
+            addonlist_path = self._get_addonlist_path()
+            addonlist_state = {
+                'fingerprint': self._last_addonlist_fingerprint,
+                'path': str(addonlist_path) if addonlist_path else None,
+            }
         try:
-            set_mods_enabled_bulk(effective)
-            # 只有真的写动了 addonlist 才标记「有改动还没应用」——
-            # 一次什么都没改的批量（例如混搭点到的组合本来就是当前状态、
-            # 或者成员名一个都没匹配上）不该把左下角的「应用」点亮。
-            if changed_count > 0:
-                set_prefs_dirty(True)
+            commit_mod_state_changes(
+                states=effective,
+                # 只有真的写动了 addonlist 才标记「有改动还没应用」——
+                # 一次什么都没改的批量（例如混搭点到的组合本来就是当前状态、
+                # 或者成员名一个都没匹配上）不该把左下角的「应用」点亮。
+                prefs_dirty=True if changed_count > 0 else None,
+                addonlist_state=addonlist_state,
+            )
         except Exception as e:
             print(f"[Packs] Failed to persist mod states: {e}")
         self.invalidate_mod_enabled_cache()
 
-        # 让下一次扫描带上新状态（否则缓存里还是旧值）
-        global _LAST_SCAN_KEY, _LAST_SCAN_RESULT, _LAST_CONFLICT_KEY
-        _LAST_SCAN_KEY = None
-        _LAST_SCAN_RESULT = []
-        _LAST_CONFLICT_KEY = None
+        # 让下一次扫描带上新状态：只就地更新这几个 Mod 的 enabled，
+        # 保留扫描结果与文件指纹缓存（详见 _apply_enabled_to_scan_cache）。
+        _apply_enabled_to_scan_cache(result['updated'])
 
         result['changed'] = changed_count
         return result
