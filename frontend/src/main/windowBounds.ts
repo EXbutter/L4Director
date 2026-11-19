@@ -33,6 +33,8 @@ export interface InitialWindow {
   width: number;
   height: number;
   maximized: boolean;
+  /** 这块窗口落在哪个显示器的工作区（没有显示器信息时为 undefined） */
+  area?: WorkArea;
 }
 
 /** 最小可用尺寸：1360×660 下仍是 3 张卡/行，且能塞进 1080p@150% 的工作区 */
@@ -62,6 +64,26 @@ function centeredIn(area: WorkArea, width: number, height: number): InitialWindo
     width,
     height,
     maximized: false,
+    area,
+  };
+}
+
+/**
+ * 实际生效的最小尺寸。
+ *
+ * `MIN_WINDOW_WIDTH/HEIGHT` 是「界面挤不坏」的下限，但屏幕可能比它更小
+ * （1080p@150% 的工作区只有 1280×680）。Electron 的 minWidth 大于屏幕时，
+ * 窗口会被撑出屏幕、右下角永远够不到 —— 这比「小一点」糟得多。
+ * 所以 min 一律夹进工作区，且与 defaultWindowFor 用同一套上限/留白（高度留 40px 给任务栏），
+ * 否则「首启算出来的 1280×640」会被 minHeight 顶成 660，和 §2.4 的表对不上。
+ */
+export function effectiveMinSize(area: WorkArea | undefined): { width: number; height: number } {
+  if (!area) return { width: MIN_WINDOW_WIDTH, height: MIN_WINDOW_HEIGHT };
+  const maxW = Math.max(640, Math.min(MAX_WINDOW_WIDTH, area.width));
+  const maxH = Math.max(480, Math.min(MAX_WINDOW_HEIGHT, area.height - 40));
+  return {
+    width: Math.round(Math.max(640, Math.min(MIN_WINDOW_WIDTH, maxW))),
+    height: Math.round(Math.max(480, Math.min(MIN_WINDOW_HEIGHT, maxH))),
   };
 }
 
@@ -103,6 +125,7 @@ export function restoreWindowInto(area: WorkArea, saved: SavedBounds): InitialWi
     width,
     height,
     maximized: !!saved.maximized,
+    area,
   };
 }
 

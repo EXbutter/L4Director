@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, session, Menu, MenuItem } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, session, Menu, MenuItem, screen } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -6,6 +6,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { createZip, ZipEntry } from './zip';
 import { importDroppedVpks } from './vpkImport';
 import { initUpdater, getUpdateState, getUpdaterLogPath } from './updater';
+import { computeInitialWindow, effectiveMinSize, type SavedBounds, type WorkArea } from './windowBounds';
 
 let mainWindow: BrowserWindow | null = null;
 let backendProcess: ChildProcess | null = null;
@@ -150,6 +151,97 @@ if (gpuAccelerationDisabled) {
 }
 // ========================================
 
+// ============ 窗口尺寸/位置记忆 ============
+// 写死的 1440×900 在 2K 上只占 56% 宽、在 1080p@150%（工作区 1280×680）上直接跑出屏幕，
+// 而且每次启动都回同一个尺寸。规则与取舍见 docs-internal/06 §2.4、纯函数在 windowBounds.ts。
+const WINDOW_BOUNDS_SAVE_DELAY = 400;
+
+/** 所有显示器的工作区，**主显示器排第一**（computeInitialWindow 以 areas[0] 为主屏） */
+function currentWorkAreas(): WorkArea[] {
+  try {
+    const primaryId = screen.getPrimaryDisplay().id;
+    const displays = screen.getAllDisplays();
+    const ordered = [
+      ...displays.filter((d) => d.id === primaryId),
+      ...displays.filter((d) => d.id !== primaryId),
+    ];
+    return ordered.map((d) => d.workArea);
+  } catch (e) {
+    console.error('[Window] Failed to read displays:', e);
+    return [];
+  }
+}
+
+/** 上次关闭时的窗口状态（来自 config.json 的 windowBounds；不合法时当没有） */
+function loadSavedWindowBounds(): SavedBounds | null {
+  const saved = loadConfig().windowBounds;
+  if (!saved || typeof saved !== 'object') return null;
+  const { x, y, width, height, maximized } = saved as Record<string, unknown>;
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+  const w = num(width);
+  const h = num(height);
+  if (w === undefined || h === undefined || w <= 0 || h <= 0) return null;
+  return { x: num(x), y: num(y), width: w, height: h, maximized: maximized === true };
+}
+
+/** 把窗口矩形写回 config.json（合并写，不覆盖 uiScale / windowTheme 等其它键） */
+function persistWindowBounds(win: BrowserWindow): void {
+  try {
+    if (win.isDestroyed()) return;
+    // 最大化时必须存 getNormalBounds()：isMaximized() 状态下 getBounds() 是满屏矩形，
+    // 下次「取消最大化」就会得到一块占满屏幕的普通窗口（不是用户上次的尺寸）。
+    const maximized = win.isMaximized();
+    const bounds = maximized ? win.getNormalBounds() : win.getBounds();
+    if (!bounds || bounds.width <= 0 || bounds.height <= 0) return;
+    const cfg = loadConfig();
+    cfg.windowBounds = {
+      x: Math.round(bounds.x),
+      y: Math.round(bounds.y),
+      width: Math.round(bounds.width),
+      height: Math.round(bounds.height),
+      maximized,
+    };
+    saveConfig(cfg);
+  } catch (e) {
+    console.error('[Window] Failed to persist bounds:', e);
+  }
+}
+
+/**
+ * 挂上 resize/move 防抖保存 + 关闭时保存。
+ * 拖动窗口时 resize/move 会连续触发几十次，不防抖就是几十次全量 config 写盘。
+ */
+function attachWindowBoundsPersistence(win: BrowserWindow): void {
+  let timer: NodeJS.Timeout | null = null;
+  const schedule = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      persistWindowBounds(win);
+    }, WINDOW_BOUNDS_SAVE_DELAY);
+  };
+  const flush = () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    persistWindowBounds(win);
+  };
+
+  win.on('resize', schedule);
+  win.on('move', schedule);
+  // 最大化/还原时 resize 也会触发，但这两个事件语义更明确，同样走防抖（用户连点最大化不写十次盘）
+  win.on('maximize', schedule);
+  win.on('unmaximize', schedule);
+  // close 之前写（destroyed 之后 getBounds 已经拿不到值）
+  win.on('close', flush);
+  win.on('closed', () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+  });
+}
+// ========================================
+
 // ============ 界面缩放（解决「字体太小/发虚」） ============
 // 用户反馈界面文字偏小、发虚。这里用 Chromium 自己的缩放（webContents.setZoomFactor）：
 // 它会让页面按缩放后的设备像素**重新光栅化**（不是把已有位图拉大），
@@ -202,6 +294,12 @@ ipcMain.on('perf:mark', (_event, name: string, payload?: Record<string, any>) =>
       (elapsed === null ? '' : ` (renderer ${elapsed} ms)`)
   );
   if (name === 'renderer-ready' || name === 'scan-done') persistStartupPerf();
+  // 启动即最大化时，maximize 事件里的 'window:maximized' 推送发生在渲染进程订阅之前
+  // （标题栏图标会显示成「最大化」）。渲染进程首个 rAF 后上报 renderer-ready，此时
+  // TitleBar 的订阅已经建立，补推一次真实状态即可，不必新增 IPC。
+  if (name === 'renderer-ready' && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('window:maximized', mainWindow.isMaximized());
+  }
   maybeBenchAutoQuit(name);
 });
 
@@ -230,11 +328,18 @@ function createWindow() {
   //     看起来像「内容不在窗口里 / 显示的边框和实际窗口边界不统一」。
   // 不透明窗口下内容边界 = 窗口边界，文字恢复亚像素渲染；圆角交给系统（Win11）。
   const windowTheme: 'light' | 'dark' = loadConfig().windowTheme === 'dark' ? 'dark' : 'light';
+  // 首启按工作区比例算（2K 上 1680×1000 多一列卡；1080p@150% 上不超出屏幕），
+  // 之后按 config.json 里的 windowBounds 恢复上次尺寸/位置（拔掉副屏则回主屏居中）。
+  const initialWindow = computeInitialWindow(currentWorkAreas(), loadSavedWindowBounds());
+  const minSize = effectiveMinSize(initialWindow.area);
   mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 1100,
-    minHeight: 700,
+    x: initialWindow.x,
+    y: initialWindow.y,
+    width: initialWindow.width,
+    height: initialWindow.height,
+    // 最小尺寸跟着屏幕走：1360×660 在 1280×680 的工作区上会被顶出屏幕
+    minWidth: minSize.width,
+    minHeight: minSize.height,
     frame: false,
     transparent: false,
     backgroundColor: WINDOW_BG_COLORS[windowTheme],
@@ -274,9 +379,14 @@ function createWindow() {
     event.preventDefault();
   });
 
-  // 窗口居中并渐入显示
-  mainWindow.center();
+  // 记住尺寸/位置：resize/move 防抖 400ms + 关闭时写回 config.json 的 windowBounds
+  attachWindowBoundsPersistence(mainWindow);
+
   mainWindow.once('ready-to-show', () => {
+    // 上次是最大化就恢复最大化。放在 ready-to-show 里而不是构造函数之后：
+    // Electron 的 maximize() 会顺带把「还没显示」的窗口显示出来（空窗口先闪一下）。
+    // 顺序是 maximize → show，否则隐藏状态下最大化在 Windows 上不生效。
+    if (initialWindow.maximized && mainWindow) mainWindow.maximize();
     markStartup('window-shown');
     mainWindow?.show();
   });
