@@ -31,7 +31,8 @@ import bench_scan  # noqa: E402
 os.environ['HOME'] = str(TEMP_HOME)
 os.environ['USERPROFILE'] = str(TEMP_HOME)
 
-import main as backend_main  # noqa: E402
+import app_state as backend_main  # noqa: E402  (thin main 已拆路由：scanner 走 app_state)
+from routers import mods as mods_router  # noqa: E402
 from services import mod_scanner  # noqa: E402
 from fastapi import HTTPException  # noqa: E402
 
@@ -169,14 +170,14 @@ log('')
 log('=' * 78)
 log(' 场景 5：API 校验')
 log('=' * 78)
-check('正常创建', backend_main.create_custom_tag_api({'name': '  收藏  '})['name'], '收藏')
-check('重名幂等', backend_main.create_custom_tag_api({'name': '收藏'})['tags'], ['收藏'])
+check('正常创建', mods_router.create_custom_tag_api({'name': '  收藏  '})['name'], '收藏')
+check('重名幂等', mods_router.create_custom_tag_api({'name': '收藏'})['tags'], ['收藏'])
 
 
 def expect_http(label, body, status, fragment=None):
     global failures
     try:
-        backend_main.create_custom_tag_api(body)
+        mods_router.create_custom_tag_api(body)
     except HTTPException as exc:
         ok = exc.status_code == status and (fragment is None or fragment in str(exc.detail))
         if not ok:
@@ -200,7 +201,7 @@ expect_http('ID: 前缀 → 400', {'name': 'ID: 123'}, 400, '创意工坊编号'
 def expect_delete_http(label, name, status, fragment=None):
     global failures
     try:
-        backend_main.delete_custom_tag_api(name)
+        mods_router.delete_custom_tag_api(name)
     except HTTPException as exc:
         ok = exc.status_code == status and (fragment is None or fragment in str(exc.detail))
         if not ok:
@@ -216,7 +217,7 @@ def expect_delete_http(label, name, status, fragment=None):
 expect_delete_http('删收藏标签 → 400（不是自定义标签）', FAV, 400, '不能删除')
 expect_delete_http('删内置大类 → 400', '武器', 400, '不能删除')
 
-check('删除返回剩余池', backend_main.delete_custom_tag_api('收藏')['tags'], [])
+check('删除返回剩余池', mods_router.delete_custom_tag_api('收藏')['tags'], [])
 
 log('')
 log('=' * 78)

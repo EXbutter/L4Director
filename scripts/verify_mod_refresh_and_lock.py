@@ -57,7 +57,8 @@ except Exception:
 from services import data_store as ds  # noqa: E402
 from services import mod_scanner as ms  # noqa: E402
 import bench_scan  # noqa: E402
-import main as backend_main  # noqa: E402
+import app_state as backend_main  # noqa: E402  (thin main 已拆路由：scanner 走 app_state)
+from routers import mods as mods_router  # noqa: E402
 
 
 # ── 临时 Mod 库：2 个本地 mod + 1 个创意工坊 mod ──────────────────────────────
@@ -102,12 +103,12 @@ def check(desc: str, got, expected):
 
 
 def scan_status() -> dict:
-    return backend_main.scan_status()
+    return mods_router.scan_status()
 
 
 def mod_names() -> list:
     """界面拿到的 Mod 名列表（即 /api/mods 返回的顺序）。"""
-    return sorted(m['name'] for m in backend_main.list_mods()['mods'])
+    return sorted(m['name'] for m in mods_router.list_mods()['mods'])
 
 
 def lock_held() -> int:

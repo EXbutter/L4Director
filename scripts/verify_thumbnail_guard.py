@@ -27,7 +27,9 @@ os.environ['HOME'] = str(TMP)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
 
 from fastapi import HTTPException  # noqa: E402
-import main as backend_main  # noqa: E402
+import app_state as backend_main  # noqa: E402  (thin main 已拆路由：scanner 走 app_state)
+from routers import media as media_router  # noqa: E402
+from routers import download as download_router  # noqa: E402
 from services.mod_scanner import ModScanner, _CACHE_DIR  # noqa: E402
 
 ok = True
@@ -73,44 +75,44 @@ def expect_http(label, fn, status):
 # ------------------------------------------------------ 1/2. 越界与非图片
 expect_http(
     'addons 之外的任意文件被拒绝',
-    lambda: backend_main.get_thumbnail(path=str(secret)),
+    lambda: media_router.get_thumbnail(path=str(secret)),
     403,
 )
 expect_http(
     'addons 里的非图片被拒绝',
-    lambda: backend_main.get_thumbnail(path=str(not_image)),
+    lambda: media_router.get_thumbnail(path=str(not_image)),
     403,
 )
 expect_http(
     '不存在的文件仍然是 404（不泄露存在性之外的信息）',
-    lambda: backend_main.get_thumbnail(path=str(TMP / 'nope.jpg')),
+    lambda: media_router.get_thumbnail(path=str(TMP / 'nope.jpg')),
     404,
 )
 
 # ------------------------------------------------------ 3/4. 合法路径
-resp = backend_main.get_thumbnail(path=str(cover))
+resp = media_router.get_thumbnail(path=str(cover))
 check('addons 里的封面可读', resp is not None, type(resp).__name__)
 check('封面 content-type 是 image/jpeg', resp.media_type == 'image/jpeg', str(resp.media_type))
 
-resp = backend_main.get_thumbnail(vpk_cover='abc123.jpg')
+resp = media_router.get_thumbnail(vpk_cover='abc123.jpg')
 check('缓存目录里的封面可读（走 vpk_cover）', resp is not None, type(resp).__name__)
 
 # ------------------------------------------------------ 5. wid 白名单
 expect_http(
     'wid 带路径穿越 → 400',
-    lambda: backend_main.download_thumbnail(wid='../../secret'),
+    lambda: download_router.download_thumbnail(wid='../../secret'),
     400,
 )
 expect_http(
     'wid 不是数字 → 400',
-    lambda: backend_main.download_thumbnail(wid='abc'),
+    lambda: download_router.download_thumbnail(wid='abc'),
     400,
 )
 
 # ------------------------------------------------------ 6. workshop 文件名
 expect_http(
     'workshop 缩略图不接受带目录的名字',
-    lambda: backend_main.get_workshop_thumbnail(filename='../addonlist.txt'),
+    lambda: media_router.get_workshop_thumbnail(filename='../addonlist.txt'),
     400,
 )
 

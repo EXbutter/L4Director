@@ -26,7 +26,7 @@ import bench_scan  # noqa: E402
 os.environ['HOME'] = str(TEMP_HOME)
 os.environ['USERPROFILE'] = str(TEMP_HOME)
 
-import main as backend_main  # noqa: E402
+import app_state as backend_main  # noqa: E402  (thin main 已拆路由：scanner 走 app_state)
 from services import mod_scanner  # noqa: E402
 
 REPORT = Path(__file__).resolve().parent / '_verify_tags_conflicts_out.txt'

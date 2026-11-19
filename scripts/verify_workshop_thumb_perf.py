@@ -26,7 +26,7 @@ os.environ['HOME'] = str(TMP)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
 
-import main as backend_main  # noqa: E402
+from routers import download as backend_main  # noqa: E402  (thin main 已拆路由：封面逻辑在 routers/download)
 
 ok = True
 GIF_HEAD = b'GIF89a\x58\x02\x58\x02\xf7\x00\x00' + b'\x00' * 600
@@ -72,25 +72,25 @@ check('akamai 图床也认', 'imw=320' in backend_main._preview_variant_url(
 
 # ---------------------------------------------------------------- 2. MIME 嗅探
 print('\n== 按文件头判 MIME ==')
-check('GIF87a', backend_main._image_mime_from_bytes(b'GIF87a' + b'\x00' * 20) == 'image/gif')
-check('GIF89a', backend_main._image_mime_from_bytes(GIF_HEAD) == 'image/gif')
-check('PNG', backend_main._image_mime_from_bytes(b'\x89PNG\r\n\x1a\n' + b'\x00' * 20) == 'image/png')
-check('JPEG', backend_main._image_mime_from_bytes(b'\xff\xd8\xff\xe0' + b'\x00' * 20) == 'image/jpeg')
-check('WEBP', backend_main._image_mime_from_bytes(b'RIFF' + b'\x00' * 4 + b'WEBP' + b'\x00' * 8) == 'image/webp')
+check('GIF87a', backend_main.image_mime_from_bytes(b'GIF87a' + b'\x00' * 20) == 'image/gif')
+check('GIF89a', backend_main.image_mime_from_bytes(GIF_HEAD) == 'image/gif')
+check('PNG', backend_main.image_mime_from_bytes(b'\x89PNG\r\n\x1a\n' + b'\x00' * 20) == 'image/png')
+check('JPEG', backend_main.image_mime_from_bytes(b'\xff\xd8\xff\xe0' + b'\x00' * 20) == 'image/jpeg')
+check('WEBP', backend_main.image_mime_from_bytes(b'RIFF' + b'\x00' * 4 + b'WEBP' + b'\x00' * 8) == 'image/webp')
 
 cache = fresh_cache_dir()
 fake = cache / '123.jpg'
 fake.write_bytes(GIF_HEAD)
 check('后缀写着 .jpg、内容是 GIF → 仍然报 image/gif（前端靠它选解码器）',
-      backend_main._sniff_file_mime(fake) == 'image/gif',
-      backend_main._sniff_file_mime(fake))
+      backend_main.sniff_file_mime(fake) == 'image/gif',
+      backend_main.sniff_file_mime(fake))
 fake.write_bytes(b'\xff\xd8\xff\xe0' + b'\x00' * 100)
-check('真 JPEG 不会被误判', backend_main._sniff_file_mime(fake) == 'image/jpeg')
+check('真 JPEG 不会被误判', backend_main.sniff_file_mime(fake) == 'image/jpeg')
 
 
 # ---------------------------------------------------------------- 3. 缓存策略
 print('\n== 缓存策略 ==')
-backend_main._dl = lambda: SimpleNamespace(outdir=str(TMP / 'addons'))   # 没有本地封面那份
+backend_main.download_manager = lambda: SimpleNamespace(outdir=str(TMP / 'addons'))   # 没有本地封面那份
 
 big = b'\xff\xd8\xff\xe0' + b'\x00' * (backend_main._THUMB_CACHE_MAX_FILE + 1024)
 backend_main.download_fetch_bytes = lambda url, **kw: big
