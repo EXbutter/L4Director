@@ -109,50 +109,54 @@ export function CoverageBoard({ onFillGaps }: { onFillGaps: (families: string[])
         </button>
       </div>
 
-      {open && (
-        <div className="cov-board__detail">
-          {families.map((f) => (
-            <div className="cov-fam" key={f.key}>
-              <span className="cov-fam__label">
-                {f.key}
-                <em>{f.covered}/{f.total}</em>
-              </span>
-              <div className="cov-fam__chips">
-                {f.entities.map((e) => {
-                  const hint = entityHint(e.name);
-                  if (e.providers.length > 0) {
-                    const names = e.providers.map((m) => m.display_name).join('\n');
+      {/* 明细常驻 DOM，靠 grid 0fr → 1fr 做高度过渡（不再 {open && <div>} 条件渲染：
+          否则展开「啪」一下弹开、收起瞬间消失）。 */}
+      <div className="cov-board__detail">
+        <div className="cov-board__detail-inner">
+          <div className="cov-board__detail-body">
+            {families.map((f) => (
+              <div className="cov-fam" key={f.key}>
+                <span className="cov-fam__label">
+                  {f.key}
+                  <em>{f.covered}/{f.total}</em>
+                </span>
+                <div className="cov-fam__chips">
+                  {f.entities.map((e) => {
+                    const hint = entityHint(e.name);
+                    if (e.providers.length > 0) {
+                      const names = e.providers.map((m) => m.display_name).join('\n');
+                      return (
+                        <span
+                          key={e.name}
+                          className={`cov-chip cov-chip--on${e.providers.length > 1 ? ' cov-chip--dup' : ''}`}
+                          title={`${hint} ← ${names}${
+                            e.providers.length > 1 ? '\n（有多个已启用的包都在换它，游戏里会互相覆盖）' : ''
+                          }`}
+                        >
+                          {e.label}
+                        </span>
+                      );
+                    }
                     return (
                       <span
                         key={e.name}
-                        className={`cov-chip cov-chip--on${e.providers.length > 1 ? ' cov-chip--dup' : ''}`}
-                        title={`${hint} ← ${names}${
-                          e.providers.length > 1 ? '\n（有多个已启用的包都在换它，游戏里会互相覆盖）' : ''
-                        }`}
+                        className={`cov-chip cov-chip--off${e.available === 0 ? ' cov-chip--none' : ''}`}
+                        title={
+                          e.available === 0
+                            ? `${hint}：库里没有替换它的 Mod`
+                            : `${hint}：没有启用任何替换它的 Mod\n库里有 ${e.available} 个，可在「一键混搭」里挑`
+                        }
                       >
                         {e.label}
                       </span>
                     );
-                  }
-                  return (
-                    <span
-                      key={e.name}
-                      className={`cov-chip cov-chip--off${e.available === 0 ? ' cov-chip--none' : ''}`}
-                      title={
-                        e.available === 0
-                          ? `${hint}：库里没有替换它的 Mod`
-                          : `${hint}：没有启用任何替换它的 Mod\n库里有 ${e.available} 个，可在「一键混搭」里挑`
-                      }
-                    >
-                      {e.label}
-                    </span>
-                  );
-                })}
+                  })}
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

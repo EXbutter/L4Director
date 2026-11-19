@@ -132,7 +132,35 @@
   }
 }
 
+// 成员明细折叠高度过渡：外层 grid 0fr → 1fr（和工坊筛选分组同一个做法，
+// 不用 max-height —— 明细高度随成员数变化，写死上限会让缓动曲线失真）。
+// 分隔线/间距放在最深一层的 body 上：收起时整块被 0fr 压扁，
+// 这条虚线边框与上边距一起消失，不会在收起态漏一根线。
 .cov-board__detail {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.26s var(--ease-soft);
+}
+
+.cov-board--open .cov-board__detail {
+  grid-template-rows: 1fr;
+}
+
+// overflow hidden + min-height 0 是 0fr 能真正压扁内容的必要条件
+.cov-board__detail-inner {
+  overflow: hidden;
+  min-height: 0;
+  // 收起后立刻隐藏（内容无可聚焦元素，这里只为防过渡最后一帧闪一下空白）
+  visibility: hidden;
+  transition: visibility 0s linear 0.26s;
+}
+
+.cov-board--open .cov-board__detail-inner {
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+.cov-board__detail-body {
   margin-top: 7px;
   padding-top: 7px;
   border-top: 1px dashed var(--border-color);

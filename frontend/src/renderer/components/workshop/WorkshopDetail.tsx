@@ -15,9 +15,11 @@ interface Props {
   onOpenInBrowser: (item: WorkshopItem) => void;
   queued: boolean;
   busy: boolean;
+  /** 正在播放关闭退场动画：给遮罩与抽屉挂退场 class，动画结束后由父组件卸载 */
+  closing?: boolean;
 }
 
-export function WorkshopDetail({ item, api, onClose, onQueue, onDownloadNow, onOpenInBrowser, queued, busy }: Props) {
+export function WorkshopDetail({ item, api, onClose, onQueue, onDownloadNow, onOpenInBrowser, queued, busy, closing = false }: Props) {
   // Esc 关闭 + 焦点陷阱，和项目里其它弹窗保持一致
   const ref = useModalA11y<HTMLDivElement>(true, onClose);
 
@@ -71,7 +73,7 @@ export function WorkshopDetail({ item, api, onClose, onQueue, onDownloadNow, onO
   const activeIndex = Math.min(active, Math.max(0, gallery.length - 1));
 
   return (
-    <div className="wk-drawer-mask" onClick={onClose}>
+    <div className={`wk-drawer-mask${closing ? ' wk-drawer-mask--closing' : ''}`} onClick={onClose}>
       <div className="wk-drawer" ref={ref} onClick={(e) => e.stopPropagation()}>
         <div className="wk-drawer__head">
           <span className="wk-drawer__id">#{item.id}</span>

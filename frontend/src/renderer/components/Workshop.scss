@@ -786,6 +786,27 @@
   to { transform: none; }
 }
 
+/* 关闭退场：抽屉右滑 + 遮罩淡出。和入场对称 —— 遮罩单独淡出（0.2s 更短），
+   抽屉只做位移、不叠 opacity（避免组不透明度叠乘）。forwards 让最后一帧
+   （34px 偏移 / 全透明）保持到父组件在动画结束后把它卸载为止。 */
+.wk-drawer-mask--closing {
+  animation: wk-mask-out 0.2s var(--ease-standard) forwards;
+}
+
+.wk-drawer-mask--closing .wk-drawer {
+  animation: wk-drawer-out 0.26s var(--ease-soft) forwards;
+}
+
+@keyframes wk-drawer-out {
+  from { transform: none; }
+  to { transform: translate3d(34px, 0, 0); }
+}
+
+@keyframes wk-mask-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
 .wk-drawer__head {
   flex-shrink: 0;
   display: flex;

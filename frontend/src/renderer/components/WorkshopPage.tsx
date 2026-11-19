@@ -10,6 +10,9 @@ import './ContentArea.scss';
 import './Workshop.scss';
 
 const SEARCH_DEBOUNCE_MS = 400;
+// 抽屉退场动画时长：与 Workshop.scss 的 wk-drawer-out 保持一致
+// （遮罩淡出 0.2s 更短，取抽屉的 0.26s）。
+const DRAWER_EXIT_MS = 260;
 
 export function WorkshopPage() {
   const api = getApiBase();
@@ -38,6 +41,28 @@ export function WorkshopPage() {
   const [error, setError] = useState('');
 
   const [detail, setDetail] = useState<WorkshopItem | null>(null);
+  const [detailClosing, setDetailClosing] = useState(false);
+  const detailExitTimer = useRef<number | null>(null);
+  const closeDetail = useCallback(() => {
+    // 退场动画期间保留 DOM，给遮罩/抽屉挂 --closing class；
+    // 动画结束后（按 DRAWER_EXIT_MS）再真正卸载，避免瞬间消失。
+    setDetailClosing(true);
+    if (detailExitTimer.current !== null) window.clearTimeout(detailExitTimer.current);
+    detailExitTimer.current = window.setTimeout(() => {
+      detailExitTimer.current = null;
+      setDetail(null);
+      setDetailClosing(false);
+    }, DRAWER_EXIT_MS);
+  }, []);
+  const openDetail = useCallback((item: WorkshopItem) => {
+    // 关闭动画进行中又点了别的卡：取消未决的卸载定时器，直接打开新的
+    if (detailExitTimer.current !== null) {
+      window.clearTimeout(detailExitTimer.current);
+      detailExitTimer.current = null;
+    }
+    setDetailClosing(false);
+    setDetail(item);
+  }, []);
   const [queued, setQueued] = useState<Record<string, boolean>>({});
   const [queueing, setQueueing] = useState(false);
 
@@ -129,8 +154,6 @@ export function WorkshopPage() {
     () => (onlyNew ? items.filter((it) => !it.downloaded) : items),
     [items, onlyNew],
   );
-
-  const openDetail = (item: WorkshopItem) => setDetail(item);
 
   const openInBrowser = useCallback((item: WorkshopItem) => {
     const url = `https://steamcommunity.com/sharedfiles/filedetails/?id=${item.id}`;
@@ -369,12 +392,13 @@ export function WorkshopPage() {
         <WorkshopDetail
           item={detail}
           api={api}
-          onClose={() => setDetail(null)}
+          onClose={closeDetail}
           onQueue={queue}
           onDownloadNow={downloadNow}
           onOpenInBrowser={openInBrowser}
           queued={!!queued[detail.id]}
           busy={queueing}
+          closing={detailClosing}
         />
       )}
     </div>
