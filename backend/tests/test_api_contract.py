@@ -208,6 +208,140 @@ def test_状态接口汇总扫描性能(client, make_mod):
     assert body['last_scan_perf']['mods'] == 1
 
 
+def test_状态接口带官方基准状态(client, addons_dir):
+    """拿不到 pak01_dir.vpk 时冲突判定会静默降级，界面必须能看出来。
+
+    三种「不可用」档位要分得开：没配 addons 路径 / pak 不存在 / pak 解析失败。
+    """
+    from services import mod_scanner as ms
+
+    ms._OFFICIAL_INDEX_CACHE.clear()
+    body = client.get('/api/status').json()
+    baseline = body['official_baseline']
+    # addons_dir = <tmp>/left4dead2/addons，游戏根就是 <tmp>，这里还没放 pak01
+    assert baseline['available'] is False
+    assert baseline['reason'] == 'pak_not_found'
+    assert str(addons_dir.parent / 'pak01_dir.vpk') == baseline['path']
+    assert 'pak01_dir.vpk' in baseline['message']
+
+
+def test_状态接口未配置路径时基准不可用(client, monkeypatch):
+    """没设 addons 路径 → 连游戏根都推不出来，档位要区分于「pak 不存在」。"""
+    import app_state
+
+    monkeypatch.setattr(app_state.scanner, 'get_addons_path', lambda: None)
+    baseline = client.get('/api/status').json()['official_baseline']
+    assert baseline['available'] is False
+    assert baseline['reason'] == 'addons_not_configured'
+    assert baseline['path'] is None
+
+
+def test_状态接口基准解析失败时档位是_parse_failed(client, addons_dir):
+    """pak 在、但读不出目录树（下坏了/被杀软截断）→ 同样是降级，原因不同。"""
+    from services import mod_scanner as ms
+
+    pak = addons_dir.parent / 'pak01_dir.vpk'
+    pak.write_bytes(b'not a vpk at all' * 8)
+    ms._OFFICIAL_INDEX_CACHE.clear()
+
+    baseline = client.get('/api/status').json()['official_baseline']
+    assert baseline['available'] is False
+    assert baseline['reason'] == 'parse_failed'
+    assert baseline['path'] == str(pak)
+
+
+def test_状态接口基准可用时带条目数(client, addons_dir):
+    """正常情况：available=True、entries 是官方路径条数，且不改变原有字段。"""
+    from services import mod_scanner as ms
+    from support import vpkbuild
+
+    vpkbuild.write_vpk(
+        addons_dir.parent / 'pak01_dir.vpk',
+        {
+            'materials/models/weapons/w_rifle.vmt': b'official-vmt',
+            'scripts/weapon_rifle.txt': b'official-script',
+        },
+    )
+    ms._OFFICIAL_INDEX_CACHE.clear()
+
+    body = client.get('/api/status').json()
+    baseline = body['official_baseline']
+    assert baseline['available'] is True
+    assert baseline['reason'] == ''
+    assert baseline['entries'] == 2
+    # 只增不改：原有字段一个不少
+    assert set(body) >= {
+        'game_detected', 'mod_count', 'workshop_count', 'game_path',
+        'addons_configured', 'last_scan_perf', 'data_recovery',
+    }
+
+
+def test_官方基准状态走进程缓存不重复读盘(client, addons_dir, monkeypatch):
+    """`/api/status` 不能每次请求都重读 50ms 的 pak01 目录树。"""
+    from services import mod_scanner as ms
+    from support import vpkbuild
+
+    vpkbuild.write_vpk(
+        addons_dir.parent / 'pak01_dir.vpk',
+        {'materials/models/weapons/w_rifle.vmt': b'official-vmt'},
+    )
+    ms._OFFICIAL_INDEX_CACHE.clear()
+    ms._OFFICIAL_INDEX_ERRORS.clear()
+
+    calls = []
+    original = ms.OfficialIndex.from_game.__func__
+
+    def counting(cls, game_root, verbose=False):
+        calls.append(str(game_root))
+        return original(cls, game_root, verbose)
+
+    monkeypatch.setattr(ms.OfficialIndex, 'from_game', classmethod(counting))
+
+    client.get('/api/status')
+    client.get('/api/status')
+    client.get('/api/status')
+
+    assert len(calls) == 1, f'官方基准被重复解析 {len(calls)} 次，应该按 mtime 命中缓存'
+
+
+def test_官方基准解析失败也按_mtime_缓存(client, addons_dir, monkeypatch):
+    """pak 下坏时不该每个请求都撞一遍解析、往日志里刷同一行错误。"""
+    from services import mod_scanner as ms
+
+    pak = addons_dir.parent / 'pak01_dir.vpk'
+    pak.write_bytes(b'not a vpk at all' * 8)
+    ms._OFFICIAL_INDEX_CACHE.clear()
+    ms._OFFICIAL_INDEX_ERRORS.clear()
+
+    calls = []
+    original = ms.OfficialIndex.from_game.__func__
+
+    def counting(cls, game_root, verbose=False):
+        calls.append(str(game_root))
+        return original(cls, game_root, verbose)
+
+    monkeypatch.setattr(ms.OfficialIndex, 'from_game', classmethod(counting))
+
+    for _ in range(3):
+        baseline = client.get('/api/status').json()['official_baseline']
+        assert baseline['available'] is False
+        assert baseline['reason'] == 'parse_failed'
+        assert 'not a vpk' in baseline['message'] or 'VPK' in baseline['message']
+
+    assert len(calls) == 1, f'解析失败被重试 {len(calls)} 次，应该按 mtime 记住失败'
+
+    # pak 被修好（mtime 变了）→ 立刻恢复可用，不会一直卡在失败状态
+    from support import vpkbuild
+
+    vpkbuild.write_vpk(
+        pak,
+        {'materials/models/weapons/w_rifle.vmt': b'official-vmt'},
+    )
+    baseline = client.get('/api/status').json()['official_baseline']
+    assert baseline['available'] is True
+    assert baseline['entries'] == 1
+
+
 def test_缓存统计接口字段齐全(client):
     body = client.get('/api/cache/stats').json()
     assert set(body) >= {'total_bytes', 'total_files', 'dirs'}

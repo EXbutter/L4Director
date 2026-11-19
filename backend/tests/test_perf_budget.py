@@ -40,6 +40,8 @@ def reset_caches():
     ms._VPK_METADATA_CACHE.clear()
     ms._VPK_MANIFEST_CACHE.clear()
     ms._VPK_INDEX_CACHE.clear()
+    ms._OFFICIAL_INDEX_CACHE.clear()
+    ms._OFFICIAL_INDEX_ERRORS.clear()
 
 
 @pytest.mark.perf
@@ -105,6 +107,30 @@ def test_mod_列表的_json_体积预算(client, addons_dir):
     per_mod_kb = payload_kb / 120
 
     assert per_mod_kb < 3.0, f'每个 Mod 的 JSON 平均 {per_mod_kb:.2f}KB，超出预算 3KB'
+
+
+@pytest.mark.perf
+def test_状态接口预算(client, addons_dir):
+    """`/api/status` 预算 150ms：它多带了一个「官方基准是否可用」字段，
+    必须走 pak01 的 mtime 进程缓存，不能每次请求都重读 22k 条目录树。"""
+    build_library(addons_dir, 120)
+    # 造一个真的 pak01_dir.vpk：这条用例要覆盖「基准可用」的最贵路径（首次解析 + 之后命中缓存）
+    vpkbuild.write_vpk(
+        addons_dir.parent / 'pak01_dir.vpk',
+        {f'materials/models/official/asset_{i:03d}.vmt': b'official' for i in range(64)},
+    )
+    reset_caches()
+    ms._OFFICIAL_INDEX_CACHE.clear()
+
+    client.get('/api/status')  # 预热：冷扫描 + 首次解析 pak01
+
+    started = time.perf_counter()
+    res = client.get('/api/status')
+    warm_ms = (time.perf_counter() - started) * 1000
+
+    assert res.status_code == 200
+    assert res.json()['official_baseline']['available'] is True
+    assert warm_ms < 150, f'/api/status 耗时 {warm_ms:.0f}ms，超出预算 150ms'
 
 
 @pytest.mark.perf

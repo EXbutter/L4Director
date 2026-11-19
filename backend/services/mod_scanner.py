@@ -482,6 +482,9 @@ _VPK_METADATA_CACHE: dict[str, dict] = _BoundedCache(600)
 _INDEX_VERSION = 1
 _VPK_INDEX_CACHE: dict[str, dict[str, tuple[int, int]]] = _BoundedCache(400)
 _OFFICIAL_INDEX_CACHE: dict[str, tuple[float, object]] = _BoundedCache(8)
+# 官方名单「解析失败」的记录（key 与上面相同，值是 (mtime, 错误信息)）：
+# pak01 下坏时不该每次 /api/status 都去撞一遍解析并刷一行日志。
+_OFFICIAL_INDEX_ERRORS: dict[str, tuple[float, str]] = _BoundedCache(8)
 _LAST_SCAN_KEY: Optional[str] = None
 _LAST_SCAN_RESULT: list[ModInfo] = []
 # 冲突检测结果缓存：仅当“启用状态指纹”变化时才重算（避免每次请求都重复 O(N^3) 计算）
@@ -1182,35 +1185,99 @@ def _get_vpk_index(path: Path) -> dict[str, tuple[int, int]]:
     return out
 
 
+def _official_index_state(addons_path: Optional[str]) -> tuple[Optional[OfficialIndex], dict]:
+    """返回（官方资源名单 or None，给界面看的基准状态）。
+
+    「拿不到基准」不是报错，而是一种**静默降级**：`hard` 冲突要三个条件同时成立，
+    其中一条是「路径在官方名单里」；名单缺失时 `severity_of()` 会把所有路径都当成
+    私有路径，`hard` 整片降级成 `soft`（只进 `conflict_hints`）—— 界面上看起来就是
+    「红点全没了」，却一句提示都没有。所以这里把「为什么没有基准」分三档带出去，
+    让 `/api/status` 能如实告诉用户当前处在降级状态。
+
+    三种情况：没配 addons 路径 / pak01_dir.vpk 不存在 / pak01_dir.vpk 解析失败。
+
+    读 pak01 的目录树约 50ms，按 pak 的 mtime 缓存在进程内（与冲突判定共用
+    `_OFFICIAL_INDEX_CACHE`）；命中缓存时这里只多一次 stat，不会重读文件。
+    """
+    status: dict = {
+        'available': False,
+        'reason': '',
+        'message': '',
+        'path': None,
+        'entries': 0,
+    }
+
+    if not addons_path:
+        status['reason'] = 'addons_not_configured'
+        status['message'] = '还没有设置 addons 目录，无法定位游戏本体'
+        return None, status
+
+    try:
+        game_root = Path(addons_path).resolve().parent.parent
+    except Exception as e:
+        status['reason'] = 'addons_not_configured'
+        status['message'] = f'addons 路径无法解析：{e}'
+        return None, status
+
+    pak = game_root / 'left4dead2' / 'pak01_dir.vpk'
+    status['path'] = str(pak)
+    try:
+        mtime = pak.stat().st_mtime
+    except Exception:
+        status['reason'] = 'pak_not_found'
+        status['message'] = f'找不到游戏本体资源包 {pak}'
+        return None, status
+
+    key = str(pak)
+    hit = _OFFICIAL_INDEX_CACHE.get(key)
+    if hit is not None and hit[0] == mtime:
+        status['available'] = True
+        status['entries'] = len(getattr(hit[1], 'paths', ()) or ())
+        return hit[1], status
+
+    # 「解析失败」也按 mtime 记住：pak 下坏了的时候，每次 /api/status 都去撞一遍
+    # 解析既白费 I/O，还会反复往日志里刷同一行错误。文件被修好（验证完整性）后
+    # mtime 会变，这里自然重新尝试。
+    failed = _OFFICIAL_INDEX_ERRORS.get(key)
+    if failed is not None and failed[0] == mtime:
+        status['reason'] = 'parse_failed'
+        status['message'] = f'读取 {pak} 失败：{failed[1]}'
+        return None, status
+
+    try:
+        idx = OfficialIndex.from_game(game_root)
+    except Exception as e:
+        print(f"[Conflict] 读取官方资源名单失败: {e}")
+        _OFFICIAL_INDEX_ERRORS[key] = (mtime, str(e))
+        status['reason'] = 'parse_failed'
+        status['message'] = f'读取 {pak} 失败：{e}'
+        return None, status
+    _OFFICIAL_INDEX_ERRORS.pop(key, None)
+    _OFFICIAL_INDEX_CACHE[key] = (mtime, idx)
+    status['available'] = True
+    status['entries'] = len(idx.paths)
+    return idx, status
+
+
 def _get_official_index(addons_path: Optional[str]):
     """游戏本体资源名单（含 CRC），用于识别「原版副本」和判断是否官方路径。
 
     只读 pak01_dir.vpk 的目录树，约 50ms；按 pak 的 mtime 缓存在进程内。
     addons_path = <game>/left4dead2/addons，往上两级就是游戏根目录。
     """
-    if not addons_path:
-        return None
-    try:
-        game_root = Path(addons_path).resolve().parent.parent
-    except Exception:
-        return None
-    pak = game_root / 'left4dead2' / 'pak01_dir.vpk'
-    try:
-        mtime = pak.stat().st_mtime
-    except Exception:
-        return None
+    return _official_index_state(addons_path)[0]
 
-    key = str(pak)
-    hit = _OFFICIAL_INDEX_CACHE.get(key)
-    if hit is not None and hit[0] == mtime:
-        return hit[1]
-    try:
-        idx = OfficialIndex.from_game(game_root)
-    except Exception as e:
-        print(f"[Conflict] 读取官方资源名单失败: {e}")
-        return None
-    _OFFICIAL_INDEX_CACHE[key] = (mtime, idx)
-    return idx
+
+def official_baseline_status(addons_path: Optional[str]) -> dict:
+    """官方基准是否可用 —— 供 `/api/status` 汇报、设置页提示「冲突判定已降级」。
+
+    返回 `{available, reason, message, path, entries}`：
+    `reason` 是机器可读的档位（addons_not_configured / pak_not_found / parse_failed），
+    `message` 是给用户看的一句话（带可复制的路径），`entries` 是名单条目数（可用时）。
+
+    走的是冲突判定同一份 mtime 进程缓存：正常情况下只多一次 stat。
+    """
+    return _official_index_state(addons_path)[1]
 
 
 def _conflict_entry(c, reports: dict, indices: dict) -> dict:

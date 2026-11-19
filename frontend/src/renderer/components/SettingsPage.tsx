@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ChangeEvent, CSSProperties } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useStore, getApiBase } from '../store/useStore';
 import { FONT_PRESETS } from '../utils/uiFont';
 import { ACCENT_PRESETS } from '../utils/themeColor';
@@ -16,6 +17,24 @@ import { showToast } from './Toast';
 // 少了它设置页的容器无法撑满主区域，会出现“顶部栏与底部之间一条真空空隙、内容显示不全”的问题
 import './ContentArea.scss';
 import './SettingsPage.scss';
+
+/**
+ * 官方基准（游戏本体 `pak01_dir.vpk`）的可用性，来自 `/api/status` 的 `official_baseline`。
+ *
+ * 为什么设置页要关心它：`hard` 冲突要求「同一路径 + 内容指纹不同 + 路径在官方名单里」。
+ * 拿不到名单时后端会把所有路径当成私有路径，`hard` 整片降级成 `soft`（只进
+ * `conflict_hints`），**不报错** —— 用户只会觉得「软件不认冲突了」。所以这里把
+ * 「为什么没有基准」如实显示出来。
+ */
+interface OfficialBaseline {
+  available: boolean;
+  /** addons_not_configured / pak_not_found / parse_failed；可用时为空串 */
+  reason?: string;
+  /** 给用户看的一句话（含可复制的路径） */
+  message?: string;
+  path?: string | null;
+  entries?: number;
+}
 
 /** 无级滑杆的数值展示：去掉多余的小数位（8 -> 8，8.5 -> 8.5） */
 function formatStepless(value: number): string {
@@ -41,14 +60,19 @@ function formatBytes(bytes: number): string {
 const UI_SCALE_OPTIONS = [1, 1.1, 1.2, 1.3, 1.5];
 
 export function SettingsPage() {
+  // 只订阅本页真正用到的字段，并用 useShallow 做浅比较：以前这里是 `useStore()`
+  // 整店订阅，store 里任何一处变化（Mod 列表、扫描进度、工坊检查、弹窗…）都会把
+  // 整个设置页重渲染一遍。设置页本身不便宜（一堆开关 + 背景预览），没必要跟着抖。
+  // 注意：selector 每次返回新对象，必须套 useShallow，否则会无限重渲染。
   const {
     addonsPath,
     setAddonsPath,
     autoDetectPath,
     fetchSettings,
+    fetchStatus,
     refreshAll,
     status,
-    mods,
+    modCount,
     background,
     setBackground,
     showMascot,
@@ -73,7 +97,46 @@ export function SettingsPage() {
     checkWorkshopUpdates,
     cancelWorkshopCheck,
     setWorkshopUpdateSettings,
-  } = useStore();
+  } = useStore(useShallow((s) => ({
+    addonsPath: s.addonsPath,
+    setAddonsPath: s.setAddonsPath,
+    autoDetectPath: s.autoDetectPath,
+    fetchSettings: s.fetchSettings,
+    fetchStatus: s.fetchStatus,
+    refreshAll: s.refreshAll,
+    status: s.status,
+    // 只要数量：订阅整个 mods 数组会让「切换任意一个 Mod」都重渲染设置页，
+    // 而这里唯一用到它的地方是「当前已检测到 N 个 Mod」。
+    modCount: s.mods.length,
+    background: s.background,
+    setBackground: s.setBackground,
+    showMascot: s.showMascot,
+    toggleMascot: s.toggleMascot,
+    themeTransition: s.themeTransition,
+    toggleThemeTransition: s.toggleThemeTransition,
+    accentColor: s.accentColor,
+    setAccentColor: s.setAccentColor,
+    showFps: s.showFps,
+    toggleFps: s.toggleFps,
+    uiScale: s.uiScale,
+    setUiScale: s.setUiScale,
+    fetchUiScale: s.fetchUiScale,
+    uiFontKey: s.uiFontKey,
+    setUiFont: s.setUiFont,
+    gpuAccelerationDisabled: s.gpuAccelerationDisabled,
+    gpuAccelerationLoading: s.gpuAccelerationLoading,
+    fetchGpuAccelerationStatus: s.fetchGpuAccelerationStatus,
+    toggleGpuAcceleration: s.toggleGpuAcceleration,
+    exportLogs: s.exportLogs,
+    workshopUpdates: s.workshopUpdates,
+    checkWorkshopUpdates: s.checkWorkshopUpdates,
+    cancelWorkshopCheck: s.cancelWorkshopCheck,
+    setWorkshopUpdateSettings: s.setWorkshopUpdateSettings,
+  })));
+
+  // `/api/status` 新增的字段（本任务只改设置页，不动 store 的类型定义，
+  // 所以这里按「可选扩展字段」读，老后端没有它时是 undefined，不会崩）。
+  const baseline = (status as { official_baseline?: OfficialBaseline } | null)?.official_baseline;
 
   const [inputPath, setInputPath] = useState(addonsPath || '');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -122,6 +185,10 @@ export function SettingsPage() {
 
   useEffect(() => {
     fetchSettings();
+    // 官方基准状态（/api/status.official_baseline）在这里再拉一次：它决定是否显示
+    // 「冲突判定已降级」的提示，而用户很可能就是刚从「我的 Mod」页发现问题才进来的。
+    // 后端按 pak01 的 mtime 缓存，重复拉只是一次 stat。
+    fetchStatus();
     fetchGpuAccelerationStatus();
     // 主进程在窗口创建时就按配置文件设置了 zoom factor：这里同步一次，
     // 保证设置页显示的比例与实际生效的一致（localStorage 只用于首屏兜底）
@@ -325,7 +392,7 @@ export function SettingsPage() {
               设置 Left 4 Dead 2 的 <code>addons</code> 目录路径，用于扫描和检测 Mod 文件。
               {status?.mod_count !== undefined && (
                 <span className="settings-desc-stats">
-                  当前已检测到 <strong>{mods.length}</strong> 个 Mod
+                  当前已检测到 <strong>{modCount}</strong> 个 Mod
                 </span>
               )}
             </p>
@@ -364,6 +431,30 @@ export function SettingsPage() {
                 <span className="settings-current-label">当前路径：</span>
                 <span className="settings-current-path">{addonsPath}</span>
               </div>
+            )}
+
+            {/*
+              官方基准缺失 = 冲突判定已降级。只在「配了 addons 路径、但拿不到
+              pak01_dir.vpk」时显示：没配路径时上面那条路径提示已经说明了原因，
+              再叠一句降级只会让人以为软件坏了。
+              文案刻意不吓人：说清「现在只能看路径重叠」+「怎么恢复」。
+            */}
+            {addonsPath && baseline && !baseline.available && (
+              <p className="settings-hint settings-hint--warn" style={{ marginTop: 10 }}>
+                冲突判定已降级：只能显示路径重叠，无法判定真冲突。
+                {baseline.reason === 'pak_not_found' ? (
+                  <>
+                    {' '}没找到游戏本体的 <code>left4dead2\pak01_dir.vpk</code>
+                    {baseline.path ? <>（{baseline.path}）</> : null}
+                    —— 通常是把 addons 路径指到了非游戏目录，或游戏本体不完整（验证游戏文件完整性可修复）。
+                  </>
+                ) : (
+                  <>
+                    {' '}{baseline.message || '读取 pak01_dir.vpk 失败（文件可能已损坏）'}
+                    —— 验证游戏文件完整性后重新扫描即可恢复。
+                  </>
+                )}
+              </p>
             )}
           </div>
         </div>

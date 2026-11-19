@@ -14,7 +14,13 @@ from fastapi.responses import Response, StreamingResponse
 import app_state
 from app_state import APP_VERSION, BACKEND_DIR
 from services.data_store import get_last_recovery
-from services.mod_scanner import _CACHE_DIR, cache_gc, cache_stats, get_last_scan_perf
+from services.mod_scanner import (
+    _CACHE_DIR,
+    cache_gc,
+    cache_stats,
+    get_last_scan_perf,
+    official_baseline_status,
+)
 
 router = APIRouter()
 
@@ -35,6 +41,10 @@ def get_status():
         "workshop_count": len([m for m in mods if m.is_workshop]),
         "game_path": addons_path,
         "addons_configured": addons_path is not None,
+        # 官方基准（游戏本体 pak01_dir.vpk）是否可用。拿不到时冲突判定会静默降级：
+        # hard 冲突整片变 soft、只进 conflict_hints，界面上看起来就是「红点全没了」。
+        # 这里如实带出去，设置页据此提示「冲突判定已降级」，而不是让用户以为软件不认冲突了。
+        "official_baseline": official_baseline_status(addons_path),
         # 最近一次扫描的性能数据（耗时/吞吐线索），便于前端展示与排障
         "last_scan_perf": get_last_scan_perf(),
         # 配置文件曾经损坏、已被隔离留档时带上记录，界面据此提示用户去备份里找回

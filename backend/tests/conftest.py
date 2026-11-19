@@ -64,6 +64,10 @@ def _fresh_store(monkeypatch):
     ms._VPK_METADATA_CACHE.clear()
     ms._VPK_MANIFEST_CACHE.clear()
     ms._VPK_INDEX_CACHE.clear()
+    # 官方基准（pak01_dir.vpk）按 mtime 缓存，失败也会被记住：不清的话上一个用例
+    # 造出来的「坏 pak」结论会渗到下一个用例（同一 tmp 路径复用时尤其明显）。
+    ms._OFFICIAL_INDEX_CACHE.clear()
+    ms._OFFICIAL_INDEX_ERRORS.clear()
     ms.invalidate_sidecar_cache()
 
     # 每个用例一份独立的 addons 目录，避免 Mod 互相看见
