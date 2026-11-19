@@ -47,7 +47,13 @@ function FpsMeter() {
 }
 
 export function TitleBar() {
-  const { theme, toggleTheme, isMaximized, setMaximized, showFps } = useStore();
+  // 只订阅这五个字段（以前是 `useStore()` 整店订阅：扫描进度、工坊轮询、
+  // Mod 列表变化都会重渲染标题栏）。这里全是原始值/稳定引用，无需 useShallow。
+  const theme = useStore((s) => s.theme);
+  const toggleTheme = useStore((s) => s.toggleTheme);
+  const isMaximized = useStore((s) => s.isMaximized);
+  const setMaximized = useStore((s) => s.setMaximized);
+  const showFps = useStore((s) => s.showFps);
 
   useEffect(() => {
     window.electronAPI?.onMaximized((maximized: boolean) => {

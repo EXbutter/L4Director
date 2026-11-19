@@ -19,6 +19,7 @@ import { PerfOverlay } from './components/PerfOverlay';
 import { ConfirmHost } from './components/ConfirmDialog';
 import { WorkshopUpdateDock } from './components/WorkshopUpdateDock';
 import { useStore, setBackendApiBase } from './store/useStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useUpdateStore } from './store/useUpdateStore';
 import { useDraggablePill } from './hooks/useDraggablePill';
 import { applyAccent } from './utils/themeColor';
@@ -245,7 +246,9 @@ function loadDismissedConflicts(): Set<string> {
 }
 
 function ConflictBadge() {
-  const { mods } = useStore();
+  // 只订阅 mods 一个字段（以前是 `useStore()` 整店订阅：扫描进度、工坊轮询、
+  // 弹窗开关……任何一处变化都会重算一遍冲突数并重渲染这个角标）。
+  const mods = useStore((s) => s.mods);
   const [version, setVersion] = useState(0);
   const { ref: badgeRef, isDragging, handleMouseDown } = useDraggablePill('l4d2-conflict-badge-pos');
 
@@ -280,7 +283,8 @@ function ConflictBadge() {
 }
 
 function UsageBar() {
-  const { mods } = useStore();
+  // 同上：只订阅 mods。容量统计的 useMemo 依赖数组没变，重算时机与以前一致。
+  const mods = useStore((s) => s.mods);
   const { ref: pillRef, isDragging, handleMouseDown } = useDraggablePill('l4d2-usage-bar-pos');
 
   /**
@@ -361,8 +365,28 @@ function ScanningBanner({ done, total }: { done: number; total: number | null })
   );
 }
 
+/**
+ * 全局扫描横幅的订阅壳：把 `scanning` / `scanProgress` 的订阅关在这里。
+ *
+ * 为什么不让 App 直接读：`scanProgress` 在扫描过程中每个文件都会 set 一次，
+ * 若在根组件订阅，整棵应用树（侧边栏、标题栏、当前页、三个浮动 HUD…）
+ * 都会跟着重渲染几十上百次。放到这个只渲染一个横幅的叶子组件里，
+ * 进度跳动的影响范围就只有横幅本身。
+ */
+function GlobalScanBanner({ currentPage }: { currentPage: string }) {
+  const scanning = useStore((s) => s.scanning);
+  const done = useStore((s) => s.scanProgress?.done ?? 0);
+  const total = useStore((s) => s.scanProgress?.total ?? null);
+  if (!scanning || currentPage === 'my-mods') return null;
+  return <ScanningBanner done={done} total={total} />;
+}
+
 function BackendErrorOverlay() {
-  const { retryCount, checkBackendConnection, exportLogs } = useStore();
+  // 三个字段分开订阅：action 在 store 里是稳定引用，不会造成额外重渲染；
+  // retryCount 变了才需要重设轮询间隔。
+  const retryCount = useStore((s) => s.retryCount);
+  const checkBackendConnection = useStore((s) => s.checkBackendConnection);
+  const exportLogs = useStore((s) => s.exportLogs);
   const [connecting, setConnecting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [visible, setVisible] = useState(false);
@@ -458,7 +482,47 @@ function ErrorBanner() {
 }
 
 function App() {
-  const { currentPage, theme, accentColor, themeTransition, refreshAll, background, showMascot, addonsPath, backendConnected, scanning, scanProgress, setBackendConnected, checkBackendConnection, ensureBackgroundOptimized, applyModPrefsToGame, applyingPrefs, modsDirty } = useStore();
+  // 根组件以前是 `useStore()` 整店订阅：store 里任何一个字段变化（扫描进度、
+  // 工坊轮询结果、Toast 队列、右键菜单…）都会让整个应用树重渲染一遍。
+  // 这里只订阅根组件真正用到的字段，并用 useShallow 做浅比较 ——
+  // selector 每次返回新对象，不套 useShallow 会无限重渲染。
+  // 注意：字段值本身必须是稳定引用，`background` 是对象但只在设置变化时被替换，
+  // 浅比较看引用即可。`scanning` / `scanProgress` 故意不在这里订阅（原因见 GlobalScanBanner）。
+  const {
+    currentPage,
+    theme,
+    accentColor,
+    themeTransition,
+    refreshAll,
+    background,
+    showMascot,
+    addonsPath,
+    backendConnected,
+    setBackendConnected,
+    checkBackendConnection,
+    ensureBackgroundOptimized,
+    applyModPrefsToGame,
+    applyingPrefs,
+    modsDirty,
+  } = useStore(useShallow((s) => ({
+    currentPage: s.currentPage,
+    theme: s.theme,
+    accentColor: s.accentColor,
+    themeTransition: s.themeTransition,
+    refreshAll: s.refreshAll,
+    background: s.background,
+    showMascot: s.showMascot,
+    addonsPath: s.addonsPath,
+    backendConnected: s.backendConnected,
+    setBackendConnected: s.setBackendConnected,
+    checkBackendConnection: s.checkBackendConnection,
+    ensureBackgroundOptimized: s.ensureBackgroundOptimized,
+    applyModPrefsToGame: s.applyModPrefsToGame,
+    applyingPrefs: s.applyingPrefs,
+    modsDirty: s.modsDirty,
+  })));
+  // 扫描横幅不在这里订阅：scanProgress 是高频推送（每扫完一个文件就更新一次），
+  // 放在根组件订阅会让整棵应用树跟着重渲染。见下面的 GlobalScanBanner。
   const mascotRef = useRef<HTMLDivElement>(null);
   const dragState = useRef<{ startX: number; startY: number; left: number; top: number } | null>(null);
   const [bouncing, setBouncing] = useState(false);
@@ -922,12 +986,7 @@ function App() {
       <WorkshopUpdateDock />
 
       {/* 首次/刷新扫描中的全局进度提示（Mod 页内已有更详细展示） */}
-      {scanning && currentPage !== 'my-mods' && (
-        <ScanningBanner
-          done={scanProgress ? scanProgress.done : 0}
-          total={scanProgress ? scanProgress.total : null}
-        />
-      )}
+      <GlobalScanBanner currentPage={currentPage} />
 
       {/* Mascot always in DOM - CSS controls visibility */}
       <div

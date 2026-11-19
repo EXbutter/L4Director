@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import type { CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { useStore, getApiBase, normalizeModKey, PackData, ModData } from '../store/useStore';
+import { useShallow } from 'zustand/react/shallow';
 import { ToolBar } from './ToolBar';
 import { showToast } from './Toast';
 import { ThumbImage } from './ThumbImage';
@@ -123,6 +124,12 @@ const sortOptions = [
 ];
 
 export function PacksPage() {
+  // 以前是 `useStore()` 整店订阅：扫描进度（每扫完一个文件就 set 一次）、
+  // 工坊轮询、Toast 队列……任何一处变化都会让整个收藏包页重渲染。
+  // 现在只订阅本页真正用到的字段，并用 useShallow 做浅比较 ——
+  // selector 每次返回新对象，不套 useShallow 会无限重渲染。
+  // 数组字段（packs/mods/customTags）在 store 里都是「整体替换」的不可变更新，
+  // 浅比较看引用即可，不会漏更新。
   const {
     packs,
     mods,
@@ -141,7 +148,25 @@ export function PacksPage() {
     getModDisplayName,
     refreshAll,
     customTags,
-  } = useStore();
+  } = useStore(useShallow((s) => ({
+    packs: s.packs,
+    mods: s.mods,
+    createPack: s.createPack,
+    deletePack: s.deletePack,
+    renamePack: s.renamePack,
+    selectPack: s.selectPack,
+    selectedPack: s.selectedPack,
+    removeModFromPack: s.removeModFromPack,
+    addModsToPack: s.addModsToPack,
+    toggleMod: s.toggleMod,
+    enablePackMods: s.enablePackMods,
+    exportPackAsZip: s.exportPackAsZip,
+    packContextMenu: s.packContextMenu,
+    setPackContextMenu: s.setPackContextMenu,
+    getModDisplayName: s.getModDisplayName,
+    refreshAll: s.refreshAll,
+    customTags: s.customTags,
+  })));
   const [exportError, setExportError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('name-asc');

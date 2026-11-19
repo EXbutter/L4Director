@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { useStore, getApiBase, formatGameElapsed, Page } from '../store/useStore';
+import { useShallow } from 'zustand/react/shallow';
 import { VERSION_LABEL, VERSION_DISPLAY, IS_BETA } from '../utils/appVersion';
 import { useUpdateStore, hasPendingUpdate } from '../store/useUpdateStore';
 import './Sidebar.scss';
@@ -75,7 +76,42 @@ interface LaunchRipple {
 const RIPPLE_DURATION_MS = 620;
 
 export function Sidebar() {
-  const { currentPage, setPage, status, packs, launchGame, steamUser, steamLoginInProgress, initiateSteamLogin, logoutSteam, gameState, gamePid, gameStateSince } = useStore();
+  // 以前是 `useStore()` 整店订阅：扫描进度每推一次、工坊轮询每回一次、
+  // Mod 列表每变一次，侧边栏都要整块重渲染（它还带指示器动画，重渲染更容易看出来）。
+  // 现在只订阅这里真正用到的字段，并用 useShallow 做浅比较 ——
+  // selector 每次返回新对象，不套 useShallow 会无限重渲染。
+  const {
+    currentPage,
+    setPage,
+    modCount,
+    gameDetected,
+    packs,
+    launchGame,
+    steamUser,
+    steamLoginInProgress,
+    initiateSteamLogin,
+    logoutSteam,
+    gameState,
+    gamePid,
+    gameStateSince,
+  } = useStore(useShallow((s) => ({
+    currentPage: s.currentPage,
+    setPage: s.setPage,
+    // 徽标只关心 mod_count、底部的「已连接」只关心 game_detected：
+    // 直接取这两个数字/布尔值。`/api/status` 每 5 秒轮询都会整体替换 status 对象，
+    // 订阅整个对象会让侧边栏跟着无谓重渲染（内容其实一点没变）。
+    modCount: s.status?.mod_count ?? 0,
+    gameDetected: Boolean(s.status?.game_detected),
+    packs: s.packs,
+    launchGame: s.launchGame,
+    steamUser: s.steamUser,
+    steamLoginInProgress: s.steamLoginInProgress,
+    initiateSteamLogin: s.initiateSteamLogin,
+    logoutSteam: s.logoutSteam,
+    gameState: s.gameState,
+    gamePid: s.gamePid,
+    gameStateSince: s.gameStateSince,
+  })));
 
   // 点击反馈：按下态 + 水波纹
   const [pressed, setPressed] = useState(false);
@@ -275,8 +311,8 @@ export function Sidebar() {
             >
               <span className="sidebar-icon">{item.icon}</span>
               <span className="sidebar-label">{item.label}</span>
-              {item.page === 'my-mods' && status && status.mod_count > 0 && (
-                <span className="sidebar-badge">{status.mod_count}</span>
+              {item.page === 'my-mods' && modCount > 0 && (
+                <span className="sidebar-badge">{modCount}</span>
               )}
               {item.page === 'packs' && packs.length > 0 && (
                 <span className="sidebar-badge">{packs.length}</span>
@@ -327,7 +363,7 @@ export function Sidebar() {
           )}
         </div>
 
-        {status?.game_detected ? (
+        {gameDetected ? (
           <div className="sidebar-status connected">
             <span className="sidebar-status-dot" />
             已连接
