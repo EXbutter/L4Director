@@ -1,6 +1,7 @@
-import { useState, useMemo, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef, useLayoutEffect, memo } from 'react';
 import type { CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
+import { useShallow } from 'zustand/react/shallow';
 import { useStore, getApiBase, ModData, ConflictDetail, WorkshopUpdateItem } from '../store/useStore';
 import { ToolBar } from './ToolBar';
 import { ThumbImage } from './ThumbImage';
@@ -109,6 +110,11 @@ function useIntersectionObserver(
           observer.disconnect();
         }
       },
+      // 缩略图懒加载：卡片真正进入视口前 200px 才去「取原图 → createImageBitmap
+      // 解码 → 编码 WebP」，视口外一律不碰图片，避免一进页面就把上百张图全解码/绘制。
+      // 一次性触发（首次相交后 disconnect），不会持续观测。
+      // 试过把提前量放大到 800px 想「提前备好」，实测反而拖累快速滚动的稳态帧率
+      // （预热请求在同一时间窗内扎堆、和滚动抢绘制），所以保留 200px。
       { rootMargin: '200px', threshold: 0, ...options }
     );
     
@@ -146,6 +152,9 @@ function ModPreview({ mod, displayName, favorited, onToggleFavorite }: {
             src={imgSrc}
             alt={displayName}
             className="mod-card__thumbnail"
+            // 「我的 Mod」里动图默认改为悬停才播放（原来 viewport 内自动逐帧播放）：
+            // 300 张卡同时解码 GIF 是滚动卡顿的大头，工坊页早就用的是 hover。
+            animation="hover"
             onError={() => setImgError(true)}
           />
         </div>
@@ -185,6 +194,197 @@ function ModPreview({ mod, displayName, favorited, onToggleFavorite }: {
     </div>
   );
 }
+
+/** 卡片上用到的全部回调，打包成稳定引用交给下面的 ModCard，避免父级每次渲染都让
+ *  React.memo 失效（详见 ModCard 与 cardActions 处的说明）。 */
+type ModCardActions = {
+  onCardClick: (e: React.MouseEvent, mod: ModData) => void;
+  onContextMenu: (e: React.MouseEvent, modName: string) => void;
+  onToggleFavorite: (mod: ModData) => void;
+  onToggleEnabled: (mod: ModData) => void;
+  onFixAddoninfo: (e: React.MouseEvent, mod: ModData) => void | Promise<void>;
+  onConflictEnter: (e: React.MouseEvent, mod: ModData) => void;
+  onConflictLeave: () => void;
+  onConflictClick: (modName: string) => void;
+  onDupClick: (mod: ModData) => void;
+  onApplyUpdate: (workshopId: string) => void;
+};
+
+interface ModCardProps {
+  mod: ModData;
+  index: number;
+  viewMode: 'grid' | 'list';
+  enabled: boolean;
+  selected: boolean;
+  hasConflicts: boolean;
+  displayName: string;
+  addedLabel: string | null;
+  favorited: boolean;
+  update: WorkshopUpdateItem | undefined;
+  customTags: string[];
+  applyingNow: boolean;
+  actions: ModCardActions;
+}
+
+/**
+ * 单张 Mod 卡片（媒体卡）。
+ *
+ * 用 React.memo 包裹：父级 MyModsPage 在扫描流、筛选、右键菜单等状态下会频繁重渲染，
+ * 但绝大多数卡片的入参（mod 引用、各布尔状态、展示文案）没变 —— 这一层让只有真正
+ * 变化的卡片重新渲染，300 张卡的列表从「每次整屏重建」变成「只更新变化的那几张」。
+ * 所有回调通过 actions 走稳定引用，父级重渲染不会导致全部卡片失效。
+ */
+const ModCard = memo(function ModCard({
+  mod, index, viewMode, enabled, selected, hasConflicts, displayName, addedLabel,
+  favorited, update, customTags, applyingNow, actions,
+}: ModCardProps) {
+  return (
+    <div
+      className={`mod-card ${mod.is_workshop ? 'mod-card--workshop' : 'mod-card--custom'} ${enabled ? 'mod-card--enabled' : 'mod-card--disabled'} ${hasConflicts ? 'mod-card--conflict' : ''} ${selected ? 'mod-card--selected' : ''}`}
+      onClick={(e) => actions.onCardClick(e, mod)}
+      onContextMenu={(e) => actions.onContextMenu(e, mod.name)}
+      // --card-i 给 CSS 算入场延迟用：序号越靠后出场越晚（上限 16，见 SCSS 注释）
+      style={{ cursor: 'pointer', '--card-i': Math.min(index, 16) } as CSSProperties}
+    >
+      {hasConflicts && (
+        <div
+          className="mod-card__conflict-icon"
+          onMouseEnter={(e) => actions.onConflictEnter(e, mod)}
+          onMouseLeave={() => actions.onConflictLeave()}
+          onClick={(e) => {
+            e.stopPropagation();
+            actions.onConflictClick(mod.name);
+          }}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="14" height="14">
+            <path d="M12 7v6M12 17v0" stroke="white" strokeLinecap="round"/>
+          </svg>
+        </div>
+      )}
+      <ModPreview
+        mod={mod}
+        displayName={displayName}
+        favorited={favorited}
+        onToggleFavorite={() => actions.onToggleFavorite(mod)}
+      />
+      <div className="mod-card__info">
+        <div className="mod-card__info-header">
+          <span className="mod-card__name">{displayName}</span>
+          {viewMode === 'list' ? (
+            <ModSwitch
+              enabled={enabled}
+              conflict={hasConflicts}
+              onToggle={() => actions.onToggleEnabled(mod)}
+            />
+          ) : (
+            <span className={`mod-card__status ${hasConflicts ? 'mod-card__status--conflict' : (enabled ? 'mod-card__status--enabled' : 'mod-card__status--disabled')}`}>
+              {hasConflicts ? '冲突' : (enabled ? '已启用' : '已禁用')}
+            </span>
+          )}
+        </div>
+        {mod.author && <span className="mod-card__author">{mod.author}</span>}
+        {mod.description && (
+          <span className="mod-card__description">{mod.description}</span>
+        )}
+        <span className="mod-card__meta">
+          {formatSize(mod.size_bytes)}
+          {viewMode === 'list' && addedLabel ? ` · ${addedLabel}` : ''}
+        </span>
+        {((mod.duplicates?.length ?? 0) > 0 || mod.missing_addoninfo || update?.update_available || (mod.tags && mod.tags.length > 0)) && (
+          <div className="mod-card__tags" title={mod.tags?.join(' / ')}>
+            {/* 这里不再显示「武器 12/35」这类完整度徽标：
+                它字号比标签大一档、又总是排在标签行最前，一张卡上最抢眼的
+                成了覆盖率而不是 Mod 本身。完整度改由上面的常驻看板回答，
+                卡片这里只保留标签。 */}
+            {mod.missing_addoninfo && (
+              <button
+                className="mod-card__addoninfo"
+                title={
+                  '这个 VPK 里没有 addoninfo.txt：游戏的「附加内容」列表里看不到它，\n'
+                  + '保存 addonlist.txt 时还会把它的条目写回 "1" —— 在软件里关掉，游戏里照样加载。\n'
+                  + '点击给它补一份 addoninfo.txt（会重建这个 vpk）。'
+                }
+                onClick={(e) => void actions.onFixAddoninfo(e, mod)}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="11" height="11">
+                  <path d="M12 9v4M12 17v0" strokeLinecap="round" />
+                  <path d="M10.3 3.9 2.4 17.6a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+                </svg>
+                缺 addoninfo
+              </button>
+            )}
+            {update?.update_available && (() => {
+              const u = update!;
+              const fmt = (ts: number) => new Date(ts * 1000).toLocaleDateString('zh-CN');
+              return (
+                <button
+                  className="mod-card__update"
+                  disabled={applyingNow}
+                  title={
+                    `创意工坊在 ${fmt(u.remote_time)} 发布了新版，本地是 ${fmt(u.local_time)} 的版本。\n`
+                    + '点击重新下载并覆盖本地 vpk（启停状态不变）。'
+                    + (applyingNow ? '\n（正在更新其它 Mod，稍等片刻）' : '')
+                  }
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    actions.onApplyUpdate(u.workshop_id);
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="11" height="11">
+                    <path d="M12 3v12M7 10l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M4 20h16" strokeLinecap="round" />
+                  </svg>
+                  可更新
+                </button>
+              );
+            })()}
+            {(mod.duplicates?.length ?? 0) > 0 && (() => {
+              const twin = mod.duplicates![0];
+              const src = twin.is_workshop
+                ? `创意工坊 Mod${twin.workshop_id ? ` (ID ${twin.workshop_id})` : ''}`
+                : '外部 Mod';
+              const sameContent = (mod.duplicate_kind || twin.kind) === 'content';
+              return (
+                <button
+                  className={`mod-card__dup mod-card__dup--${sameContent ? 'content' : 'version'}`}
+                  title={sameContent
+                    ? `与同名的${src}内容完全一致：游戏会把两份各加载一遍。点击查看处理方式。`
+                    : `与${src}标题相同、内容不同，可能是同一个 Mod 的两个版本。点击查看。`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    actions.onDupClick(mod);
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="11" height="11">
+                    <rect x="9" y="9" width="12" height="12" rx="2" />
+                    <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+                  </svg>
+                  {sameContent ? '重复安装' : '疑似重复'}
+                </button>
+              );
+            })()}
+            {mod.tags && orderCardTags(mod.tags).slice(0, 4).map((tag, idx) => (
+              <span
+                key={idx}
+                className={`mod-card__tag${isFineTag(tag) ? ' mod-card__tag--fine' : ''}${customTags.includes(tag) ? ' mod-card__tag--custom' : ''}${tag === FAVORITE_TAG ? ' mod-card__tag--fav' : ''}`}
+              >
+                {tag}
+              </span>
+            ))}
+            {mod.tags && mod.tags.length > 4 && (
+              <span
+                className="mod-card__tag mod-card__tag--more"
+                title={orderCardTags(mod.tags).slice(4).join(' / ')}
+              >
+                +{mod.tags.length - 4}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
 
 /**
  * 分类列表（与后端 CATEGORIES 保持一致，顺序即界面顺序）。
@@ -278,7 +478,27 @@ const isPickableTag = (tag: string, customTags: string[] = []) =>
   || customTags.includes(tag);
 
 export function MyModsPage() {
-  const { mods, packs, fetchMods, refreshAll, loading, scanning, scanProgress, toggleMod, addAddoninfo, addModToPack, addModsToPack, setContextMenu, contextMenu, deleteMod, deleteMods, deleteConfirmMod, setDeleteConfirmMod, confirmDeleteMod, renameModDisplayName, getModDisplayName, setModTags, customTags, createCustomTag, deleteCustomTag, workshopUpdates, checkWorkshopUpdates, cancelWorkshopCheck, applyWorkshopUpdates } = useStore();
+  // 只订阅本页真正用到的字段，并用 useShallow 做浅比较：store 里其它板块
+  // （设置、工坊页、弹窗等）的状态变化不再顺带把整个「我的 Mod」页重渲染。
+  // 注意：useStore 的 selector 每次返回新对象，必须套 useShallow 才不会无限重渲染。
+  const {
+    mods, packs, fetchMods, refreshAll, loading, scanning, scanProgress, toggleMod,
+    addAddoninfo, addModToPack, addModsToPack, setContextMenu, contextMenu, deleteMod,
+    deleteMods, deleteConfirmMod, setDeleteConfirmMod, confirmDeleteMod, renameModDisplayName,
+    getModDisplayName, setModTags, customTags, createCustomTag, deleteCustomTag,
+    workshopUpdates, checkWorkshopUpdates, cancelWorkshopCheck, applyWorkshopUpdates,
+  } = useStore(useShallow((s) => ({
+    mods: s.mods, packs: s.packs, fetchMods: s.fetchMods, refreshAll: s.refreshAll,
+    loading: s.loading, scanning: s.scanning, scanProgress: s.scanProgress, toggleMod: s.toggleMod,
+    addAddoninfo: s.addAddoninfo, addModToPack: s.addModToPack, addModsToPack: s.addModsToPack,
+    setContextMenu: s.setContextMenu, contextMenu: s.contextMenu, deleteMod: s.deleteMod,
+    deleteMods: s.deleteMods, deleteConfirmMod: s.deleteConfirmMod, setDeleteConfirmMod: s.setDeleteConfirmMod,
+    confirmDeleteMod: s.confirmDeleteMod, renameModDisplayName: s.renameModDisplayName,
+    getModDisplayName: s.getModDisplayName, setModTags: s.setModTags, customTags: s.customTags,
+    createCustomTag: s.createCustomTag, deleteCustomTag: s.deleteCustomTag,
+    workshopUpdates: s.workshopUpdates, checkWorkshopUpdates: s.checkWorkshopUpdates,
+    cancelWorkshopCheck: s.cancelWorkshopCheck, applyWorkshopUpdates: s.applyWorkshopUpdates,
+  })));
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('name-asc');
   // 排版：卡片墙 / 单列列表（记在 localStorage，重启后保持上次选择）
@@ -517,6 +737,20 @@ export function MyModsPage() {
     enabled: visibleMods.filter((m) => m.enabled).length,
     disabled: visibleMods.filter((m) => !m.enabled).length,
   }), [visibleMods]);
+
+  // 「问题」类筛选的计数：原来直接写在 JSX 里，每次渲染都 visibleMods.filter(...) 扫全表 4 遍。
+  // 筛选面板本身完全跟着父组件重渲染（搜索输入、扫描流、右键菜单都会触发），这些 O(N) 全表扫描
+  // 在数据量大时叠加成掉帧。统一收进 useMemo，只随 visibleMods 变。
+  const issueCounts = useMemo(() => {
+    let conflict = 0, noConflict = 0, fullSet = 0, dup = 0;
+    for (const m of visibleMods) {
+      if (m.enabled && m.conflicts && m.conflicts.length > 0) conflict++;
+      if (!m.enabled || !m.conflicts || m.conflicts.length === 0) noConflict++;
+      if (hasFullSet(m)) fullSet++;
+      if ((m.duplicates?.length ?? 0) > 0) dup++;
+    }
+    return { conflict, noConflict, fullSet, dup };
+  }, [visibleMods]);
 
   const filtered = useMemo(() => {
     let list = [...visibleMods];
@@ -850,6 +1084,53 @@ export function MyModsPage() {
     const rest = tags.filter((t) => t !== FAVORITE_TAG && isPickableTag(t, customTags));
     void setModTags(mod.name, tagged ? rest : [...rest, FAVORITE_TAG]);
   }, [customTags, setModTags]);
+
+  // 卡片动作打包成稳定引用，配合 React.memo 的 ModCard：父级每次渲染都会重建这些
+  // 处理函数，若直接作为 props 传入会让所有卡片 memo 失效。这里把最新一版处理函数
+  // 挂到 ref 上，再暴露一组「只转发、引用永远不变」的稳定回调，卡片只在数据真的
+  // 变化时才重渲染。ref 在渲染期赋值是安全的（下一个渲染周期前一定是最新值）。
+  const modCardActionsRef = useRef<ModCardActions | null>(null);
+  modCardActionsRef.current = {
+    onCardClick: handleCardClick,
+    onContextMenu: handleContextMenu,
+    onToggleFavorite: toggleFavorite,
+    onToggleEnabled: (mod) => {
+      warnIfUnmanageable(mod);
+      void toggleMod(mod.name, mod.path);
+    },
+    onFixAddoninfo: handleFixAddoninfo,
+    onConflictEnter: (e, mod) => {
+      const rect = (e.target as HTMLElement).getBoundingClientRect();
+      const tooltipWidth = 280; // max-width of tooltip
+      let x: number;
+      if (rect.right + 8 + tooltipWidth > window.innerWidth) {
+        // Use negative value to indicate right-positioning (rendered as "right" style)
+        x = -(window.innerWidth - rect.left);
+      } else {
+        x = rect.right + 8;
+      }
+      setConflictTooltip({ modName: mod.name, x, y: rect.top });
+    },
+    onConflictLeave: () => setConflictTooltip(null),
+    onConflictClick: (modName) => {
+      openConflictDialog(modName);
+      setConflictTooltip(null);
+    },
+    onDupClick: (mod) => setDupDialogPath(mod.path || mod.name),
+    onApplyUpdate: (workshopId) => applyWorkshopUpdates([workshopId]),
+  };
+  const cardActions = useMemo<ModCardActions>(() => ({
+    onCardClick: (e, mod) => modCardActionsRef.current!.onCardClick(e, mod),
+    onContextMenu: (e, modName) => modCardActionsRef.current!.onContextMenu(e, modName),
+    onToggleFavorite: (mod) => modCardActionsRef.current!.onToggleFavorite(mod),
+    onToggleEnabled: (mod) => modCardActionsRef.current!.onToggleEnabled(mod),
+    onFixAddoninfo: (e, mod) => modCardActionsRef.current!.onFixAddoninfo(e, mod),
+    onConflictEnter: (e, mod) => modCardActionsRef.current!.onConflictEnter(e, mod),
+    onConflictLeave: () => modCardActionsRef.current!.onConflictLeave(),
+    onConflictClick: (modName) => modCardActionsRef.current!.onConflictClick(modName),
+    onDupClick: (mod) => modCardActionsRef.current!.onDupClick(mod),
+    onApplyUpdate: (workshopId) => modCardActionsRef.current!.onApplyUpdate(workshopId),
+  }), []);
 
   /**
    * 一键补全 addonlist.txt。
@@ -1227,7 +1508,7 @@ export function MyModsPage() {
               <i className="filter-chip__dot" />
               有冲突
               <span className="filter-chip__count">
-                {visibleMods.filter((m) => m.enabled && m.conflicts && m.conflicts.length > 0).length}
+                {issueCounts.conflict}
               </span>
             </button>
             <button
@@ -1237,7 +1518,7 @@ export function MyModsPage() {
               <i className="filter-chip__dot" />
               无冲突
               <span className="filter-chip__count">
-                {visibleMods.filter((m) => !m.enabled || !m.conflicts || m.conflicts.length === 0).length}
+                {issueCounts.noConflict}
               </span>
             </button>
             <button
@@ -1248,7 +1529,7 @@ export function MyModsPage() {
               <i className="filter-chip__dot" />
               整套替换
               <span className="filter-chip__count">
-                {visibleMods.filter(hasFullSet).length}
+                {issueCounts.fullSet}
               </span>
             </button>
             <button
@@ -1259,7 +1540,7 @@ export function MyModsPage() {
               <i className="filter-chip__dot" />
               重复安装
               <span className="filter-chip__count">
-                {visibleMods.filter((m) => (m.duplicates?.length ?? 0) > 0).length}
+                {issueCounts.dup}
               </span>
             </button>
             {/* 有更新：没查到就整条不出现，免得每台机器上都挂一个 0 */}
@@ -1447,178 +1728,24 @@ export function MyModsPage() {
           key={`${combinedCategoryKey}|${viewMode}`}
         >
 
-          {filtered.map((mod, index) => {
-            const enabled = mod.enabled;
-            const customName = getCustomName(mod.name);
-            const displayName = getModTitle(mod, customName);
-            const rawConflicts = enabled && !!mod.conflicts && mod.conflicts.length > 0;
-            // Filter out dismissed conflicts so the user can hide specific conflict badges
-            const hasConflicts = rawConflicts && !dismissedConflicts.has(mod.name);
-            const addedLabel = formatAddedDate(mod);
-            return (
-              <div
-                key={`${category}-${getStableModId(mod)}`}
-                className={`mod-card ${mod.is_workshop ? 'mod-card--workshop' : 'mod-card--custom'} ${enabled ? 'mod-card--enabled' : 'mod-card--disabled'} ${hasConflicts ? 'mod-card--conflict' : ''} ${selectedMods.has(mod.name) ? 'mod-card--selected' : ''}`}
-                onClick={(e) => handleCardClick(e, mod)}
-                onContextMenu={(e) => handleContextMenu(e, mod.name)}
-                // --card-i 给 CSS 算入场延迟用：序号越靠后出场越晚（上限 16，见 SCSS 注释）
-                style={{ cursor: 'pointer', '--card-i': Math.min(index, 16) } as CSSProperties}
-              >
-                {hasConflicts && (
-                  <div
-                    className="mod-card__conflict-icon"
-                    onMouseEnter={(e) => {
-                      const rect = (e.target as HTMLElement).getBoundingClientRect();
-                      const tooltipWidth = 280; // max-width of tooltip
-                      let x: number;
-                      if (rect.right + 8 + tooltipWidth > window.innerWidth) {
-                        // Use negative value to indicate right-positioning (rendered as "right" style)
-                        x = -(window.innerWidth - rect.left);
-                      } else {
-                        x = rect.right + 8;
-                      }
-                      setConflictTooltip({ modName: mod.name, x, y: rect.top });
-                    }}
-                    onMouseLeave={() => setConflictTooltip(null)}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openConflictDialog(mod.name);
-                      setConflictTooltip(null);
-                    }}
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="14" height="14">
-                      <path d="M12 7v6M12 17v0" stroke="white" strokeLinecap="round"/>
-                    </svg>
-                  </div>
-                )}
-                <ModPreview
-                  mod={mod}
-                  displayName={displayName}
-                  favorited={(mod.tags || []).includes(FAVORITE_TAG)}
-                  onToggleFavorite={() => toggleFavorite(mod)}
-                />
-                <div className="mod-card__info">
-                  <div className="mod-card__info-header">
-                    <span className="mod-card__name">{displayName}</span>
-                    {viewMode === 'list' ? (
-                      <ModSwitch
-                        enabled={enabled}
-                        conflict={hasConflicts}
-                        onToggle={() => {
-                          warnIfUnmanageable(mod);
-                          void toggleMod(mod.name, mod.path);
-                        }}
-                      />
-                    ) : (
-                      <span className={`mod-card__status ${hasConflicts ? 'mod-card__status--conflict' : (enabled ? 'mod-card__status--enabled' : 'mod-card__status--disabled')}`}>
-                        {hasConflicts ? '冲突' : (enabled ? '已启用' : '已禁用')}
-                      </span>
-                    )}
-                  </div>
-                  {mod.author && <span className="mod-card__author">{mod.author}</span>}
-                  {mod.description && (
-                    <span className="mod-card__description">{mod.description}</span>
-                  )}
-                  <span className="mod-card__meta">
-                    {formatSize(mod.size_bytes)}
-                    {viewMode === 'list' && addedLabel ? ` · ${addedLabel}` : ''}
-                  </span>
-                  {((mod.duplicates?.length ?? 0) > 0 || mod.missing_addoninfo || updateFor(mod)?.update_available || (mod.tags && mod.tags.length > 0)) && (
-                    <div className="mod-card__tags" title={mod.tags?.join(' / ')}>
-                      {/* 这里不再显示「武器 12/35」这类完整度徽标：
-                          它字号比标签大一档、又总是排在标签行最前，一张卡上最抢眼的
-                          成了覆盖率而不是 Mod 本身。完整度改由上面的常驻看板回答，
-                          卡片这里只保留标签。 */}
-                      {mod.missing_addoninfo && (
-                        <button
-                          className="mod-card__addoninfo"
-                          title={
-                            '这个 VPK 里没有 addoninfo.txt：游戏的「附加内容」列表里看不到它，\n'
-                            + '保存 addonlist.txt 时还会把它的条目写回 "1" —— 在软件里关掉，游戏里照样加载。\n'
-                            + '点击给它补一份 addoninfo.txt（会重建这个 vpk）。'
-                          }
-                          onClick={(e) => void handleFixAddoninfo(e, mod)}
-                        >
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="11" height="11">
-                            <path d="M12 9v4M12 17v0" strokeLinecap="round" />
-                            <path d="M10.3 3.9 2.4 17.6a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
-                          </svg>
-                          缺 addoninfo
-                        </button>
-                      )}
-                      {(() => {
-                        const u = updateFor(mod);
-                        if (!u?.update_available) return null;
-                        const fmt = (ts: number) => new Date(ts * 1000).toLocaleDateString('zh-CN');
-                        return (
-                          <button
-                            className="mod-card__update"
-                            disabled={applyingNow}
-                            title={
-                              `创意工坊在 ${fmt(u.remote_time)} 发布了新版，本地是 ${fmt(u.local_time)} 的版本。\n`
-                              + '点击重新下载并覆盖本地 vpk（启停状态不变）。'
-                              + (applyingNow ? '\n（正在更新其它 Mod，稍等片刻）' : '')
-                            }
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              applyWorkshopUpdates([u.workshop_id]);
-                            }}
-                          >
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="11" height="11">
-                              <path d="M12 3v12M7 10l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
-                              <path d="M4 20h16" strokeLinecap="round" />
-                            </svg>
-                            可更新
-                          </button>
-                        );
-                      })()}
-                      {(mod.duplicates?.length ?? 0) > 0 && (() => {
-                        const twin = mod.duplicates![0];
-                        const src = twin.is_workshop
-                          ? `创意工坊 Mod${twin.workshop_id ? ` (ID ${twin.workshop_id})` : ''}`
-                          : '外部 Mod';
-                        const sameContent = (mod.duplicate_kind || twin.kind) === 'content';
-                        return (
-                          <button
-                            className={`mod-card__dup mod-card__dup--${sameContent ? 'content' : 'version'}`}
-                            title={sameContent
-                              ? `与同名的${src}内容完全一致：游戏会把两份各加载一遍。点击查看处理方式。`
-                              : `与${src}标题相同、内容不同，可能是同一个 Mod 的两个版本。点击查看。`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDupDialogPath(mod.path || mod.name);
-                            }}
-                          >
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="11" height="11">
-                              <rect x="9" y="9" width="12" height="12" rx="2" />
-                              <path d="M5 15V5a2 2 0 0 1 2-2h10" />
-                            </svg>
-                            {sameContent ? '重复安装' : '疑似重复'}
-                          </button>
-                        );
-                      })()}
-                      {mod.tags && orderCardTags(mod.tags).slice(0, 4).map((tag, idx) => (
-                        <span
-                          key={idx}
-                          className={`mod-card__tag${isFineTag(tag) ? ' mod-card__tag--fine' : ''}${customTags.includes(tag) ? ' mod-card__tag--custom' : ''}${tag === FAVORITE_TAG ? ' mod-card__tag--fav' : ''}`}
-                        >
-                          {tag}
-                        </span>
-                      ))}
-                      {mod.tags && mod.tags.length > 4 && (
-                        <span
-                          className="mod-card__tag mod-card__tag--more"
-                          title={orderCardTags(mod.tags).slice(4).join(' / ')}
-                        >
-                          +{mod.tags.length - 4}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+          {filtered.map((mod, index) => (
+            <ModCard
+              key={`${category}-${getStableModId(mod)}`}
+              mod={mod}
+              index={index}
+              viewMode={viewMode}
+              enabled={mod.enabled}
+              selected={selectedMods.has(mod.name)}
+              hasConflicts={mod.enabled && !!mod.conflicts && mod.conflicts.length > 0 && !dismissedConflicts.has(mod.name)}
+              displayName={getModTitle(mod, getCustomName(mod.name))}
+              addedLabel={formatAddedDate(mod)}
+              favorited={(mod.tags || []).includes(FAVORITE_TAG)}
+              update={updateFor(mod)}
+              customTags={customTags}
+              applyingNow={applyingNow}
+              actions={cardActions}
+            />
+          ))}
         </div>
       ) : (
         <div className="my-mods-status">

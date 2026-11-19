@@ -1430,6 +1430,13 @@ export const useStore = create<AppState>((set, get) => ({
       }
       const streamSeen = new Set<string>();
 
+      // 扫描流节流：以前每收到一个网络 chunk 就整页 set 一次，300 个 Mod、几十个
+      // chunk 时等于「chunk 数 × 卡片数」的重渲染，是「我的 Mod 页比工坊页卡」的
+      // 主因之一。这里把进度/列表刷新合并到约 12fps；循环结束后的 set 会补一次
+      // 完整结果，不会丢数据，只是中间帧更稀疏。
+      const SCAN_FLUSH_MS = 90;
+      let lastScanFlush = 0;
+
       let total: number | null = null;
       let backendDone: Record<string, any> | null = null;
       const reader = res.body.getReader();
@@ -1493,12 +1500,17 @@ export const useStore = create<AppState>((set, get) => ({
           nl = buffer.indexOf('\n');
         }
 
-        // 每收到一个网络 chunk 就刷新一次，进度与列表渐进更新
+        // 进度与列表渐进更新，但按 SCAN_FLUSH_MS 节流（见上方说明）；
+        // 最终完整结果由循环结束后的 set 保证。
         if (changed || conflictsChanged || total != null) {
-          set({
-            mods: Array.from(modsMap.values()),
-            scanProgress: { done: streamSeen.size, total },
-          });
+          const now = performance.now();
+          if (now - lastScanFlush >= SCAN_FLUSH_MS) {
+            lastScanFlush = now;
+            set({
+              mods: Array.from(modsMap.values()),
+              scanProgress: { done: streamSeen.size, total },
+            });
+          }
         }
       }
 

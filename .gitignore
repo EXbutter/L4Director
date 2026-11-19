@@ -84,3 +84,7 @@ frontend/public/*qr-code*
 
 # ---------- 工作区工具目录（含个人上下文，不公开）----------
 .workbuddy/
+
+# ---------- 内部规划文档（发展/运营/流程指南，不公开）----------
+# 对外发版说明在 docs/（入库）；规划稿只放 docs-internal/
+docs-internal/
