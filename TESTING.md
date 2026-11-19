@@ -31,9 +31,12 @@ npm ci
 # 后端：跳过性能预算（弱机器 / 快速迭代）
 .venv\Scripts\python.exe -m pytest -m "not perf"
 
-# 前端：单元测试（约 1.5s）
-cd frontend && npm test          # = vitest run
-cd frontend && npm run test:watch
+# 前端：单元测试（约 1.5s，6 个文件 / 58 用例）
+cd frontend && npx vitest run
+cd frontend && npx vitest          # watch 模式
+
+# 注意：frontend/package.json 没有 "test" 脚本，`npm test` 会报 Missing script。
+# 想让它重新成立，需要加 "test": "vitest run"（待决策，见 docs-internal/09 §五）
 
 # 类型检查（两套 tsconfig：渲染层 / 主进程+preload）
 cd frontend && npx tsc --noEmit && npx tsc --noEmit -p tsconfig.main.json
@@ -52,7 +55,7 @@ cd frontend && npx tsc --noEmit && npx tsc --noEmit -p tsconfig.main.json
 | `backend/tests/test_media_types.py` | 图片 MIME（文件头优先） |
 | `backend/tests/test_game_process.py` | 进程探活缓存、退出后重新应用、pending 标记 |
 | `backend/tests/test_conflict_categories.py` | 人物 / 武器 / 界面三类资源的判定差异 |
-| `backend/tests/test_api_contract.py` | 73 条路由快照 + 各域端点状态码/形状 |
+| `backend/tests/test_api_contract.py` | 72 条路由快照 + 各域端点状态码/形状 + `/api/status` 的 `official_baseline` 三档 |
 | `backend/tests/test_perf_budget.py` | 性能预算（`-m perf`） |
 | `backend/tests/support/vpkbuild.py` | 最小 VPK 写入器（合成测试数据用） |
 | `frontend/tests/` | 混搭语义、色卡约束、MIME 嗅探、动图偏好、窗口尺寸规则（`windowBounds`） |
@@ -71,6 +74,7 @@ cd frontend && npx tsc --noEmit && npx tsc --noEmit -p tsconfig.main.json
 | 30 → 120 Mod 耗时放大 | < 12 倍（线性度） |
 | 冲突检测 300 Mod × 150 路径 | ≤ 3000ms |
 | `/api/mods` 每个 Mod 的 JSON | ≤ 3KB |
+| `/api/status`（120 Mod + 真 pak01，含 `official_baseline`） | ≤ 150ms |
 
 阈值比开发机实测宽 5~10 倍，目的是拦「数量级回退」（少一层缓存、O(n) 写成 O(n²)），
 不是比机器快慢。要调整阈值，请在 PR 里说明是「机器更慢」还是「行为变了」。
@@ -119,7 +123,7 @@ python -c "import json,sys; sys.path.insert(0,'.'); import main; r=sorted(f'{m} 
 
 ```
 backend/
-  main.py            装配 app + lifespan + uvicorn 入口（约 200 行）
+  main.py            装配 app + lifespan + uvicorn 入口（172 行）
   app_state.py       进程级单例：scanner、APP_VERSION、Steam 登录态、懒加载服务访问器
   routers/           按域拆的 HTTP 边界：system / mods / packs / settings /
                      game / auth / workshop / download / media

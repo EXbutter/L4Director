@@ -247,8 +247,9 @@ python scripts/run_all_verify.py lru    # 只跑文件名含关键字的那些
 
 **当前状态说明**
 
-- 没有 pytest / vitest 测试套件，也没有 CI
-- `backend/main.py` 目前是单文件，后续会按域拆成 router
+- 后端 pytest 133 用例、前端 vitest 58 用例，CI 跑 ruff + pytest + 两套 tsc + vitest + build
+  （细节见 `TESTING.md` 与 `docs-internal/09-性能与测试规格.md`）
+- `backend/main.py` 只做装配（172 行），域路由在 `backend/routers/`，业务逻辑在 `backend/services/`
 - 界面文案为中文，暂无 i18n
 
 欢迎在 Issue 里指出问题，或直接提 PR。

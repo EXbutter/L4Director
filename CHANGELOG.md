@@ -2,7 +2,36 @@
 
 ## v1.3.4 — 开发中
 
-「我的 Mod」媒体卡改版（封面铺满、底部渐变浮字、半透明标签），并把列表滚动性能做到实测稳定约 195fps（原基线约 134fps）。内部补齐前后端单元测试、路由契约测试与 CI 门禁；后端「单体 `main.py` 拆分 `routers/*`」重构进行中（尚未接入运行时）。
+这一版收尾 1.3.3 之后留下的三件事：把只在单测里跑的两个工具（首启窗口尺寸、卡片观察器）真正接进运行时，补完性能清单里剩下的主线程项，并把「拿不到游戏本体资源包 → 冲突判定静默降级」变成界面上看得见的提示。没有新页面、新功能。
+
+### 新增
+
+- **首启窗口按屏幕比例，之后记住上次**：窗口不再写死 1440×900。按主屏工作区算：2K（2560×1392）给 **1680×1000**（一行 5 张卡，旧尺寸只占 56% 宽、右侧一片空），1080p（1920×1040）给 1440×894，1080p@125%（1536×816）给 1360×702，1080p@150%（1280×680）给 1280×640（旧尺寸在这个工作区上会跑到屏幕外）。`resize` / `move` 防抖 400ms、关闭时再 flush 一次，写进 `<userData>/config.json` 的 `windowBounds`；最大化时存 `getNormalBounds()`，取消最大化能回到用户自己的尺寸；上次的窗口落在已拔掉的副屏上时回主屏居中，而不是留一条边在屏幕外。
+- **设置页能看见「冲突判定已降级」**：`hard` 冲突要求「同一路径 + 内容指纹不同 + 路径在官方名单里」，名单来自游戏本体的 `left4dead2/pak01_dir.vpk`。读不到这个包时所有路径都被当成私有路径，`hard` 整片降级成 `soft`（只进提示），界面上就是「红点全没了」，而且一句提示都没有。现在 `GET /api/status` 带 `official_baseline`（`available` / `reason` / `message` / `path` / `entries`），`reason` 分 `addons_not_configured` / `pak_not_found` / `parse_failed` 三档；配了 addons 目录但基准不可用时，设置 → Addons 目录里显示「冲突判定已降级：只能显示路径重叠，无法判定真冲突。」加具体原因（缺 pak 给可复制的路径与修复建议，解析失败给后端原文）。没配路径时不显示，避免一上来就吓人。
+- **冲突条目带类型与闪退风险**：`/api/mods` 的冲突条目新增 `kind` / `kind_label` / `kinds` / `risk` / `reason` / `advice`，包级新增 `crash_risk` / `crash_reason` / `crash_with` / `crash_bundle` / `crash_files` / `crash_advice`（`backend/services/mod_scanner.py:1283 _conflict_entry()`）。`severity` 回答「谁盖谁」，`risk` 回答「会不会崩」—— A 只带 `.mdl`、B 只带 `.vtx` 时磁盘上是 A 的网格配 B 的顶点数据，加载即崩，这类判 `high` 并建议禁用不完整的那一个（禁完整的那一个反而更糟）。界面目前只用 `severity`，其余字段在响应里可直接查看。
+
+### 改进
+
+- **「我的 Mod」媒体卡改版**：封面铺满、底部渐变浮字、半透明标签。
+- **「我的 Mod」卡片收紧一档，状态改圆点灯**：卡片高度 288/300 → **264px**（宽度与每行卡数不变，1440 窗口仍是 4 张），一屏能多看小半行。修掉亮色主题下的「黑描边」：媒体卡底色原先写死 `#0b0e14`（近黑），1px 的 `--border-color` 叠在这层上合成暗灰，改为 `var(--bg-card-hover)`、描边收薄成 `color-mix(--border-color 55%, transparent)`。卡片底部那条 3px 红/绿/橙状态色条与同色渐隐底一并删掉（一屏几十张卡同时铺色会盖住封面），启停状态收进标题行那颗 **8px 圆点灯**：绿=已启用、红=已禁用、橙=有冲突（冲突优先），外晕为同色 18%；圆点与标题首行居中（实测偏差 0.1px），作者/大小行 `line-height: 1.35` 让三行文字等距。列表模式用右侧开关表意、左侧强调竖条只留给整合包，「收藏包」详情页仍是文字版状态标签。
+- **卡片滚动稳定 ~195fps**（原基线约 134fps）：`.mod-card` 加 `will-change: transform` 成为独立合成层，并移除 `content-visibility: auto` —— 两者叠加才不会在滚动时逐帧重绘卡面 / 图片 / 渐变文字。实测 98 与 300 卡稳态 194~200fps，真实滚轮 199.5fps。
+- **切换 Mod 不再重扫整库**：以前每次启停都清空上次扫描结果、下次请求重扫一遍。现在 `_apply_enabled_to_scan_cache()`（`backend/services/mod_scanner.py:686`）只把该 Mod 的 `enabled` 写回扫描缓存，扫描结果与文件指纹都保留。实测切换 120 Mod 119.3 → **30.8ms**、400 Mod 376.4 → **95.5ms**（均 3.9×）。
+- **一次开关只写一次盘**：`commit_mod_state_changes()`（`backend/services/data_store.py:470`）把 `addonlist` 内容指纹、启用偏好、`prefs_dirty` 收进同一把锁的同一次原子写 —— 以前分三次调用，每次开关要 3 次「读 → 写 + fsync + `.bak` 备份」，还可能留下「偏好写进去了、脏标记没写」的半截状态。现在要么全落盘、要么一个字节不动，内容没变直接返回 `False` 不空转 fsync。实测每次开关 3 → **1** 次写盘（无变化 0 次）。
+- **卡片观察器合并成一个共享池**：每张卡自建的 `IntersectionObserver`（惰性抓封面、动图进出视口各一个）换成 `observeViewport()` 共享池，边距与 `threshold` 原值不变。实测「我的 Mod」98 张卡 98 → **1** 个实例，创意工坊 100 张卡 163 → **2** 个；滚动帧率无系统性变化（中位 181~187fps，门槛 150）。顺带修掉 `root: null` 时预取边距被祖先 `overflow` 裁掉的问题。
+- **整店 `useStore()` 订阅改成字段选择器**：7 处整店订阅（`App` 根组件、ConflictBadge、UsageBar、BackendErrorOverlay、`Sidebar`、`TitleBar`、`PacksPage`）加设置页改成只订阅用到的字段，对象字段用 `useShallow` 浅比较。扫描进度改由一个只渲染横幅的叶子组件（`GlobalScanBanner`）订阅 —— 扫描中每扫完一个文件都会 set 一次状态，以前每次都在重渲整棵树。`Sidebar` 顺带把 `status` 对象拆成 `mod_count` / `game_detected` 两个原始值，`/api/status` 每 5 秒轮询不再让侧边栏白重渲。
+- **`/api/status` 多带一个字段也没变慢**：官方名单按 pak 的 mtime 缓存在进程内（与冲突判定共用），命中时只多一次 `stat`；解析失败也按 mtime 缓存，坏包不会每次请求都重解析、重刷日志，pak 修好（mtime 变）自动重试。实测 120 Mod + 真 pak01：基准可用 7.8ms / 缺 pak 8.2ms / 坏 pak 4.0ms（预算 150ms），坏包时 6 次请求只打 1 行解析失败日志。
+- **「当前搭配」展开/收缩与工坊抽屉关闭加过渡动画**：看板明细改 `grid-template-rows: 0fr → 1fr`（复刻工坊筛选分组的三层结构），收起时虚线边框跟着收走；工坊右侧详情抽屉关闭不再瞬间卸载，先播 0.26s 滑出 + 遮罩淡出再卸载，动画中点别的卡会取消未决的关闭定时器直接打开新的。
+
+### 修复
+
+- **启动即最大化时标题栏图标是错的**：`maximize` 事件里的 `window:maximized` 推送早于渲染进程订阅，窗口已经最大化、图标还显示「未最大化」。改为在 `perf:mark 'renderer-ready'` 时补推一次（复用已有 IPC，没有新增通道）。
+- **拆分 routers 后两个 verify 脚本还在调旧位置**：`verify_custom_tags.py` 仍调 `main.create_custom_tag_api`（函数已迁 `backend/routers/mods.py`），`verify_secret_hygiene.py` 的 steam-key 断言仍指向 `backend/main.py`（端点已迁 `backend/routers/settings.py`）。两处都改指新位置后，`scripts/run_all_verify.py` **24/24 全绿**。
+
+### 维护
+
+- **`backend/main.py` 从 2365 行拆成 172 行薄装配**：`create_app()` + `include_router()`，域路由进 `backend/routers/`（system / mods / packs / settings / game / auth / workshop / download / media），进程级单例（扫描器、`APP_VERSION`、Steam 登录态）进 `backend/app_state.py`（62 行），业务逻辑留在 `backend/services/`。router 里只做参数解析、状态码与响应形状；引用扫描器一律写 `app_state.scanner`（属性访问才能被测试和 verify 脚本替换）。拆分后路由 73 条（本版下线 `batch` 后 72 条）。
+- **移除未使用的 `POST /api/thumbnails/batch`**：它把每张封面读成 base64 塞进 JSON（每 Mod 数 KB），前端早已改用 `<img src>` 直连 `/api/thumbnail`。路由 73 → **72**，路由表快照同步。`GET /api/thumbnail` 与工坊封面接口不动。
+- **补齐测试与 CI 门禁**：后端 pytest 133 用例（数据安全、冲突五档与风险判定、扫描、接口契约与路由快照、性能预算 7 条走 `-m perf`），前端 vitest 58 用例 / 6 个文件（混搭语义、色卡约束、MIME 嗅探、动图偏好、窗口尺寸规则），CI 两个 job（ruff + pytest / 两套 tsc + vitest + build）。`scripts/run_all_verify.py` 24/24。
 
 ## v1.3.3 — 2026-11-18
 
@@ -255,6 +284,11 @@
 
 全量 15 个脚本、189 项断言，186 通过。剩下 3 项是旧脚本里**与当前实现不一致**的
 陈旧断言（原因见 v1.3.0 的规划稿），用 `git stash` 对比确认与本次改动无关。
+
+> 后续复核（v1.3.4）：这批失败与 `verify_tags_and_conflicts.py` 无关，它一直是全过的；
+> 958e5a4 前后真正失配的是 `verify_custom_tags.py` 与 `verify_secret_hygiene.py`
+> （`main.py` 拆分 routers 后脚本还在调旧位置），已分别由 b8cd3ef / b815f5d 修复。
+> 现在 `scripts/run_all_verify.py` 24/24 全绿，没有已知陈旧断言。
 
 ### 升级说明
 
