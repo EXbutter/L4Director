@@ -650,12 +650,15 @@
 
 /* ===== Mod Cards Grid =====
    卡片尺寸统一收敛成三个变量，网格与卡片本体共用，改一处即可整体缩放。
-   230px 起分：默认窗口 1440×900（内容区约 1160px）下每行 4 张、卡片约 280×288
+   230px 起分：默认窗口 1440×900（内容区约 1160px）下每行 4 张、卡片约 280×264
    （5 列放不下，会落到 4 列）；1080 窄窗 3 张、1920 宽屏 6 张。
+   高度从 288/300 收到 264：媒体卡的封面是 inset:0 铺满，卡片越高封面越占屏，
+   一屏能看到的卡反而更少；264 下信息区（两行标题 + 作者 + 大小 + 标签）仍然放得下。
+   宽度变量不动，每行卡数保持原样。
    列表模式不受这些变量影响（行高另算）。 */
 .my-mods-grid {
   --card-min-w: 230px;
-  --card-height: 288px;
+  --card-height: 264px;
   --card-cover-height: 116px;
 
   display: grid;
@@ -682,10 +685,10 @@
     height: 76px;
     // 列表模式行高固定 76px（content-visibility 已在前面的基类里移除，
     // 这里不再需要 contain-intrinsic-size 占位）。
-    // 行内空间小，底部那抹渐隐会压住第二排文字，列表里只留左侧色条
+    // 行内空间小，底部那抹渐隐会压住第二排文字，列表里干脆不留状态底色：
+    // 启停状态由右侧的开关表达，不再需要一条额外的色条
     background-image: none;
-    // 左侧留出状态色条的位置
-    padding: 0 14px 0 10px;
+    padding: 0 14px;
     border-radius: 10px;
     // 列表模式的入场：整行从左侧滑入 + 淡入，按行号自上而下错峰，
     // 看起来像一列行被「从侧边栏那边」一推一推地送进来。
@@ -695,28 +698,13 @@
     --row-delay: calc(min(var(--card-i, 0), 12) * 38ms);
     animation: listRowIn 0.32s var(--ease-soft) var(--row-delay) backwards;
 
-    // 状态色条：从卡片底部横条改成左侧竖条（PCL 列表的选中指示器风格）
-    &::after {
-      top: 0;
-      bottom: 0;
-      left: 0;
-      right: auto;
-      width: 3px;
-      height: auto;
-    }
-
-    // 列表行不做上浮位移，只做轻微阴影，避免整列抖动
+    // 列表行不做上浮位移，只做轻微阴影，避免整列抖动。
+    // 阴影同样保持中性：启停状态在行尾的开关上已经一眼可辨，
+    // 整行再罩一层绿/红光会让列表看起来在「闪」。
     &--enabled:hover,
     &--disabled:hover {
       transform: none;
-    }
-
-    &--enabled:hover {
-      box-shadow: 0 2px 12px rgba(34, 197, 94, 0.22);
-    }
-
-    &--disabled:hover {
-      box-shadow: 0 2px 12px rgba(239, 68, 68, 0.22);
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.16);
     }
 
     // 列表行整行通栏，按下时只做很轻的收缩（不位移），
@@ -916,57 +904,16 @@
   // 布局/绘制开销可忽略（2.5s 滚动 LayoutDuration 仅 ~0.02s）。
   // 旧注释「去掉 CV 掉到 50fps」是旧卡片设计下的结论，对本媒体卡已不成立。
 
-  // 底部状态条。以前这里是「3px 色条 + box-shadow 12px 同色光晕」，
-  // 而 box-shadow 每张卡都要单独做一次高斯模糊：58 张卡一起滚动时，
-  // 仅这一项就能把帧率从 200 拉到 150 以下。光晕改用卡片自身的
-  // background-image 渐变实现（见下面 --enabled / --conflict / --disabled），
-  // 栅格化只是填色，没有模糊。
-  &::after {
-    content: '';
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: transparent;
-    transition: background 0.25s ease;
-    pointer-events: none;
-  }
-
-  &--enabled::after {
-    background: #22c55e;
-  }
-
-  &--enabled {
-    // 底部一抹同色渐隐，替代原来的 box-shadow 光晕（每张卡少一次高斯模糊）
-    background-image: linear-gradient(to top, rgba(34, 197, 94, 0.14), rgba(34, 197, 94, 0) 26%);
-  }
-
-  &--enabled:hover {
+  // 启停状态不再画在卡片本体上（底部 3px 色条 + 同色渐隐都已删除）：
+  // 状态色统一收进信息区那颗 8px 的圆点灯（.mod-card__dot），
+  // 卡片表面保持中性，一屏几十张卡同时铺红/绿/橙会盖住封面本身。
+  // 悬停只做「上浮 + 中性投影」，不带任何状态色。
+  &--enabled:hover,
+  &--disabled:hover {
     // 「上浮量」用变量记录下来，按下态直接复用它 —— 见下面的 :active
     --card-lift: -3px;
     transform: translateY(var(--card-lift));
-    box-shadow: 0 4px 20px rgba(34, 197, 94, 0.5), 0 8px 24px rgba(0, 0, 0, 0.15);
-  }
-
-  &--conflict {
-    background-image: linear-gradient(to top, rgba(249, 115, 22, 0.14), rgba(249, 115, 22, 0) 26%);
-  }
-
-  &--conflict::after {
-    background: #f97316;
-  }
-
-  &--disabled::after {
-    background: #ef4444;
-  }
-
-  &--disabled {
-    background-image: linear-gradient(to top, rgba(239, 68, 68, 0.14), rgba(239, 68, 68, 0) 26%);
-  }
-
-  &--disabled:hover {
-    box-shadow: 0 4px 20px rgba(239, 68, 68, 0.5), 0 8px 24px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.12);
   }
 
   // 按下反馈。必须写在所有 :hover 规则之后：同特指度下由源码顺序决定，
@@ -1162,6 +1109,7 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 
 .mod-card__name {
@@ -1180,6 +1128,7 @@
 
 .mod-card__author {
   font-size: 12px;
+  line-height: 1.35;
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -1188,6 +1137,7 @@
 
 .mod-card__meta {
   font-size: 12px;
+  line-height: 1.35;
   color: var(--text-muted);
   display: flex;
   align-items: center;
@@ -1206,6 +1156,41 @@
   opacity: 0.7;
 }
 
+/* 启停状态：一颗 8px 的圆点指示灯
+   取代原来信息区右侧的「已启用 / 已禁用 / 冲突」文字块，以及卡片底部的 3px 色条。
+   绿 = 已启用、红 = 已禁用、橙 = 有冲突（冲突优先级最高，与卡片类名的判定一致）。
+   圆点与标题首行居中对齐：标题 13px/1.4 的首行盒高 18.2px，圆点 8px，故上边距 5px；
+   标题折成两行时圆点仍贴着第一行，不会漂到信息区中间。
+   外晕用 color-mix 的纯填色实现（不做模糊），压在浅色封面或深色遮罩上都立得住。 */
+.mod-card__dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  color: var(--text-muted);
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent);
+  transition: background-color var(--dur-base) ease, box-shadow var(--dur-base) ease;
+
+  &--enabled {
+    background: #22c55e;
+    color: #22c55e;
+  }
+
+  &--conflict {
+    background: #f97316;
+    color: #f97316;
+  }
+
+  &--disabled {
+    background: #ef4444;
+    color: #ef4444;
+  }
+}
+
+/* 「收藏包」详情页还在用文字版状态标签（PacksPage 复用本文件样式），
+   所以这套样式保留；「我的 Mod」网格已换成上面的圆点灯。 */
 .mod-card__status {
   font-size: 12px;
   padding: 2px 8px;
@@ -1411,12 +1396,18 @@
    作者 / 标签以底部渐变遮罩浮在图上，文字不再占据卡片下半部分的独立区域。
    只作用于网格模式；列表模式复用同一份 DOM，保持原来的横向紧凑行不受影响。 */
 .my-mods-grid:not(.my-mods-grid--list) {
-  --card-height: 300px;
+  --card-height: 264px;
 
   .mod-card {
     height: var(--card-height);
-    // 图片未加载 / 无封面时的底色，避免遮罩下露出浅色背景
-    background: #0b0e14;
+    // 图片未加载 / 无封面时的底色。
+    // 原先写死 #0b0e14：亮色主题下整张卡就是一块近黑色，1px 的 --border-color
+    // 叠在这层近黑底上合成出一条暗灰，看上去正是「黑描边」的来源。
+    // 改用与其它卡片占位一致的 --bg-card-hover，两套主题各自成立；
+    // 有封面时整块被 inset:0 的图片盖住，这层只在无图 / 加载中可见。
+    background: var(--bg-card-hover);
+    // 描边同时收薄一档：封面铺满时不需要实线分界，卡片靠阴影已能和背景分开
+    border-color: color-mix(in srgb, var(--border-color) 55%, transparent);
   }
 
   .mod-card__preview-container {
@@ -1432,7 +1423,7 @@
     right: 0;
     bottom: 0;
     // 顶部留出渐隐空间，让标题与封面自然过渡，而不是硬切一条边
-    padding: 52px 12px 12px;
+    padding: 46px 12px 11px;
     gap: 2px;
     background: linear-gradient(
       to top,
@@ -2226,7 +2217,11 @@
   // 列表里不靠底边框区分，交给左侧竖条
   border-bottom-color: var(--border-color);
 
+  // 状态色条已从 .mod-card 基类移除，这条强调色竖条因此要自带定位与内容，
+  // 否则伪元素拿不到 content/position 就不会渲染（整合包列表会失去左侧指示条）
   &::after {
+    content: '';
+    position: absolute;
     top: 0;
     bottom: 0;
     left: 0;

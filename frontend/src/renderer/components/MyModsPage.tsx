@@ -282,9 +282,13 @@ const ModCard = memo(function ModCard({
               onToggle={() => actions.onToggleEnabled(mod)}
             />
           ) : (
-            <span className={`mod-card__status ${hasConflicts ? 'mod-card__status--conflict' : (enabled ? 'mod-card__status--enabled' : 'mod-card__status--disabled')}`}>
-              {hasConflicts ? '冲突' : (enabled ? '已启用' : '已禁用')}
-            </span>
+            // 网格模式不再写「已启用 / 已禁用 / 冲突」三个字：状态色收进一颗 8px 圆点灯，
+            // 一屏几十张卡时文字块会把标题行挤窄，而颜色本身已经能一眼分辨。
+            // 状态优先级与卡片类名一致：冲突（开着但有问题）> 启用 > 禁用。
+            <span
+              className={`mod-card__dot ${hasConflicts ? 'mod-card__dot--conflict' : (enabled ? 'mod-card__dot--enabled' : 'mod-card__dot--disabled')}`}
+              title={hasConflicts ? '有冲突（已启用）' : (enabled ? '已启用' : '已禁用')}
+            />
           )}
         </div>
         {mod.author && <span className="mod-card__author">{mod.author}</span>}
