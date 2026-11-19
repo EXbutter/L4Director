@@ -64,7 +64,6 @@
  "POST /api/settings/auto-detect",
  "POST /api/settings/steam-key",
  "POST /api/settings/steam-key/test",
- "POST /api/thumbnails/batch",
  "POST /api/workshop-updates/apply",
  "POST /api/workshop-updates/apply/cancel",
  "POST /api/workshop-updates/cancel",

@@ -133,10 +133,6 @@ def test_工坊缩略图拒绝带目录的文件名(client):
     assert res.status_code in (400, 404)
 
 
-def test_批量缩略图返回空列表(client):
-    assert client.post('/api/thumbnails/batch', json={'covers': []}).json() == {'thumbnails': []}
-
-
 def test_整合包增删改查(client):
     created = client.post('/api/packs', json={'name': '测试包'})
     assert created.status_code == 200

@@ -1,6 +1,5 @@
 """媒体域路由：缩略图读取（带路径白名单，防路径穿越）。"""
 
-import base64
 from pathlib import Path
 from typing import Optional
 
@@ -129,29 +128,3 @@ def get_thumbnail(path: Optional[str] = None, vpk_cover: Optional[str] = None):
         return FileResponse(str(cover_path), media_type=image_media_type(cover_path), headers=cache_headers)
     else:
         raise HTTPException(status_code=400, detail="Either 'path' or 'vpk_cover' parameter is required")
-
-
-@router.post("/api/thumbnails/batch")
-def get_thumbnails_batch(data: dict):
-    """批量获取缩略图 — 传入多个 vpk_cover 名称，返回批量数据。
-    减少前端大量独立的 HTTP 请求开销。
-    """
-    cover_names = data.get("covers", [])
-    if not cover_names or not isinstance(cover_names, list):
-        return {"thumbnails": []}
-    
-    results = []
-    for cover_name in cover_names:
-        cover_path = _resolve_cover_path(cover_name)
-        if cover_path is not None:
-            try:
-                data_bytes = cover_path.read_bytes()
-                results.append({
-                    "name": cover_name,
-                    "data_base64": base64.b64encode(data_bytes).decode('ascii'),
-                    "media_type": image_media_type(cover_path),
-                })
-            except:
-                pass
-    
-    return {"thumbnails": results}
