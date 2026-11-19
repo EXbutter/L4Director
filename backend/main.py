@@ -78,7 +78,7 @@ async def _app_lifespan(_app: FastAPI):
 # 这里的默认值只在「直接 python main.py 跑后端」时用到，但必须是**唯一一份** ——
 # 以前 FastAPI 与 /api/health 各写一个默认值（1.1.0 / 1.2.0），两边长期不一致，
 # 排查线上问题时没法确认对面到底是哪个版本。
-_DEFAULT_APP_VERSION = "1.3.3"
+_DEFAULT_APP_VERSION = "1.3.4"
 APP_VERSION = os.environ.get("L4DIRECTOR_APP_VERSION", _DEFAULT_APP_VERSION)
 
 

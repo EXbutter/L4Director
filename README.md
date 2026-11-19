@@ -4,7 +4,7 @@
 
 L4Director 是一个面向 **Left 4 Dead 2** 的本地 Mod 管理工具。它不只把 `addons` 目录列成一个表，而是真的读懂 VPK 里面装了什么：这个包改了什么资源、和别的包冲不冲突、自己开关有没有和 `addonlist.txt` 对上。
 
-> 当前版本 `1.3.3`，仅支持 Windows。各版本改动见 [CHANGELOG.md](CHANGELOG.md)。
+> 当前版本 `1.3.4`，仅支持 Windows。各版本改动见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 
