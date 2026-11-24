@@ -13,6 +13,7 @@ import {
   systemReducedMotion,
 } from '../utils/animationPreference';
 import { showToast } from './Toast';
+import { confirmDialog } from './ConfirmDialog';
 // 与 MyModsPage / PacksPage 保持一致：.content-area 的布局（flex:1 + height:100%）定义在这里，
 // 少了它设置页的容器无法撑满主区域，会出现“顶部栏与底部之间一条真空空隙、内容显示不全”的问题
 import './ContentArea.scss';
@@ -149,6 +150,13 @@ export function SettingsPage() {
   const [cacheInfo, setCacheInfo] = useState<{ total_bytes: number; total_files: number } | null>(null);
   const [cacheCleaning, setCacheCleaning] = useState(false);
 
+  // addonlist.txt 写盘兜底：历史快照列表 + 一键回滚
+  const [addonlistBackups, setAddonlistBackups] = useState<
+    { id: string; created_at: string; size: number; entries: number }[]
+  >([]);
+  const [backupsLoading, setBackupsLoading] = useState(false);
+  const [restoringBackupId, setRestoringBackupId] = useState<string | null>(null);
+
   const loadCacheStats = async () => {
     try {
       const res = await fetch(`${getApiBase()}/api/cache/stats`);
@@ -161,6 +169,60 @@ export function SettingsPage() {
   useEffect(() => {
     void loadCacheStats();
   }, []);
+
+  const loadAddonlistBackups = async () => {
+    setBackupsLoading(true);
+    try {
+      const res = await fetch(`${getApiBase()}/api/mods/addonlist-backups`);
+      if (res.ok) {
+        const data = await res.json();
+        setAddonlistBackups(Array.isArray(data?.backups) ? data.backups : []);
+      }
+    } catch {
+      // 列表读不到不影响其它设置项；点「回滚」时会再报一次具体原因
+    } finally {
+      setBackupsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadAddonlistBackups();
+  }, []);
+
+  const handleRestoreAddonlist = async (backup: { id: string; created_at: string; entries: number }) => {
+    const when = backup.created_at ? new Date(backup.created_at).toLocaleString('zh-CN') : '未知时间';
+    const ok = await confirmDialog({
+      title: '回滚 addonlist.txt',
+      description: (
+        <>
+          将把 addonlist.txt 恢复成 <strong>{when}</strong> 的版本（约 {backup.entries} 个条目）。
+          当前内容会先自动留一份快照，这一步也能再撤销。
+        </>
+      ),
+      confirmText: '回滚',
+      tone: 'warning',
+    });
+    if (!ok) return;
+    setRestoringBackupId(backup.id);
+    try {
+      const res = await fetch(
+        `${getApiBase()}/api/mods/addonlist-backups/${encodeURIComponent(backup.id)}/restore`,
+        { method: 'POST' },
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data?.detail || '回滚失败，请稍后重试', 'warning');
+        return;
+      }
+      showToast('已回滚 addonlist.txt，正在重新读取…', 'success');
+      await refreshAll();
+      await loadAddonlistBackups();
+    } catch {
+      showToast('回滚失败：无法连接到后端服务', 'error');
+    } finally {
+      setRestoringBackupId(null);
+    }
+  };
 
   const handleCleanCache = async () => {
     setCacheCleaning(true);
@@ -455,6 +517,72 @@ export function SettingsPage() {
                   </>
                 )}
               </p>
+            )}
+          </div>
+        </div>
+
+        {/* Addonlist 写盘兜底 Section */}
+        <div className="content-section" style={{ marginBottom: 20 }}>
+          <div className="section-header">
+            <h2>Addonlist 写盘兜底</h2>
+          </div>
+          <div className="settings-group">
+            <p className="settings-hint" style={{ marginBottom: 10 }}>
+              软件每次改写 <code>addonlist.txt</code> 前，都会把上一版自动存成历史快照
+              （保留最近 20 份，内容相同的不重复存）。写错、或被游戏 / Steam 云改成不想要的状态时，
+              可在这里一键回滚到某个时间点；回滚前也会先给当前内容留一份快照，所以回滚本身也能再撤销。
+            </p>
+            {!addonsPath ? (
+              <p className="settings-hint settings-hint--warn">
+                先在上面配置 Addons 目录，才会产生 addonlist.txt 的历史快照。
+              </p>
+            ) : (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+                  <button
+                    className="settings-btn settings-btn--secondary"
+                    onClick={() => void loadAddonlistBackups()}
+                    disabled={backupsLoading}
+                  >
+                    {backupsLoading ? '读取中…' : '刷新备份列表'}
+                  </button>
+                  <span className="settings-hint">共 {addonlistBackups.length} 份快照</span>
+                </div>
+                {addonlistBackups.length === 0 ? (
+                  <p className="settings-hint">
+                    还没有历史快照。软件下次改写 addonlist.txt 时会自动留一份。
+                  </p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {addonlistBackups.map((b) => (
+                      <div
+                        key={b.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          padding: '8px 10px',
+                          borderRadius: 8,
+                          background: 'rgba(127,127,127,.08)',
+                        }}
+                      >
+                        <span style={{ flex: 1 }}>
+                          {new Date(b.created_at).toLocaleString('zh-CN')}
+                          <span style={{ opacity: 0.65, marginLeft: 8 }}>· {b.entries} 个条目</span>
+                        </span>
+                        <button
+                          className="settings-btn settings-btn--ghost"
+                          style={{ flexShrink: 0 }}
+                          onClick={() => void handleRestoreAddonlist(b)}
+                          disabled={restoringBackupId === b.id}
+                        >
+                          {restoringBackupId === b.id ? '回滚中…' : '回滚到这份'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>

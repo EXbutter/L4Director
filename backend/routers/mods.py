@@ -138,6 +138,31 @@ def dismiss_addonlist_changes():
     return {"status": "ok", "count": count}
 
 
+# ── addonlist.txt 写盘兜底：历史快照与一键回滚 ─────────────────────────
+# 软件每次覆盖 addonlist.txt 前都会自动留一份快照（后台在 ModScanner 里做）。
+# 这里给界面两个入口：列出快照、把某个快照写回文件。写回前会再留一份当前快照，
+# 所以「回滚」本身也能再回滚，不会丢东西。
+
+
+@router.get("/api/mods/addonlist-backups")
+def list_addonlist_backups():
+    """列出 addonlist.txt 的历史快照（最新的在前）。"""
+    return {"backups": app_state.scanner.list_addonlist_backups()}
+
+
+@router.post("/api/mods/addonlist-backups/{backup_id}/restore")
+def restore_addonlist_backup(backup_id: str):
+    """一键回滚：把指定的 addonlist.txt 历史快照写回文件。"""
+    if not app_state.scanner.get_addons_path():
+        raise HTTPException(status_code=400, detail="请先配置 Addons 目录")
+    try:
+        return app_state.scanner.restore_addonlist_backup(backup_id)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.post("/api/mods/{mod_name}/toggle")
 def toggle_mod(mod_name: str, path: Optional[str] = None):
     """切换 Mod 启用/禁用状态。

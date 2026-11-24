@@ -364,6 +364,11 @@ _VPK_CACHE_DIR = _CACHE_DIR / 'vpk_covers'
 _INDEX_CACHE_DIR = _CACHE_DIR / 'vpk_index'
 _MANIFEST_CACHE_DIR = _CACHE_DIR / 'manifests'
 _METADATA_CACHE_DIR = _CACHE_DIR / 'vpk_metadata'
+# addonlist.txt 写盘前的自动历史快照目录（写盘兜底 / 一键回滚）。放在用户缓存目录，
+# 不污染游戏的 left4dead2 目录；里面只存原始文本，文件名含时间戳与内容指纹。
+_ADDONLIST_HISTORY_DIR = _CACHE_DIR / 'addonlist_history'
+# 历史快照最多保留几份：够覆盖最近几次误写 / 被游戏覆盖的情况，又不至于无限增长。
+ADDONLIST_HISTORY_LIMIT = 20
 
 # ── 元数据缓存的版本号 ──────────────────────────────────────────────
 # 解析逻辑有实质变化时 +1：缓存键里带上它，旧磁盘缓存自然失效并重新解析。
@@ -1834,6 +1839,10 @@ class ModScanner:
             if had_bom:
                 data = b'\xef\xbb\xbf' + data
 
+            # 写盘兜底：把「马上要被覆盖」的当前内容先存一份历史快照（md5 去重 + 轮转）。
+            # 万一这次写错了、或之后又被游戏 / Steam 云覆盖，用户能一键回滚到这一步之前。
+            self._snapshot_current_addonlist(addonlist_path)
+
             # 原子写：先写临时文件再替换，避免游戏/Steam 恰好读到半个文件
             tmp_path = addonlist_path.with_suffix('.tmp')
             tmp_path.write_bytes(data)
@@ -1859,6 +1868,134 @@ class ModScanner:
             except (OSError, UnboundLocalError):
                 pass
             return False
+
+    # ===== addonlist.txt 写盘兜底：自动历史快照 + 一键回滚 =====
+    # 软件每次覆盖 addonlist.txt 前，先把「即将被覆盖」的当前内容留一份快照。
+    # 目的：软件自身逻辑出错、或游戏 / Steam 云把文件改成用户不想要的状态时，
+    # 用户还有一个「回到几步之前」的按钮 —— 和 data.json 的 .bak 同一套思路，
+    # 只是这里保留多份、按内容去重，能回滚好几次而不只是上一版。
+
+    def _history_dir(self) -> Path:
+        return _ADDONLIST_HISTORY_DIR
+
+    def _snapshot_current_addonlist(self, path: Path) -> None:
+        """把当前 addonlist.txt 内容存一份历史快照（内容去重 + 轮转保留最近 N 份）。
+
+        只在文件存在且非空时执行。任何失败都只打印、不抛出 —— 备份不该阻断
+        主写入流程（磁盘满时用户更需要的是把新状态写下去）。
+        """
+        try:
+            if not path.exists():
+                return
+            current = path.read_bytes()
+            if not current:
+                return
+            digest = hashlib.md5(current).hexdigest()[:8]
+            hist = self._history_dir()
+            hist.mkdir(parents=True, exist_ok=True)
+            existing = sorted(hist.glob('addonlist-*.txt'))
+            # 与最近一份快照内容相同就不重复存，避免连续保存同一状态刷屏。
+            if existing:
+                try:
+                    if hashlib.md5(existing[-1].read_bytes()).hexdigest()[:8] == digest:
+                        return
+                except OSError:
+                    pass
+            stamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+            (hist / f'addonlist-{stamp}-{digest}.txt').write_bytes(current)
+            self._rotate_addonlist_history()
+        except OSError as exc:
+            print(f'[AddonList] 历史快照失败（不影响本次写入）：{exc}')
+
+    def _rotate_addonlist_history(self) -> None:
+        """历史快照只保留最近 ADDONLIST_HISTORY_LIMIT 份，多余的从旧到新删掉。"""
+        try:
+            files = sorted(self._history_dir().glob('addonlist-*.txt'))
+            for old in files[:-ADDONLIST_HISTORY_LIMIT]:
+                try:
+                    old.unlink()
+                except OSError:
+                    pass
+        except OSError:
+            pass
+
+    def list_addonlist_backups(self) -> list:
+        """列出 addonlist.txt 的历史快照（最新的在前），供界面展示与回滚。"""
+        hist = self._history_dir()
+        if not hist.exists():
+            return []
+        items = []
+        for p in sorted(hist.glob('addonlist-*.txt'), reverse=True):
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            parts = p.stem.split('-')
+            created = None
+            if len(parts) >= 4:
+                try:
+                    created = datetime.strptime(
+                        f'{parts[1]}-{parts[2]}-{parts[3]}', '%Y%m%d-%H%M%S-%f'
+                    ).isoformat()
+                except ValueError:
+                    created = None
+            try:
+                text = p.read_text(encoding='utf-8-sig', errors='surrogateescape')
+                entries = sum(
+                    1 for ln in text.splitlines()
+                    if re.match(r'^\s*"[^"]+"\s+"\d+"', ln)
+                )
+            except OSError:
+                entries = 0
+            items.append({
+                'id': p.name,
+                'created_at': created or datetime.fromtimestamp(st.st_mtime).isoformat(),
+                'size': st.st_size,
+                'entries': entries,
+            })
+        return items
+
+    def restore_addonlist_backup(self, backup_id: str) -> dict:
+        """把指定历史快照写回 addonlist.txt（一键回滚）。
+
+        写前会先给「当前内容」再留一份快照，所以回滚本身也能被再次回滚，不会丢东西。
+        抛 FileNotFoundError（快照不存在）/ ValueError（非法 id / 未配置目录）。
+        """
+        # 只接受纯文件名（防路径穿越），且必须符合快照命名。
+        safe = Path(backup_id).name
+        if safe != backup_id or not re.fullmatch(
+            r'addonlist-\d{8}-\d{6}-\d{6}-[0-9a-f]{8}\.txt', safe
+        ):
+            raise ValueError('非法的备份标识')
+        src = self._history_dir() / safe
+        if not src.exists():
+            raise FileNotFoundError('备份不存在或已被清理')
+        addonlist_path = self._get_addonlist_path()
+        if not addonlist_path:
+            raise ValueError('还没有配置 addons 目录，找不到 addonlist.txt')
+
+        content = src.read_bytes()
+        # 回滚前先把当前内容留一份快照，回滚也能撤销。
+        self._snapshot_current_addonlist(addonlist_path)
+
+        addonlist_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = addonlist_path.with_suffix('.tmp')
+        tmp_path.write_bytes(content)
+        tmp_path.replace(addonlist_path)
+
+        fingerprint = hashlib.md5(content).hexdigest()
+        self._last_addonlist_fingerprint = fingerprint
+        self._last_addonlist_error = None
+        try:
+            set_addonlist_state(fingerprint, str(addonlist_path))
+        except Exception as e:
+            print(f'[AddonList] 回滚后记录指纹失败：{e}')
+        # 让下一次扫描按磁盘上的真实内容重新计算，界面才能立刻看到回滚效果。
+        try:
+            invalidate_scan_cache()
+        except Exception:
+            pass
+        return {'status': 'ok', 'restored_from': safe, 'bytes': len(content)}
 
     # ===== mod 启用状态偏好：软件里的设置是权威来源 =====
 

@@ -1,6 +1,15 @@
 # 更新日志
 
-## v1.3.4 — 开发中
+## v1.3.5 — 开发中
+
+这一版给 `addonlist.txt` 加了一层写盘兜底：软件每次改写它之前，先把上一版自动存成历史快照（去重、轮转保留最近 20 份）；界面上（设置 → Addonlist 写盘兜底）可以一键把某个时间点写回文件。回滚前也会先给当前内容留一份快照，所以回滚本身也能再撤销。没有新页面、不改既有流程。
+
+### 新增
+
+- **Addonlist 写盘兜底：自动历史快照 + 一键回滚**：`ModScanner._write_addonlist()` 在原子写之前调用 `_snapshot_current_addonlist()`，把即将被覆盖的 `addonlist.txt` 存进 `~/.l4d2-manager/addonlist_history/`（文件名带时间戳与内容 md5 前 8 位；与最新快照内容相同则跳过；`ADDONLIST_HISTORY_LIMIT = 20` 轮转）。新增 `GET /api/mods/addonlist-backups`（按时间倒序列出 id / 时间 / 大小 / 条目数）与 `POST /api/mods/addonlist-backups/{backup_id}/restore`（校验文件名防路径穿越；回滚前先给当前内容再留一份快照，写回走同一套 tmp→replace 原子替换并刷新指纹）。设置页新增「Addonlist 写盘兜底」区块，列出快照并提供「回滚到这份」，回滚走应用内确认弹窗。
+- **验证与测试**：新增 `scripts/verify_addonlist_history.py`（6 个场景、15 项断言：首次无快照 / 写前快照 / 去重 / 回滚 / 非法与不存在 id / 轮转上限）；`backend/tests/test_addonlist_history.py` 7 个用例（含走真实路由的 client 用例）。
+
+## v1.3.4 — 2026-11-20
 
 这一版收尾 1.3.3 之后留下的三件事：把只在单测里跑的两个工具（首启窗口尺寸、卡片观察器）真正接进运行时，补完性能清单里剩下的主线程项，并把「拿不到游戏本体资源包 → 冲突判定静默降级」变成界面上看得见的提示。没有新页面、新功能。
 
