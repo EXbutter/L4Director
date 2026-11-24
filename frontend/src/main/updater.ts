@@ -15,11 +15,13 @@
  *     界面会一直停在「检查中…」，看起来像卡死。
  */
 
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, net } from 'electron';
 import { autoUpdater, UpdateInfo, ProgressInfo } from 'electron-updater';
 import { CancellationToken } from 'builder-util-runtime';
 import * as path from 'path';
 import * as fs from 'fs';
+
+export type UpdateSource = 'auto' | 'github' | 'gitee';
 
 export type UpdatePhase =
   | 'idle'
@@ -54,9 +56,21 @@ export interface UpdateState {
   /** 不支持时给用户看的原因 */
   supportHint: string;
   portable: boolean;
+  /** 本次实际使用的更新源（空串 = 还没检查过） */
+  source: 'github' | 'gitee' | '';
+  /** 用户选择的更新源偏好（auto = 国内优先 Gitee、失败回落 GitHub） */
+  preferSource: UpdateSource;
 }
 
-const RELEASES_URL = 'https://github.com/EXbutter/L4Director/releases';
+/** 仓库坐标：GitHub 主源 + Gitee 国内镜像源（改成你真实的 Gitee 仓库即可）。 */
+const GITHUB_OWNER = 'EXbutter';
+const GITHUB_REPO = 'L4Director';
+const GITEE_OWNER = 'EXbutter';
+const GITEE_REPO = 'l4-director';
+const GITHUB_RELEASES_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`;
+const GITEE_RELEASES_URL = `https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}/releases`;
+/** Gitee API：取最新 Release（含 tag 与 assets 列表）；公开仓库无需 token。 */
+const GITEE_API_LATEST = `https://gitee.com/api/v5/repos/${GITEE_OWNER}/${GITEE_REPO}/releases/latest`;
 const CHECK_TIMEOUT_MS = 20_000;
 const STARTUP_CHECK_DELAY_MS = 15_000;
 const REPEAT_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -97,6 +111,8 @@ let state: UpdateState = {
   supported,
   supportHint,
   portable: IS_PORTABLE,
+  source: '',
+  preferSource: 'auto',
 };
 
 let inited = false;
@@ -116,6 +132,8 @@ function prefsPath(): string {
 interface UpdatePrefs {
   /** 用户选择跳过的版本号，自动检查不再为它打扰 */
   skippedVersion?: string;
+  /** 用户选择的更新源偏好（auto = 国内优先 Gitee、失败回落 GitHub） */
+  source?: UpdateSource;
 }
 
 function loadPrefs(): UpdatePrefs {
@@ -134,6 +152,50 @@ function savePrefs(p: UpdatePrefs): void {
   } catch (e) {
     console.error('[Updater] 保存更新偏好失败:', e);
   }
+}
+
+/** 读取用户选择的更新源偏好（非法/缺省都退回 auto = 国内优先 Gitee）。 */
+function getPreferredSource(): UpdateSource {
+  const s = loadPrefs().source;
+  return s === 'github' || s === 'gitee' ? s : 'auto';
+}
+
+/**
+ * 通过 Gitee 官方 API 解析最新 Release 的下载目录，供 electron-updater 的
+ * generic 源使用：`{base}/latest.yml`、`{base}/<安装包>` 都必须存在。
+ * 只有把 latest.yml / 安装包 / .blockmap 一起传到 Gitee Release，才能自动下载+差分+安装。
+ */
+async function resolveGiteeFeed(): Promise<{ tag: string; feedUrl: string }> {
+  const res = await net.fetch(GITEE_API_LATEST, { headers: { Accept: 'application/json' } });
+  if (!res.ok) throw new Error(`Gitee API HTTP ${res.status}`);
+  const data: any = await res.json();
+  const tag = String(data?.tag_name || '').trim();
+  if (!tag) throw new Error('Gitee 最新 Release 缺少 tag_name');
+  const assets: any[] = Array.isArray(data?.assets) ? data.assets : [];
+  // assets 列表为空（某些接口版本不返回）时也放行，交给 generic 源去取 latest.yml 验证。
+  if (assets.length > 0 && !assets.some((a) => String(a?.name || '').toLowerCase() === 'latest.yml')) {
+    throw new Error('Gitee Release 缺少 latest.yml（无法自动更新）');
+  }
+  return {
+    tag,
+    // 末尾带斜杠：electron-updater 的 generic 源按「目录 + 文件名」拼 URL，
+    // 少了斜杠会把最后一段 tag 当成文件名替换掉。
+    feedUrl: `https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}/releases/download/${tag}/`,
+  };
+}
+
+function useGithubFeed(): void {
+  autoUpdater.setFeedURL({
+    provider: 'github',
+    owner: GITHUB_OWNER,
+    repo: GITHUB_REPO,
+    releaseType: 'release',
+  } as any);
+}
+
+function useGiteeFeed(feedUrl: string): void {
+  // generic 源：electron-updater 会去该目录读 latest.yml，再按里面的 path 下载安装包与 blockmap。
+  autoUpdater.setFeedURL({ provider: 'generic', url: feedUrl } as any);
 }
 
 // ---------------------------------------------------------------- 日志
@@ -196,7 +258,10 @@ function friendlyError(err: unknown): string {
       s.includes('err_connection_timed_out') || s.includes('err_connection_reset') ||
       s.includes('econnreset') || s.includes('err_connection_closed') ||
       s.includes('err_internet_disconnected')) {
-    return '连不上 GitHub（连接超时或被重置）。国内网络常见，挂代理后重试，或直接到 Release 页面下载。';
+    return '连不上更新服务器（连接超时或被重置）。国内网络常见，可切换到 Gitee 源，或挂代理后重试。';
+  }
+  if (s.includes('gitee')) {
+    return '连不上 Gitee 镜像（或该仓库还没有可用的 Release）。检查网络后重试，或切换到 GitHub 源。';
   }
   if (s.includes('404') || s.includes('cannot find latest.yml') || s.includes('no published versions')) {
     return '更新源上还没有可用的安装包（latest.yml 缺失）。可能这个版本还没上传完，稍后再试。';
@@ -262,16 +327,41 @@ export async function checkForUpdates(manual = false): Promise<UpdateState> {
   manualCheck = manual;
   if (manual) state = { ...state, skipped: false };
   setState({ phase: 'checking', error: '' });
-  logLine(`检查更新（${manual ? '手动' : '自动'}），当前版本 ${state.currentVersion}`);
 
-  try {
-    await withTimeout(autoUpdater.checkForUpdates(), CHECK_TIMEOUT_MS);
-  } catch (e) {
+  const pref = getPreferredSource();
+  // 国内优先 Gitee：auto 模式先 Gitee、失败再回落 GitHub；手动选择则只用一个源。
+  const order: Array<'gitee' | 'github'> =
+    pref === 'github' ? ['github'] : pref === 'gitee' ? ['gitee'] : ['gitee', 'github'];
+  logLine(`检查更新（${manual ? '手动' : '自动'}），当前版本 ${state.currentVersion}，源顺序 ${order.join(' → ')}`);
+
+  let lastErr: unknown = null;
+  for (const feed of order) {
+    try {
+      if (feed === 'gitee') {
+        const { tag, feedUrl } = await withTimeout(resolveGiteeFeed(), CHECK_TIMEOUT_MS);
+        useGiteeFeed(feedUrl);
+        setState({ source: 'gitee' });
+        logLine(`使用 Gitee 镜像源（tag ${tag}）`);
+      } else {
+        useGithubFeed();
+        setState({ source: 'github' });
+        logLine('使用 GitHub 源');
+      }
+      await withTimeout(autoUpdater.checkForUpdates(), CHECK_TIMEOUT_MS);
+      lastErr = null;
+      break;
+    } catch (e) {
+      lastErr = e;
+      logLine(`源 ${feed} 检查失败：${e instanceof Error ? e.message : String(e)}`, true);
+    }
+  }
+
+  if (lastErr) {
     // 超时之后真实结果还可能回来并覆盖这里，这是可接受的：比起一直「检查中…」，
     // 早点告诉用户「网络不行」更有用。
     if (state.phase === 'checking') {
-      const msg = friendlyError(e);
-      logLine(`检查失败：${msg}（原始：${e instanceof Error ? e.message : String(e)}）`, true);
+      const msg = friendlyError(lastErr);
+      logLine(`检查失败：${msg}（原始：${lastErr instanceof Error ? lastErr.message : String(lastErr)}）`, true);
       setState({ phase: 'error', error: msg, checkedAt: Math.floor(Date.now() / 1000) });
     }
   }
@@ -364,9 +454,25 @@ export function skipVersion(version?: string): UpdateState {
   return getUpdateState();
 }
 
-/** 打开 Release 页面（下载失败或便携版时的兜底出路） */
+/** 切换更新源偏好（auto / github / gitee）；切换后立即按新源检查一次。 */
+export function setUpdateSource(pref: UpdateSource): UpdateState {
+  const p: UpdateSource = pref === 'github' || pref === 'gitee' ? pref : 'auto';
+  const prefs = loadPrefs();
+  prefs.source = p;
+  savePrefs(prefs);
+  logLine(`切换更新源偏好：${p}`);
+  setState({ preferSource: p, source: '', skipped: false });
+  if (supported && !downloading && !installing && state.phase !== 'checking') {
+    void checkForUpdates(true);
+  }
+  return getUpdateState();
+}
+
+/** 打开 Release 页面：Gitee 优先（auto 且本次不是 GitHub 时走 Gitee）。 */
 export function openReleasesPage(): void {
-  shell.openExternal(RELEASES_URL);
+  const pref = getPreferredSource();
+  const toGitee = pref === 'gitee' || (pref === 'auto' && state.source !== 'github');
+  shell.openExternal(toGitee ? GITEE_RELEASES_URL : GITHUB_RELEASES_URL);
 }
 
 // ---------------------------------------------------------------- 事件接线
@@ -478,6 +584,9 @@ export function initUpdater(): void {
 
   bindEvents();
 
+  // 读取用户选择的更新源偏好（auto 默认 = 国内优先 Gitee）
+  state = { ...state, preferSource: getPreferredSource() };
+
   ipcMain.handle('update:getState', () => getUpdateState());
   ipcMain.handle('update:check', () => checkForUpdates(true));
   ipcMain.handle('update:download', () => downloadUpdate());
@@ -485,6 +594,7 @@ export function initUpdater(): void {
   ipcMain.handle('update:install', () => quitAndInstall());
   ipcMain.handle('update:skip', (_e, version?: string) => skipVersion(version));
   ipcMain.handle('update:openReleases', () => openReleasesPage());
+  ipcMain.handle('update:setSource', (_e, source: UpdateSource) => setUpdateSource(source));
 
   if (!supported) {
     logLine(`自动更新不可用：${supportHint}`);

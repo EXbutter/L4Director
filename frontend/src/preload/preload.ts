@@ -33,6 +33,10 @@ export interface UpdateState {
   supported: boolean;
   supportHint: string;
   portable: boolean;
+  /** 本次实际使用的更新源（空串 = 还没检查过） */
+  source: 'github' | 'gitee' | '';
+  /** 用户选择的更新源偏好（auto = 国内优先 Gitee、失败回落 GitHub） */
+  preferSource: 'auto' | 'github' | 'gitee';
 }
 
 // Type definitions for exposed API
@@ -45,6 +49,10 @@ interface ElectronAPI {
   openExternal: (url: string) => Promise<void>;
   /** 在资源管理器里定位文件（坏包提示条的「打开所在目录」） */
   showItemInFolder: (filePath: string) => Promise<boolean>;
+  /** 导入 addonlist 备份：弹出打开文件对话框并读取内容（base64） */
+  openAddonlistFile: () => Promise<{ ok: boolean; canceled?: boolean; path?: string; contentBase64?: string; error?: string }>;
+  /** 导出 addonlist 备份：弹出另存为对话框并写入内容（base64） */
+  saveAddonlistFile: (contentBase64: string, defaultName: string) => Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }>;
   setProxy: (host: string, port: string) => Promise<boolean>;
   getGpuAccelerationStatus: () => Promise<{ gpuAccelerationDisabled: boolean }>;
   setGpuAcceleration: (disabled: boolean) => Promise<{ success: boolean; error?: string }>;
@@ -77,6 +85,8 @@ interface ElectronAPI {
   installUpdate: () => Promise<boolean>;
   skipUpdateVersion: (version?: string) => Promise<UpdateState>;
   openReleasesPage: () => Promise<void>;
+  /** 切换更新源偏好（auto = 国内优先 Gitee、失败回落 GitHub） */
+  setUpdateSource: (source: 'auto' | 'github' | 'gitee') => Promise<UpdateState>;
   onUpdateStatus: (callback: (state: UpdateState) => void) => void;
 }
 
@@ -92,6 +102,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectFolder: () => ipcRenderer.invoke('dialog:selectFolder'),
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   showItemInFolder: (filePath: string) => ipcRenderer.invoke('shell:showItemInFolder', filePath),
+  openAddonlistFile: () => ipcRenderer.invoke('addonlist:openFile'),
+  saveAddonlistFile: (contentBase64: string, defaultName: string) =>
+    ipcRenderer.invoke('addonlist:saveFile', contentBase64, defaultName),
   setProxy: (host: string, port: string) => ipcRenderer.invoke('proxy:set', host, port),
   // GPU 硬件加速
   getGpuAccelerationStatus: () => ipcRenderer.invoke('gpu:getStatus'),
@@ -136,6 +149,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   installUpdate: () => ipcRenderer.invoke('update:install'),
   skipUpdateVersion: (version?: string) => ipcRenderer.invoke('update:skip', version),
   openReleasesPage: () => ipcRenderer.invoke('update:openReleases'),
+  setUpdateSource: (source: 'auto' | 'github' | 'gitee') =>
+    ipcRenderer.invoke('update:setSource', source),
   onUpdateStatus: (callback: (state: UpdateState) => void) => {
     ipcRenderer.on('update:status', (_event, state: UpdateState) => callback(state));
   },

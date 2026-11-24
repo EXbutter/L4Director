@@ -39,6 +39,7 @@ export function UpdateSection() {
   const install = useUpdateStore((s) => s.install);
   const skip = useUpdateStore((s) => s.skip);
   const openReleases = useUpdateStore((s) => s.openReleases);
+  const setSource = useUpdateStore((s) => s.setSource);
 
   const [showNotes, setShowNotes] = useState(false);
 
@@ -106,6 +107,30 @@ export function UpdateSection() {
         </code>
         <span className="update-panel__spacer" />
         {action}
+      </div>
+
+      {/* 更新源：默认国内优先 Gitee（失败自动回落 GitHub），也可手动指定 */}
+      <div className="update-source-row">
+        <span className="update-source-row__label">更新源</span>
+        <div className="update-source-row__seg">
+          {([['auto', '自动'], ['gitee', 'Gitee'], ['github', 'GitHub']] as const).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              className={`update-source-btn${(info?.preferSource ?? 'auto') === key ? ' active' : ''}`}
+              onClick={() => void setSource(key)}
+              disabled={busy}
+              title={key === 'auto' ? '国内优先 Gitee，失败自动回落 GitHub' : undefined}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {info?.source && (
+          <span className="update-source-row__used">
+            本次：{info.source === 'gitee' ? 'Gitee' : 'GitHub'}
+          </span>
+        )}
       </div>
 
       {/* 状态行：只有「有事发生」的时候才占位置，平时不吵 */}

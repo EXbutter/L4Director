@@ -157,6 +157,10 @@ def main():
     else:
         print("[WARN] Could not auto-detect addons path. Please configure in Settings.")
 
+    # 后台定时自动备份 addonlist.txt（开关 / 间隔 / 保留数量由「设置 → Addonlist 备份」控制）。
+    # 放在 main() 而不是 create_app()：测试只调 create_app()，不应因定时器凭空产生备份。
+    scanner.start_addonlist_backup_scheduler()
+
     print(f"[Startup] Backend listening on http://{args.host}:{args.port}")
 
     uvicorn.run(

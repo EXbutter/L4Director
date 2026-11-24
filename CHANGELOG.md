@@ -2,13 +2,18 @@
 
 ## v1.3.5 — 开发中
 
-这一版给 `addonlist.txt` 加了一层写盘兜底：软件每次改写它之前，先把上一版自动存成历史快照（去重、轮转保留最近 20 份）；界面上（设置 → Addonlist 写盘兜底）可以一键把某个时间点写回文件。回滚前也会先给当前内容留一份快照，所以回滚本身也能再撤销。另外补了 `addonlist.txt` 的卫生检查：找出指向已不存在 `.vpk` 的孤儿条目并可一键清理（清理前同样先留快照）。没有新页面、不改既有流程。
+这一版给 `addonlist.txt` 增加「备份」能力：每次改写前自动留底，并支持按间隔**定时自动备份**（间隔与保留数量可调）；设置页可一键「导出当前 addonlist / 导入备份」，备份统一放在用户目录，不再在设置里堆一列快照。没有新页面、不改既有流程。
 
 ### 新增
 
-- **Addonlist 写盘兜底：自动历史快照 + 一键回滚**：`ModScanner._write_addonlist()` 在原子写之前调用 `_snapshot_current_addonlist()`，把即将被覆盖的 `addonlist.txt` 存进 `~/.l4d2-manager/addonlist_history/`（文件名带时间戳与内容 md5 前 8 位；与最新快照内容相同则跳过；`ADDONLIST_HISTORY_LIMIT = 20` 轮转）。新增 `GET /api/mods/addonlist-backups`（按时间倒序列出 id / 时间 / 大小 / 条目数）与 `POST /api/mods/addonlist-backups/{backup_id}/restore`（校验文件名防路径穿越；回滚前先给当前内容再留一份快照，写回走同一套 tmp→replace 原子替换并刷新指纹）。设置页新增「Addonlist 写盘兜底」区块，列出快照并提供「回滚到这份」，回滚走应用内确认弹窗。
-- **Addonlist 卫生：孤儿条目检测 + 一键清理**：`GET /api/mods/addonlist-orphans` 只读列出 `addonlist.txt` 里指向「已不在 addons 目录的 .vpk」的孤儿条目；`POST /api/mods/addonlist-clean-orphans` 只删这些孤儿行（头部、花括号、正常条目、无法解析的行原样保留），写前自动留历史快照，所以清理也能回滚；没有孤儿时是空操作（不写盘、不产生快照）。设置页「Addonlist 写盘兜底」区块内加了「检查孤儿条目 / 清理」入口。
-- **验证与测试**：新增 `scripts/verify_addonlist_history.py`（6 个场景、15 项断言）与 `scripts/verify_addonlist_orphans.py`（5 个场景、20 项断言）；`backend/tests/test_addonlist_history.py` 7 个用例、`backend/tests/test_addonlist_orphans.py` 8 个用例（均含走真实路由的 client 用例）。
+- **Addonlist 备份：写前自动留底 + 定时自动备份 + 导出/导入**：`ModScanner._write_addonlist()` 在原子写之前调用 `_snapshot_current_addonlist()`，把即将被覆盖的 `addonlist.txt` 存进 `~/.l4d2-manager/addonlist_history/`（文件名带时间戳与内容 md5 前 8 位；与最新快照内容相同则跳过；按「保留数量」轮转，默认 20 份）。新增后台定时器（`main()` 启动）：按「设置 → Addonlist 备份」里的开关与间隔（分钟）周期备份，内容没变自动跳过。设置页不再内联列出快照，改为：定时自动备份开关、备份间隔（5/15/30/60/180 分钟）、保留数量（5/10/20/50 份）、显示并打开备份文件夹、立即备份、导出当前 addonlist（系统「另存为」）、导入备份（系统「打开文件」，覆盖前自动备份当前内容）。新增接口 `GET/POST /api/mods/addonlist-backup-settings`、`POST /api/mods/addonlist-backup-now`、`GET /api/mods/addonlist-export`、`POST /api/mods/addonlist-import`。
+- **自动更新：Gitee 国内镜像源（国内优先）**：更新器支持 Gitee 镜像（electron-updater generic 源）。「设置 → 关于」新增「更新源：自动 / Gitee / GitHub」，默认「自动」= 先查 Gitee（Gitee API 取最新 Release，按 tag 目录读 `latest.yml`），失败自动回落 GitHub。需把 `latest.yml` + 安装包 + `.blockmap` 一起传到 Gitee Release（tag `v<version>`）；仓库坐标在 `frontend/src/main/updater.ts` 顶部 `GITEE_OWNER / GITEE_REPO`（默认 `EXbutter/l4-director`）。
+- **验证与测试**：新增 `scripts/verify_addonlist_history.py`（6 个场景、15 项断言）；`backend/tests/test_addonlist_history.py` 7 个用例、`test_addonlist_backup_settings.py`（备份设置夹紧 / 导出导入往返 / 立即备份去重 / 未配置目录报错）。
+
+### 改进
+
+- **冲突详情弹窗可读性重做**：顶部加总览（与几个 Mod 冲突 / 共多少文件 / 最高级别）；包级「闪退风险」显著提示（两个包各带半个模型、路径不重叠也会崩，之前完全看不到）；每条冲突显示资源类型（模型/贴图…）、闪退风险、人话原因与处理建议，文件清单可展开查看（不再依赖鼠标悬停）；列表按「闪退风险 → 严重度 → 文件数」排序；「禁用对方」改用全站统一的启停开关，卡片主体不再整卡点击就切换，避免误触。「我的 Mod」与「整合包」两处冲突弹窗合并为同一个组件，展示逻辑抽成 `utils/conflictView.ts` 并有单测覆盖。
+- **一键发版脚本**：新增 `release.ps1`（`.\ld release`）——`git pull --ff-only` → 建标签 → 构建并发布 GitHub Release → 推送 GitHub/Gitee → 用 Gitee API 建 Release 并上传 `latest.yml`/安装包/`.blockmap`。支持 `-DryRun` 与 `-SkipBuild/-NoGithub/-NoGitee/-NoPush/-NoPull`。
 
 ### 修复
 

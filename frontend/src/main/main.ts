@@ -803,6 +803,45 @@ ipcMain.handle('logs:export', async () => {
     return { ok: false, error: String(e) };
   }
 });
+
+// addonlist 备份导出/导入：弹系统对话框，文件读写都在主进程完成（渲染层只传 base64）
+ipcMain.handle('addonlist:openFile', async () => {
+  if (!mainWindow) return { ok: false, canceled: true };
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: '导入 addonlist 备份',
+    properties: ['openFile'],
+    filters: [
+      { name: 'addonlist 文本', extensions: ['txt'] },
+      { name: '所有文件', extensions: ['*'] },
+    ],
+  });
+  if (result.canceled || result.filePaths.length === 0) return { ok: false, canceled: true };
+  try {
+    const buf = fs.readFileSync(result.filePaths[0]);
+    return { ok: true, path: result.filePaths[0], contentBase64: buf.toString('base64') };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+});
+
+ipcMain.handle('addonlist:saveFile', async (_event, contentBase64: string, defaultName: string) => {
+  if (!mainWindow) return { ok: false, canceled: true };
+  if (typeof contentBase64 !== 'string') return { ok: false, error: '内容格式错误' };
+  const defaultPath = path.join(app.getPath('documents'), defaultName || 'addonlist.txt');
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: '导出 addonlist 备份',
+    defaultPath,
+    filters: [{ name: 'addonlist 文本', extensions: ['txt'] }],
+  });
+  if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+  try {
+    fs.writeFileSync(result.filePath, Buffer.from(contentBase64, 'base64'));
+    console.log(`[Addonlist] 导出到 ${result.filePath}`);
+    return { ok: true, path: result.filePath };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+});
 // =====================================================================================
 
 // 供渲染进程在“无法连接后端”时手动请求重启后端（例如杀毒软件首启拦截后再次尝试）

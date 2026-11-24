@@ -35,6 +35,10 @@ interface UpdateStatePayload {
   supported: boolean;
   supportHint: string;
   portable: boolean;
+  /** 本次实际使用的更新源 */
+  source: 'github' | 'gitee' | '';
+  /** 用户选择的更新源偏好 */
+  preferSource: 'auto' | 'github' | 'gitee';
 }
 
 interface Window {
@@ -47,6 +51,10 @@ interface Window {
     openExternal: (url: string) => Promise<void>;
     /** 在资源管理器里定位文件（坏包提示条的「打开所在目录」） */
     showItemInFolder: (filePath: string) => Promise<boolean>;
+    /** 导入 addonlist 备份：弹出打开文件对话框并读取内容（base64） */
+    openAddonlistFile: () => Promise<{ ok: boolean; canceled?: boolean; path?: string; contentBase64?: string; error?: string }>;
+    /** 导出 addonlist 备份：弹出另存为对话框并写入内容（base64） */
+    saveAddonlistFile: (contentBase64: string, defaultName: string) => Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }>;
     setProxy: (host: string, port: string) => Promise<boolean>;
     getGpuAccelerationStatus: () => Promise<{ gpuAccelerationDisabled: boolean }>;
     setGpuAcceleration: (disabled: boolean) => Promise<{ success: boolean; error?: string }>;
@@ -90,6 +98,8 @@ interface Window {
     installUpdate: () => Promise<boolean>;
     skipUpdateVersion: (version?: string) => Promise<UpdateStatePayload>;
     openReleasesPage: () => Promise<void>;
+    /** 切换更新源偏好（auto = 国内优先 Gitee） */
+    setUpdateSource: (source: 'auto' | 'github' | 'gitee') => Promise<UpdateStatePayload>;
     onUpdateStatus: (callback: (state: UpdateStatePayload) => void) => void;
   };
 }

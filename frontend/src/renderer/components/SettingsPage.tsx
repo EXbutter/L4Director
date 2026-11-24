@@ -150,19 +150,15 @@ export function SettingsPage() {
   const [cacheInfo, setCacheInfo] = useState<{ total_bytes: number; total_files: number } | null>(null);
   const [cacheCleaning, setCacheCleaning] = useState(false);
 
-  // addonlist.txt 写盘兜底：历史快照列表 + 一键回滚
-  const [addonlistBackups, setAddonlistBackups] = useState<
-    { id: string; created_at: string; size: number; entries: number }[]
-  >([]);
-  const [backupsLoading, setBackupsLoading] = useState(false);
-  const [restoringBackupId, setRestoringBackupId] = useState<string | null>(null);
-
-  // addonlist.txt 卫生：孤儿条目（指向已不存在的 .vpk）
-  const [orphanInfo, setOrphanInfo] = useState<
-    { orphans: string[]; total: number; present: number } | null
-  >(null);
-  const [orphanChecking, setOrphanChecking] = useState(false);
-  const [orphanCleaning, setOrphanCleaning] = useState(false);
+  // addonlist.txt 备份：自动备份设置（开关 / 间隔 / 保留数量 / 文件夹）+ 导出导入
+  const [backupCfg, setBackupCfg] = useState<{
+    enabled: boolean;
+    interval_min: number;
+    limit: number;
+    folder: string;
+    count: number;
+  } | null>(null);
+  const [backupBusy, setBackupBusy] = useState<'idle' | 'saving' | 'backing' | 'exporting' | 'importing'>('idle');
 
   const loadCacheStats = async () => {
     try {
@@ -177,109 +173,121 @@ export function SettingsPage() {
     void loadCacheStats();
   }, []);
 
-  const loadAddonlistBackups = async () => {
-    setBackupsLoading(true);
+  const loadBackupConfig = async () => {
     try {
-      const res = await fetch(`${getApiBase()}/api/mods/addonlist-backups`);
-      if (res.ok) {
-        const data = await res.json();
-        setAddonlistBackups(Array.isArray(data?.backups) ? data.backups : []);
-      }
+      const res = await fetch(`${getApiBase()}/api/mods/addonlist-backup-settings`);
+      if (res.ok) setBackupCfg(await res.json());
     } catch {
-      // 列表读不到不影响其它设置项；点「回滚」时会再报一次具体原因
-    } finally {
-      setBackupsLoading(false);
+      // 读不到不影响其它设置项；点按钮时会再报一次具体原因
     }
   };
 
   useEffect(() => {
-    void loadAddonlistBackups();
+    void loadBackupConfig();
   }, []);
 
-  const handleRestoreAddonlist = async (backup: { id: string; created_at: string; entries: number }) => {
-    const when = backup.created_at ? new Date(backup.created_at).toLocaleString('zh-CN') : '未知时间';
+  /** 保存备份设置（开关 / 间隔 / 数量），后端会把范围夹紧后回传最新配置 */
+  const updateBackupCfg = async (patch: { enabled?: boolean; interval_min?: number; limit?: number }) => {
+    setBackupBusy('saving');
+    try {
+      const res = await fetch(`${getApiBase()}/api/mods/addonlist-backup-settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data?.detail || '保存失败，请稍后重试', 'warning');
+        return;
+      }
+      setBackupCfg(data);
+    } catch {
+      showToast('保存失败：无法连接到后端服务', 'error');
+    } finally {
+      setBackupBusy('idle');
+    }
+  };
+
+  const handleBackupNow = async () => {
+    setBackupBusy('backing');
+    try {
+      const res = await fetch(`${getApiBase()}/api/mods/addonlist-backup-now`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data?.detail || '备份失败，请稍后重试', 'warning');
+        return;
+      }
+      setBackupCfg(data);
+      showToast('已备份当前 addonlist.txt', 'success');
+    } catch {
+      showToast('备份失败：无法连接到后端服务', 'error');
+    } finally {
+      setBackupBusy('idle');
+    }
+  };
+
+  const handleExportAddonlist = async () => {
+    setBackupBusy('exporting');
+    try {
+      const res = await fetch(`${getApiBase()}/api/mods/addonlist-export`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data?.detail || '导出失败，请稍后重试', 'warning');
+        return;
+      }
+      const saved = await window.electronAPI.saveAddonlistFile(data.content_b64, data.default_name);
+      if (saved.canceled) return;
+      if (!saved.ok) {
+        showToast(saved.error || '导出失败', 'error');
+        return;
+      }
+      showToast(`已导出 addonlist（${data.entries ?? 0} 个条目）`, 'success');
+    } catch {
+      showToast('导出失败：无法连接到后端服务', 'error');
+    } finally {
+      setBackupBusy('idle');
+    }
+  };
+
+  const handleImportAddonlist = async () => {
+    const picked = await window.electronAPI.openAddonlistFile();
+    if (picked.canceled) return;
+    if (!picked.ok || !picked.contentBase64) {
+      showToast(picked.error || '读取备份文件失败', 'error');
+      return;
+    }
     const ok = await confirmDialog({
-      title: '回滚 addonlist.txt',
+      title: '导入 addonlist 备份',
       description: (
         <>
-          将把 addonlist.txt 恢复成 <strong>{when}</strong> 的版本（约 {backup.entries} 个条目）。
-          当前内容会先自动留一份快照，这一步也能再撤销。
+          将用所选文件<strong>覆盖当前 addonlist.txt</strong>。
+          覆盖前会自动先备份当前内容，可撤销。
         </>
       ),
-      confirmText: '回滚',
+      detail: picked.path,
+      confirmText: '导入',
       tone: 'warning',
     });
     if (!ok) return;
-    setRestoringBackupId(backup.id);
+    setBackupBusy('importing');
     try {
-      const res = await fetch(
-        `${getApiBase()}/api/mods/addonlist-backups/${encodeURIComponent(backup.id)}/restore`,
-        { method: 'POST' },
-      );
+      const res = await fetch(`${getApiBase()}/api/mods/addonlist-import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content_b64: picked.contentBase64 }),
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        showToast(data?.detail || '回滚失败，请稍后重试', 'warning');
+        showToast(data?.detail || '导入失败，请稍后重试', 'warning');
         return;
       }
-      showToast('已回滚 addonlist.txt，正在重新读取…', 'success');
+      showToast(`已导入 addonlist（${data.entries ?? 0} 个条目），正在重新读取…`, 'success');
       await refreshAll();
-      await loadAddonlistBackups();
+      await loadBackupConfig();
     } catch {
-      showToast('回滚失败：无法连接到后端服务', 'error');
+      showToast('导入失败：无法连接到后端服务', 'error');
     } finally {
-      setRestoringBackupId(null);
-    }
-  };
-
-  const loadAddonlistOrphans = async () => {
-    setOrphanChecking(true);
-    try {
-      const res = await fetch(`${getApiBase()}/api/mods/addonlist-orphans`);
-      if (res.ok) {
-        const data = await res.json();
-        setOrphanInfo({
-          orphans: Array.isArray(data?.orphans) ? data.orphans : [],
-          total: data?.total ?? 0,
-          present: data?.present ?? 0,
-        });
-      }
-    } catch {
-      // 检查失败不打断其它设置项
-    } finally {
-      setOrphanChecking(false);
-    }
-  };
-
-  const handleCleanAddonlistOrphans = async () => {
-    const count = orphanInfo?.orphans.length ?? 0;
-    if (count === 0) return;
-    const ok = await confirmDialog({
-      title: '清理孤儿条目',
-      description: (
-        <>
-          将从 addonlist.txt 删掉 <strong>{count}</strong> 条指向已不存在 .vpk 的条目。
-          清理前会自动留一份历史快照，可回滚。
-        </>
-      ),
-      confirmText: '清理',
-      tone: 'warning',
-    });
-    if (!ok) return;
-    setOrphanCleaning(true);
-    try {
-      const res = await fetch(`${getApiBase()}/api/mods/addonlist-clean-orphans`, { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        showToast(data?.detail || '清理失败，请稍后重试', 'warning');
-        return;
-      }
-      showToast(`已清理 ${data?.removed_count ?? 0} 条孤儿条目`, 'success');
-      await loadAddonlistOrphans();
-      await loadAddonlistBackups();
-    } catch {
-      showToast('清理失败：无法连接到后端服务', 'error');
-    } finally {
-      setOrphanCleaning(false);
+      setBackupBusy('idle');
     }
   };
 
@@ -580,105 +588,121 @@ export function SettingsPage() {
           </div>
         </div>
 
-        {/* Addonlist 写盘兜底 Section */}
+        {/* Addonlist 备份 Section：只放设置与导出/导入，不再内联列快照 */}
         <div className="content-section" style={{ marginBottom: 20 }}>
           <div className="section-header">
-            <h2>Addonlist 写盘兜底</h2>
+            <h2>Addonlist 备份</h2>
           </div>
           <div className="settings-group">
-            <p className="settings-hint" style={{ marginBottom: 10 }}>
-              软件改写 <code>addonlist.txt</code> 前会自动留存历史快照（最近 20 份），可一键回滚；回滚前也会先留快照，回滚可再撤销。
+            <p className="settings-desc">
+              软件改写 <code>addonlist.txt</code> 前会自动备份到本机文件夹；也可按间隔定时备份，
+              随时把当前文件导出为备份、或从备份文件导入。备份都放在用户目录，不污染游戏目录。
             </p>
             {!addonsPath ? (
               <p className="settings-hint settings-hint--warn">
-                先在上面配置 Addons 目录，才会产生 addonlist.txt 的历史快照。
+                先在上面配置 Addons 目录，备份功能才会生效。
               </p>
             ) : (
               <>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-                  <button
-                    className="settings-btn settings-btn--secondary"
-                    onClick={() => void loadAddonlistBackups()}
-                    disabled={backupsLoading}
-                  >
-                    {backupsLoading ? '读取中…' : '刷新备份列表'}
-                  </button>
-                  <span className="settings-hint">共 {addonlistBackups.length} 份快照</span>
-                </div>
-                {addonlistBackups.length === 0 ? (
-                  <p className="settings-hint">
-                    还没有历史快照。软件下次改写 addonlist.txt 时会自动留一份。
-                  </p>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {addonlistBackups.map((b) => (
-                      <div
-                        key={b.id}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 10,
-                          padding: '8px 10px',
-                          borderRadius: 8,
-                          background: 'rgba(127,127,127,.08)',
-                        }}
-                      >
-                        <span style={{ flex: 1 }}>
-                          {new Date(b.created_at).toLocaleString('zh-CN')}
-                          <span style={{ opacity: 0.65, marginLeft: 8 }}>· {b.entries} 个条目</span>
-                        </span>
-                        <button
-                          className="settings-btn settings-btn--ghost"
-                          style={{ flexShrink: 0 }}
-                          onClick={() => void handleRestoreAddonlist(b)}
-                          disabled={restoringBackupId === b.id}
-                        >
-                          {restoringBackupId === b.id ? '回滚中…' : '回滚到这份'}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px dashed var(--border-color)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
-                    <span className="settings-hint">
-                      孤儿条目：addonlist.txt 里指向的 .vpk 已经不在 addons 目录（手删了包、或整合包带入的条目）。
+                <div className="settings-toggle-row">
+                  <div className="settings-toggle-info">
+                    <span className="settings-toggle-label">
+                      {backupCfg?.enabled ? '定时自动备份：已开启' : '定时自动备份：已关闭'}
+                    </span>
+                    <span className="settings-toggle-hint">
+                      按设定间隔在后台自动备份当前 addonlist.txt；每次写盘前也总会先留一份。
                     </span>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                    <button
-                      className="settings-btn settings-btn--secondary"
-                      onClick={() => void loadAddonlistOrphans()}
-                      disabled={orphanChecking}
-                    >
-                      {orphanChecking ? '检查中…' : '检查孤儿条目'}
-                    </button>
-                    {orphanInfo && (
-                      <span className="settings-hint">
-                        {orphanInfo.orphans.length === 0
-                          ? `没有孤儿条目（共 ${orphanInfo.total} 条）`
-                          : `发现 ${orphanInfo.orphans.length} 条孤儿`}
-                      </span>
-                    )}
-                    {orphanInfo && orphanInfo.orphans.length > 0 && (
-                      <button
-                        className="settings-btn settings-btn--ghost"
-                        onClick={() => void handleCleanAddonlistOrphans()}
-                        disabled={orphanCleaning}
-                      >
-                        {orphanCleaning ? '清理中…' : `清理这 ${orphanInfo.orphans.length} 条`}
-                      </button>
-                    )}
-                  </div>
-                  {orphanInfo && orphanInfo.orphans.length > 0 && (
-                    <ul style={{ margin: '8px 0 0', paddingLeft: 18, opacity: 0.8, fontSize: '0.9em' }}>
-                      {orphanInfo.orphans.map((name) => (
-                        <li key={name} style={{ wordBreak: 'break-all' }}>{name}</li>
-                      ))}
-                    </ul>
-                  )}
+                  <button
+                    className={`settings-toggle-switch ${backupCfg?.enabled ? 'active' : ''}`}
+                    onClick={() => void updateBackupCfg({ enabled: !backupCfg?.enabled })}
+                    disabled={backupBusy === 'saving'}
+                  >
+                    <span className="settings-toggle-knob" />
+                  </button>
                 </div>
+
+                <div className="settings-toggle-row" style={{ marginTop: 12 }}>
+                  <div className="settings-toggle-info">
+                    <span className="settings-toggle-label">备份间隔</span>
+                    <span className="settings-toggle-hint">每隔多久自动备份一次（内容没变会跳过，不重复占空间）</span>
+                  </div>
+                  <div className="settings-scale-group">
+                    {[5, 15, 30, 60, 180].map((m) => (
+                      <button
+                        key={m}
+                        className={`settings-scale-btn ${backupCfg?.interval_min === m ? 'active' : ''}`}
+                        onClick={() => void updateBackupCfg({ interval_min: m })}
+                        disabled={backupBusy === 'saving' || !backupCfg?.enabled}
+                      >
+                        {m} 分钟
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="settings-toggle-row" style={{ marginTop: 12 }}>
+                  <div className="settings-toggle-info">
+                    <span className="settings-toggle-label">保留数量</span>
+                    <span className="settings-toggle-hint">最多保留最近多少份自动备份，更旧的自动清理</span>
+                  </div>
+                  <div className="settings-scale-group">
+                    {[5, 10, 20, 50].map((n) => (
+                      <button
+                        key={n}
+                        className={`settings-scale-btn ${backupCfg?.limit === n ? 'active' : ''}`}
+                        onClick={() => void updateBackupCfg({ limit: n })}
+                        disabled={backupBusy === 'saving'}
+                      >
+                        {n} 份
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="settings-toggle-row" style={{ marginTop: 12 }}>
+                  <div className="settings-toggle-info">
+                    <span className="settings-toggle-label">备份文件夹</span>
+                    <span className="settings-toggle-hint" style={{ wordBreak: 'break-all' }}>
+                      {backupCfg?.folder || '—'}
+                      {backupCfg ? ` · 当前 ${backupCfg.count} 份` : ''}
+                    </span>
+                  </div>
+                  <button
+                    className="settings-btn settings-btn--ghost"
+                    onClick={() => { if (backupCfg?.folder) void window.electronAPI.showItemInFolder(backupCfg.folder); }}
+                    disabled={!backupCfg?.folder}
+                  >
+                    打开文件夹
+                  </button>
+                </div>
+
+                <div className="settings-actions" style={{ marginTop: 14 }}>
+                  <button
+                    className="settings-btn settings-btn--secondary"
+                    onClick={() => void handleBackupNow()}
+                    disabled={backupBusy !== 'idle'}
+                  >
+                    {backupBusy === 'backing' ? '备份中…' : '立即备份'}
+                  </button>
+                  <button
+                    className="settings-btn settings-btn--secondary"
+                    onClick={() => void handleExportAddonlist()}
+                    disabled={backupBusy !== 'idle'}
+                  >
+                    {backupBusy === 'exporting' ? '导出中…' : '导出当前 addonlist'}
+                  </button>
+                  <button
+                    className="settings-btn settings-btn--ghost"
+                    onClick={() => void handleImportAddonlist()}
+                    disabled={backupBusy !== 'idle'}
+                  >
+                    {backupBusy === 'importing' ? '导入中…' : '导入备份…'}
+                  </button>
+                </div>
+                <p className="settings-hint" style={{ marginTop: 8 }}>
+                  导入会覆盖当前 addonlist.txt，覆盖前会自动先备份当前内容，可撤销。
+                </p>
               </>
             )}
           </div>

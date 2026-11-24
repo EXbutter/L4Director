@@ -1,4 +1,4 @@
-﻿param(
+param(
     [string]$command = "help"
 )
 
@@ -120,6 +120,10 @@ switch ($command.ToLower()) {
         $backendProcess = [System.Diagnostics.Process]::Start($psi)
         Write-Host "Backend started"
     }
+    "release" {
+        & (Join-Path $rootDir "release.ps1")
+        exit $LASTEXITCODE
+    }
     default {
         Write-Host "========================================"
         Write-Host "  L4D2 Manager - Launch"
@@ -128,6 +132,7 @@ switch ($command.ToLower()) {
         Write-Host "Usage:"
         Write-Host "  .\ld run      - Start full project, press Ctrl+C to stop"
         Write-Host "  .\ld backend  - Start backend only"
+        Write-Host "  .\ld release  - 一键发版：构建 + GitHub/Gitee Release + 推送镜像"
         Write-Host "  .\ld help     - Show this help"
         Write-Host ""
         Write-Host "Tip: ld run keeps running. Press Ctrl+C to stop all."

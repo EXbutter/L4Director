@@ -244,7 +244,13 @@
 }
 
 /* 没有封面时的默认图（DefaultCover 组件）：主题色渐变 + 淡斜纹 + 大图标 + 「暂无封面」。
-   跟着 --accent 走，换主题色时占位图一起变，不会跟整体皮肤打架。 */
+   跟着 --accent 走，换主题色时占位图一起变，不会跟整体皮肤打架。
+
+   底色刻意用**固定的中性深色**（#0a0e14 / #070a0d），不再引用 --bg-primary-solid：
+   后者在日间/夜间分别是近白与近黑两档，会让同一张占位图切主题时整块从亮变暗
+   —— 正是要修的 bug。这里底色与「日间/夜间」无关，只由 --accent 叠一层很淡的
+   主题色渐变，所以：换主题色（蓝/红/紫…）仍会跟着变，切日间/夜间则完全不变。
+   固定深色 + 不透明，同时保证不透出卡片底或自定义背景壁纸。 */
 .default-cover {
   position: relative;
   width: 100%;
@@ -255,16 +261,14 @@
   justify-content: center;
   gap: 5px;
   overflow: hidden;
-  color: var(--text-muted);
-  // 底层用「不透明」的主题底色（--bg-primary-solid 在浅色/深色下都是 color-mix 到实色，
-  // 且不像 --bg-card-solid 那样只在有背景图时才有、也不像 --bg-primary 会被调成半透明），
-  // 再叠一层主题色渐变 + 斜纹，所以整块占位是实心的，不会透出卡片底或自定义背景壁纸。
+  // 前景也固定成中性灰：底色在明暗两套下一致，图标/文字就不能再跟着主题明暗漂移。
+  color: #919dad;
   background:
-    radial-gradient(120% 120% at 50% 18%, rgba(var(--accent-rgb), 0.20), transparent 62%),
+    radial-gradient(120% 120% at 50% 18%, rgba(var(--accent-rgb), 0.22), transparent 62%),
     linear-gradient(
       145deg,
-      color-mix(in srgb, var(--accent) 16%, var(--bg-primary-solid)),
-      color-mix(in srgb, var(--accent) 7%, var(--bg-primary-solid))
+      color-mix(in srgb, var(--accent) 16%, #0a0e14),
+      color-mix(in srgb, var(--accent) 7%, #070a0d)
     );
 
   // 斜纹肌理：让「没有封面」看起来是有意为之，而不是加载失败的空白格

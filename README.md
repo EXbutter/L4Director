@@ -86,7 +86,8 @@ L4Director 用逐字节指纹比对来解决这三件事。
 **自动更新**
 - 启动 15 秒后静默检查一次（之后每 6 小时一次），发现新版本只在侧边栏版本号旁点一个小圆点，不弹窗打断
 - 到「设置 → 关于」点「下载更新」才真正下载，有进度与可取消；装完提示重启并安装，Mod 和配置原样保留
-- 走 blockmap 差分，只下载改动过的数据块，通常几 MB；国内直连 GitHub 失败会说明原因，并保留「去 Release 页面手动下载」的出口，也可「跳过这个版本」
+- 走 blockmap 差分，只下载改动过的数据块，通常几 MB；保留「去 Release 页面手动下载」的出口，也可「跳过这个版本」
+- **国内镜像**：默认「国内优先 Gitee」——先查 Gitee Release，失败自动回落 GitHub；「设置 → 关于 → 更新源」可切 自动 / Gitee / GitHub。Gitee 侧需要把 `latest.yml`、安装包、`.blockmap` 一起上传到 Release（见文末发版说明）
 - 便携版没有可替换的安装目录，面板会直接说明并给出下载入口
 
 ## 技术栈
@@ -210,7 +211,7 @@ L4D2 Manager/
 
 **发版（自动更新所需）**
 
-自动更新走 GitHub Releases，客户端只认三样东西：安装包、`.blockmap`、`latest.yml`。
+自动更新走 GitHub Releases（+ 可选的 Gitee 国内镜像），客户端只认三样东西：安装包、`.blockmap`、`latest.yml`。
 
 1. 改 `frontend/package.json` 的 `version`，同步 `CHANGELOG.md`
 2. `cd frontend && npm run dist` —— 产物在 `frontend/out/`，文件名由 `build.artifactName` 固定为：
@@ -221,6 +222,33 @@ L4D2 Manager/
 4. 或者配好 `GH_TOKEN` 后直接 `npm run release`，打包 + 上传一次做完
 
 **别重命名产物，也别删旧 Release 的资产**：`latest.yml` 里的 `url` 必须与文件名逐字一致；差分下载还要拿上一版的 blockmap 对比，删了就只能全量下载。
+
+**Gitee 国内镜像（可选，加速国内更新）**
+
+1. 在 Gitee 建一个仓库（客户端默认取 `EXbutter/l4-director`；不同名就改 `frontend/src/main/updater.ts` 顶部的 `GITEE_OWNER / GITEE_REPO`）
+2. 每次发版，把 `L4Director-Setup-<version>.exe`、同名 `.blockmap`、`latest.yml` 三个文件一起上传到 Gitee 的 Release，**tag 用 `v<version>`**（与 GitHub 保持一致）
+3. 客户端默认「国内优先 Gitee」：先用 Gitee API 找到最新 Release，再按该 tag 目录读取 `latest.yml`；取不到才回落 GitHub。Gitee 缺 `latest.yml` 时该版本自动跳过 Gitee（继续用 GitHub），不会误报
+
+> Gitee Release 的资产下载地址形如 `https://gitee.com/<owner>/<repo>/releases/download/<tag>/<文件名>`，`latest.yml` 里的 `path` 必须与上传的安装包文件名逐字一致。没上传 `.blockmap` 时也能更新，只是会**整包下载**而不是差分（v1.3.4 当前就属于这种）。
+
+**一键发版（`release.ps1` / `.\ld release`）**
+
+把「拉取 → 建标签 → 构建 + GitHub Release → 推送 GitHub/Gitee → 同步 Gitee Release」串成一条命令：
+
+```powershell
+# 先设好两个令牌（当前会话）
+$env:GH_TOKEN    = 'github_pat_...'   # GitHub，repo 权限
+$env:GITEE_TOKEN = '...'              # Gitee 私人令牌，projects/releases 权限
+
+.\release.ps1 -DryRun   # 只打印计划，不执行
+.\release.ps1           # 全流程
+.\ld release            # 等价于 .\release.ps1
+```
+
+- 默认会先 `git pull --ff-only origin main`；本地与远端分叉时会中止（先手动 merge/rebase，或用 `-NoPull`）。
+- 其他开关：`-SkipBuild`（用 `out\` 现有产物，不重新打包/不发 GitHub）、`-NoGithub`、`-NoGitee`、`-NoPush`。
+- GitHub Release 由 `npm run release`（electron-builder）发布；Gitee Release 用 Gitee OpenAPI 建 Release 并上传 `latest.yml` / 安装包 / `.blockmap`。
+- 需先在 `frontend/package.json` 改好 `version`、同步 `CHANGELOG.md`，脚本会以该版本作为 tag。
 
 **性能基准**
 

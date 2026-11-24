@@ -57,6 +57,10 @@ class AppSettings:
     theme: str = "dark"
     background: Optional[dict] = None
     show_mascot: bool = True
+    # addonlist.txt 自动备份（「设置 → Addonlist 备份」）：
+    addonlist_backup_enabled: bool = True
+    addonlist_backup_interval_min: int = 30
+    addonlist_backup_limit: int = 20
 
 
 @dataclass

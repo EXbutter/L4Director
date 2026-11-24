@@ -6,6 +6,7 @@ import { useStore, getApiBase, ModData, ConflictDetail, WorkshopUpdateItem } fro
 import { ToolBar } from './ToolBar';
 import { ThumbImage } from './ThumbImage';
 import { DefaultCover } from './DefaultCover';
+import { ConflictDialog } from './ConflictDialog';
 import { ModSwitch } from './ModSwitch';
 import { showToast } from './Toast';
 import { confirmDialog } from './ConfirmDialog';
@@ -576,6 +577,8 @@ export function MyModsPage() {
   const [conflictDialogMod, setConflictDialogMod] = useState<string | null>(null);
   // Snapshot of conflicts when dialog opens - prevents list from updating during interaction
   const [conflictSnapshot, setConflictSnapshot] = useState<ConflictDetail[]>([]);
+  // 完整冲突明细（含 risk/kind/advice）是否还在按需加载
+  const [conflictLoading, setConflictLoading] = useState(false);
 
   // 弹窗的 Esc 关闭 + Tab 焦点陷阱。这几个弹窗以前只能用鼠标点遮罩关掉，
   // 而且 Tab 一路按下去焦点会跑到背景页的卡片上。
@@ -585,7 +588,6 @@ export function MyModsPage() {
     setRenameValue('');
   });
   const dupModalRef = useModalA11y(!!dupDialogPath, () => setDupDialogPath(null));
-  const conflictModalRef = useModalA11y(!!conflictDialogMod, () => setConflictDialogMod(null));
   const [hintSnapshot, setHintSnapshot] = useState<ConflictDetail[]>([]);
   // 列表接口为了瘦身只带「计数 + 前几条文件」且不随列表下发 conflict_hints；
   // 打开冲突详情弹窗时用这个序号配合按需端点拉全量，避免旧请求覆盖新弹窗。
@@ -1025,6 +1027,7 @@ export function MyModsPage() {
     // 真正完整的冲突明细与提示随后从按需端点补齐（列表已不再全量下发 hints）。
     setConflictSnapshot(mod?.conflict_details ? [...mod.conflict_details] : []);
     setHintSnapshot(mod?.conflict_hints ? [...mod.conflict_hints] : []);
+    setConflictLoading(true);
     setConflictDialogMod(modName);
 
     const seq = ++conflictFetchSeqRef.current;
@@ -1033,11 +1036,18 @@ export function MyModsPage() {
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         // 弹窗已关闭 / 又打开了别的 Mod → 丢弃这次过期响应
-        if (seq !== conflictFetchSeqRef.current || !data) return;
-        if (Array.isArray(data.conflict_details)) setConflictSnapshot(data.conflict_details);
-        if (Array.isArray(data.conflict_hints)) setHintSnapshot(data.conflict_hints);
+        if (seq !== conflictFetchSeqRef.current) return;
+        if (data) {
+          if (Array.isArray(data.conflict_details)) setConflictSnapshot(data.conflict_details);
+          if (Array.isArray(data.conflict_hints)) setHintSnapshot(data.conflict_hints);
+        }
+        setConflictLoading(false);
       })
-      .catch(() => { /* 拉不到就沿用列表里的瘦身数据，不影响弹窗打开 */ });
+      .catch(() => {
+        if (seq !== conflictFetchSeqRef.current) return;
+        // 拉不到就沿用列表里的瘦身数据，不影响弹窗打开
+        setConflictLoading(false);
+      });
   };
 
   // Close conflict dialog, clear snapshot, and refresh data
@@ -1046,6 +1056,7 @@ export function MyModsPage() {
     setConflictDialogMod(null);
     setConflictSnapshot([]);
     setHintSnapshot([]);
+    setConflictLoading(false);
     fetchMods();
   };
 
@@ -2341,148 +2352,22 @@ export function MyModsPage() {
         document.body
       )}
 
-      {/* Conflict detail dialog: 硬冲突在前，提示级重叠折叠在后 */}
-      {conflictDialogMod && (() => {
-        const owner = mods.find(m => m.name === conflictDialogMod);
-        const ownerTitle = owner
-          ? getModTitle(owner, getModDisplayName(conflictDialogMod) || undefined)
-          : conflictDialogMod;
-        // 地图包把武器/道具模型、音效一起打进包里，才会和全局皮肤撞上。
-        // 这类冲突的表述要跟普通 Mod 冲突区分开，否则用户看不懂为什么地图会跟武器皮打架。
-        const isMap = owner?.role === 'campaign';
-        const SEV_LABEL: Record<string, string> = {
-          hard: '硬冲突',
-          script: '脚本冲突',
-          copy: '原版副本',
-          entry: '入口重叠',
-          soft: '资源重叠',
-        };
-
-        const renderCard = (d: ConflictDetail) => {
-          const conflictMod = mods.find(m => m.name === d.other);
-          if (!conflictMod) return null;
-          const conflictDisplayName = getModTitle(conflictMod, getModDisplayName(conflictMod.name) || undefined);
-          const tags = d.other_role_tags || [];
-          return (
-            <div
-              key={`${d.other}-${d.severity}`}
-              className={`conflict-card ${conflictMod.enabled ? 'conflict-card--enabled' : 'conflict-card--disabled'}`}
-              title={d.files.join('\n')}
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleMod(conflictMod.name, conflictMod.path);
-              }}
-            >
-              <div className="conflict-card__thumb">
-                {resolveUrl(conflictMod.thumbnail_url) ? (
-                  <ThumbImage
-                    src={resolveUrl(conflictMod.thumbnail_url)!}
-                    alt={conflictDisplayName}
-                    className="conflict-card__img"
-                    maxWidth={96}
-                    maxHeight={96}
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = 'none';
-                    }}
-                  />
-                ) : (
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                    <rect x="3" y="3" width="18" height="18" rx="3" />
-                    <circle cx="9" cy="9" r="2" />
-                    <path d="M21 15l-4-4-6 6-3-3-5 5" />
-                  </svg>
-                )}
-              </div>
-              <div className="conflict-card__info">
-                <span className="conflict-card__name">{conflictDisplayName}</span>
-                <span className="conflict-card__meta">
-                  <span className={`conflict-card__sev conflict-card__sev--${d.severity}`}>
-                    {SEV_LABEL[d.severity] || d.severity}
-                  </span>
-                  <span className="conflict-card__files">
-                    {d.count} 个文件{tags.length ? ` · ${tags.join('/')}` : ''}
-                  </span>
-                  <span className={`conflict-card__status ${conflictMod.enabled ? 'conflict-card__status--enabled' : 'conflict-card__status--disabled'}`}>
-                    {conflictMod.enabled ? '已启用' : '已禁用'}
-                  </span>
-                </span>
-              </div>
-              <div className="conflict-card__toggle">
-                <div className={`conflict-toggle ${conflictMod.enabled ? 'conflict-toggle--on' : 'conflict-toggle--off'}`}>
-                  <div className="conflict-toggle__thumb" />
-                </div>
-              </div>
-            </div>
-          );
-        };
-
-        return createPortal(
-          <div className="modal-overlay" onClick={() => closeConflictDialog()}>
-            <div className={`conflict-dialog ${isMap ? 'conflict-dialog--map' : ''}`} ref={conflictModalRef} onClick={(e) => e.stopPropagation()}>
-              <div className="conflict-dialog__header">
-                <h3>{isMap ? '地图内置资源冲突' : '冲突 Mod 详情'}</h3>
-                <button className="conflict-dialog__close" onClick={() => closeConflictDialog()}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18">
-                    <path d="M18 6L6 18M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-              <div className="conflict-dialog__subheader">
-                {isMap ? (
-                  <>「<strong>{ownerTitle}</strong>」是地图包，它把场景用的模型/音效一并打进了 VPK。
-                    当前地图内置资源包与以下 Mod 冲突：
-                  </>
-                ) : (
-                  <>以下 Mod 与 <strong>{ownerTitle}</strong> 存在冲突</>
-                )}
-              </div>
-              {isMap && (
-                <div className="conflict-dialog__note">
-                  地图里的资源是按全局路径加载的，会盖过同一路径的武器皮肤/角色替换。
-                  通常保留地图即可，地图玩法不受影响；想保住皮肤就把皮肤移到地图之前。
-                </div>
-              )}
-              <div className="conflict-dialog__grid">
-                {conflictSnapshot.length === 0 ? (
-                  <div className="conflict-dialog__empty">没有硬冲突</div>
-                ) : conflictSnapshot.map(renderCard)}
-              </div>
-
-              {hintSnapshot.length > 0 && (
-                <details className="conflict-dialog__hints">
-                  <summary>
-                    其他重叠 {hintSnapshot.length} 项
-                    <span className="conflict-dialog__hints-sub">（不影响使用，展开查看）</span>
-                  </summary>
-                  <div className="conflict-dialog__hint-list">
-                    {hintSnapshot.map((d) => {
-                      const m = mods.find(x => x.name === d.other);
-                      const nm = m ? getModTitle(m, getModDisplayName(m.name) || undefined) : d.other;
-                      return (
-                        <div key={`${d.other}-${d.severity}`} className="conflict-hint-row">
-                          <span className={`conflict-card__sev conflict-card__sev--${d.severity}`}>
-                            {SEV_LABEL[d.severity] || d.severity}
-                          </span>
-                          <span className="conflict-hint-row__name">{nm}</span>
-                          <span className="conflict-hint-row__files">{d.count} 个文件</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </details>
-              )}
-
-              <div className="conflict-dialog__footer">
-                <span className="conflict-dialog__hint">点击卡片可切换启用/禁用状态</span>
-                <button className="modal-btn modal-btn-cancel" onClick={() => closeConflictDialog()}>
-                  关闭
-                </button>
-              </div>
-            </div>
-          </div>,
-          document.body
-        );
-      })()}
+      {/* 冲突详情弹窗：总览 + 闪退风险 + 每卡风险/类型/建议/文件明细（共用组件） */}
+      {conflictDialogMod && (
+        <ConflictDialog
+          ownerName={conflictDialogMod}
+          owner={mods.find((m) => m.name === conflictDialogMod)}
+          details={conflictSnapshot}
+          hints={hintSnapshot}
+          loading={conflictLoading}
+          mods={mods}
+          titleOf={(m) => getModTitle(m, getModDisplayName(m.name) || undefined)}
+          getDisplayName={getModDisplayName}
+          resolveUrl={resolveUrl}
+          onClose={closeConflictDialog}
+          onToggleMod={(name, path) => toggleMod(name, path)}
+        />
+      )}
 
       {/* 重复安装详情：同一个 Mod 装在 addons 根与 workshop 两处 */}
       {dupDialogPath && (() => {

@@ -1,12 +1,13 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import type { CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { useStore, getApiBase, normalizeModKey, PackData, ModData } from '../store/useStore';
+import { useStore, getApiBase, normalizeModKey, PackData, ModData, ConflictDetail } from '../store/useStore';
 import { useShallow } from 'zustand/react/shallow';
 import { ToolBar } from './ToolBar';
 import { showToast } from './Toast';
 import { ThumbImage } from './ThumbImage';
 import { DefaultCover } from './DefaultCover';
+import { ConflictDialog } from './ConflictDialog';
 import { isCampaignMod } from '../utils/modRole';
 import { ModSwitch } from './ModSwitch';
 import { FAVORITE_TAG, isFineTag, orderCardTags } from './MyModsPage';
@@ -204,7 +205,7 @@ export function PacksPage() {
   const queuedPackAgainRef = useRef(false);
   // 冲突详情弹窗
   const [conflictDialogMod, setConflictDialogMod] = useState<string | null>(null);
-  const [conflictSnapshot, setConflictSnapshot] = useState<string[]>([]);
+  const [conflictSnapshot, setConflictSnapshot] = useState<ConflictDetail[]>([]);
   const contextMenuRef = useRef<HTMLDivElement>(null);
 
   // 弹窗的 Esc 关闭 + Tab 焦点陷阱（与 MyModsPage 同一套，见 hooks/useModalA11y）
@@ -217,10 +218,6 @@ export function PacksPage() {
   const addModsModalRef = useModalA11y(showAddModsModal, () => {
     setShowAddModsModal(false);
     setSelectedAddMods(new Set());
-  });
-  const conflictModalRef = useModalA11y(!!conflictDialogMod, () => {
-    setConflictDialogMod(null);
-    setConflictSnapshot([]);
   });
 
   useEffect(() => {
@@ -704,7 +701,7 @@ export function PacksPage() {
                           // 必须阻止冒泡：否则点这个图标会顺手把整张卡片启用/禁用掉 ——
                           // 之前用户反馈的「点冲突按钮结果变成切换启停」就是这个原因。
                           e.stopPropagation();
-                          setConflictSnapshot([...(mod.conflicts || [])]);
+                          setConflictSnapshot(mod.conflict_details ? [...mod.conflict_details] : []);
                           setConflictDialogMod(mod.name);
                         }}
                       >
@@ -849,103 +846,19 @@ export function PacksPage() {
         </div>
       )}
 
-      {conflictDialogMod && createPortal(
-        <div
-          className="modal-overlay"
-          onClick={() => {
-            setConflictDialogMod(null);
-            setConflictSnapshot([]);
-          }}
-        >
-          <div className="conflict-dialog" ref={conflictModalRef} onClick={(e) => e.stopPropagation()}>
-            <div className="conflict-dialog__header">
-              <h3>冲突 Mod 详情</h3>
-              <button
-                className="conflict-dialog__close"
-                onClick={() => {
-                  setConflictDialogMod(null);
-                  setConflictSnapshot([]);
-                }}
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18">
-                  <path d="M18 6L6 18M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div className="conflict-dialog__subheader">
-              以下 Mod 与{' '}
-              <strong>
-                {getModTitle(
-                  mods.find((m) => m.name === conflictDialogMod) || { name: conflictDialogMod },
-                  getModDisplayName(conflictDialogMod)
-                )}
-              </strong>{' '}
-              存在冲突
-            </div>
-            <div className="conflict-dialog__grid">
-              {conflictSnapshot.map((cname) => {
-                const conflictMod = mods.find((m) => m.name === cname);
-                if (!conflictMod) return null;
-                const conflictDisplayName = getModTitle(conflictMod, getModDisplayName(conflictMod.name));
-                return (
-                  <div
-                    key={cname}
-                    className={`conflict-card ${conflictMod.enabled ? 'conflict-card--enabled' : 'conflict-card--disabled'}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleMod(conflictMod.name);
-                    }}
-                  >
-                    <div className="conflict-card__thumb">
-                      {resolveUrl(conflictMod.thumbnail_url) ? (
-                        <ThumbImage
-                          src={resolveUrl(conflictMod.thumbnail_url)!}
-                          alt={conflictDisplayName}
-                          className="conflict-card__img"
-                          maxWidth={96}
-                          maxHeight={96}
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).style.display = 'none';
-                          }}
-                        />
-                      ) : (
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                          <rect x="3" y="3" width="18" height="18" rx="3" />
-                          <circle cx="9" cy="9" r="2" />
-                          <path d="M21 15l-4-4-6 6-3-3-5 5" />
-                        </svg>
-                      )}
-                    </div>
-                    <div className="conflict-card__info">
-                      <span className="conflict-card__name">{conflictDisplayName}</span>
-                      <span className={`conflict-card__status ${conflictMod.enabled ? 'conflict-card__status--enabled' : 'conflict-card__status--disabled'}`}>
-                        {conflictMod.enabled ? '已启用' : '已禁用'}
-                      </span>
-                    </div>
-                    <div className="conflict-card__toggle">
-                      <div className={`conflict-toggle ${conflictMod.enabled ? 'conflict-toggle--on' : 'conflict-toggle--off'}`}>
-                        <div className="conflict-toggle__thumb" />
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="conflict-dialog__footer">
-              <span className="conflict-dialog__hint">点击卡片可切换启用/禁用状态</span>
-              <button
-                className="modal-btn modal-btn-cancel"
-                onClick={() => {
-                  setConflictDialogMod(null);
-                  setConflictSnapshot([]);
-                }}
-              >
-                关闭
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
+      {conflictDialogMod && (
+        <ConflictDialog
+          ownerName={conflictDialogMod}
+          owner={mods.find((m) => m.name === conflictDialogMod)}
+          details={conflictSnapshot}
+          hints={mods.find((m) => m.name === conflictDialogMod)?.conflict_hints || []}
+          mods={mods}
+          titleOf={(m) => getModTitle(m, getModDisplayName(m.name))}
+          getDisplayName={getModDisplayName}
+          resolveUrl={resolveUrl}
+          onClose={() => { setConflictDialogMod(null); setConflictSnapshot([]); }}
+          onToggleMod={(name, path) => toggleMod(name, path)}
+        />
       )}
 
       {showAddModsModal && selectedPack && (

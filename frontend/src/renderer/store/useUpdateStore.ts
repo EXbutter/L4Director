@@ -28,6 +28,8 @@ interface UpdateStore {
   install: () => Promise<void>;
   skip: () => Promise<void>;
   openReleases: () => void;
+  /** 切换更新源偏好（auto = 国内优先 Gitee） */
+  setSource: (source: 'auto' | 'github' | 'gitee') => Promise<void>;
 }
 
 const api = () => (typeof window !== 'undefined' ? window.electronAPI : undefined);
@@ -121,6 +123,14 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
 
   openReleases: () => {
     void api()?.openReleasesPage();
+  },
+
+  setSource: async (source) => {
+    const a = api();
+    if (!a?.setUpdateSource) return;
+    set({ lastCheckManual: true });
+    const s = await a.setUpdateSource(source);
+    if (s) set({ info: s });
   },
 }));
 

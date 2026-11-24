@@ -2369,7 +2369,7 @@
   border: 1px solid var(--border-color);
   border-radius: 16px;
   padding: 24px;
-  width: 500px;
+  width: 560px;
   max-width: 92vw;
   max-height: 80vh;
   display: flex;
@@ -2557,40 +2557,39 @@
   }
 }
 
-/* Conflict mini-card inside dialog */
+/* 冲突弹窗里的单条冲突卡：左侧竖条按严重度上色，右侧是明确的操作按钮 */
 .conflict-card {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  border-radius: 12px;
   border: 1px solid var(--border-color);
+  border-left: 3px solid var(--border-color);
+  border-radius: 12px;
   background: var(--bg-card);
-  cursor: pointer;
-  transition: all 0.2s ease;
-  user-select: none;
+  transition: border-color 0.18s ease, background-color 0.18s ease;
 
   &:hover {
     background: var(--bg-card-hover);
     border-color: var(--accent);
-    transform: translateX(2px);
   }
 
-  &:active {
-    transform: scale(0.98);
-  }
+  // 左侧竖条按严重度上色，扫一眼就知道哪条更重
+  &--hard { border-left-color: #ef4444; }
+  &--script { border-left-color: #f97316; }
+  &--copy { border-left-color: #3b82f6; }
+  &--entry { border-left-color: #8b5cf6; }
+  &--soft { border-left-color: var(--text-muted); }
 
-  &--enabled {
-    border-left: 3px solid #22c55e;
-  }
+  // 对方已禁用：整卡降低存在感
+  &--off { opacity: 0.62; }
 
-  &--disabled {
-    border-left: 3px solid #ef4444;
+  &__row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 12px;
   }
 
   &__thumb {
-    width: 48px;
-    height: 48px;
+    width: 44px;
+    height: 44px;
     border-radius: 8px;
     overflow: hidden;
     flex-shrink: 0;
@@ -2600,25 +2599,24 @@
     justify-content: center;
     color: var(--text-muted);
 
-    svg {
-      width: 24px;
-      height: 24px;
-      opacity: 0.6;
-    }
+    svg { width: 22px; height: 22px; opacity: 0.6; }
   }
 
-  &__img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-  }
+  &__img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
   &__info {
     flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 4px;
+  }
+
+  &__titleline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
     min-width: 0;
   }
 
@@ -2629,72 +2627,227 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    max-width: 100%;
+    min-width: 0;
   }
 
-  &__meta {
+  // 严重度徽章比旧版大一档，扫读更清楚
+  &__sev {
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    padding: 3px 7px;
+    border-radius: 5px;
+    white-space: nowrap;
+    flex: none;
+
+    &--hard { color: #ef4444; background: color-mix(in srgb, #ef4444 16%, transparent); }
+    &--script { color: #f97316; background: color-mix(in srgb, #f97316 16%, transparent); }
+    &--copy { color: #3b82f6; background: color-mix(in srgb, #3b82f6 16%, transparent); }
+    &--entry { color: #8b5cf6; background: color-mix(in srgb, #8b5cf6 14%, transparent); }
+    &--soft { color: var(--text-muted); background: var(--bg-card-hover); }
+  }
+
+  // 闪退风险徽章（只有高/中会渲染）
+  &__risk {
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    padding: 3px 7px;
+    border-radius: 5px;
+    white-space: nowrap;
+    flex: none;
+
+    &--high { color: #ffffff; background: #ef4444; }
+    &--medium { color: #7c2d12; background: #fdba74; }
+  }
+
+  &__tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  &__kind {
+    font-size: 11px;
+    line-height: 1.4;
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: var(--text-secondary);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+
+  &__roletag {
+    font-size: 11px;
+    line-height: 1.4;
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: var(--text-muted);
+    background: var(--bg-card-hover);
+  }
+
+  // 人话风险说明
+  &__reason {
+    font-size: 12px;
+    line-height: 1.5;
+    color: color-mix(in srgb, #f97316 80%, var(--text-primary));
+  }
+
+  // 处理建议
+  &__advice {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+
+    strong { color: var(--text-primary); }
+  }
+
+  &__files-toggle {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 2px;
+    padding: 0;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--text-muted);
+    transition: color 0.15s ease;
+
+    &:hover { color: var(--accent); }
+  }
+
+  &__caret {
+    width: 0;
+    height: 0;
+    border-left: 4px solid currentColor;
+    border-top: 3px solid transparent;
+    border-bottom: 3px solid transparent;
+    transition: transform 0.18s var(--ease-standard);
+  }
+
+  &__files-toggle.is-open &__caret { transform: rotate(90deg); }
+
+  &__filelist {
+    margin: 4px 0 0;
+    padding: 6px 8px;
+    list-style: none;
+    border-radius: 6px;
+    background: var(--bg-card-hover);
+    max-height: 140px;
+    overflow-y: auto;
+
+    li {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+      word-break: break-all;
+    }
+  }
+
+  &__filelist-more {
+    color: var(--text-muted) !important;
+    font-family: var(--font-family) !important;
+    font-style: italic;
+  }
+
+  &__action {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    padding-top: 2px;
+  }
+}
+
+/* 弹窗顶部总览条 */
+.conflict-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+
+  &__main {
+    font-size: 13px;
+    color: var(--text-secondary);
+
+    strong { color: var(--text-primary); font-size: 14px; }
+  }
+
+  &__badges {
     display: flex;
     align-items: center;
     gap: 6px;
     flex-wrap: wrap;
   }
+}
 
-  // 冲突级别徽章：颜色对应严重度，硬冲突最扎眼，素材共用最弱
-  &__sev {
-    font-size: 10px;
-    font-weight: 600;
-    line-height: 1;
-    padding: 3px 6px;
-    border-radius: 5px;
-    letter-spacing: 0.02em;
-    white-space: nowrap;
+/* 包级闪退风险 banner */
+.conflict-crash {
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  border-left: 3px solid #ef4444;
+  background: color-mix(in srgb, #ef4444 10%, transparent);
 
-    &--hard {
-      color: #ef4444;
-      background: color-mix(in srgb, #ef4444 16%, transparent);
-    }
+  &--medium {
+    border-left-color: #f97316;
+    background: color-mix(in srgb, #f97316 10%, transparent);
+  }
 
-    &--script {
-      color: #f97316;
-      background: color-mix(in srgb, #f97316 16%, transparent);
-    }
+  &__title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 3px;
 
-    &--copy {
-      color: #3b82f6;
-      background: color-mix(in srgb, #3b82f6 16%, transparent);
-    }
+    strong { color: inherit; }
+  }
 
-    &--entry {
-      color: #8b5cf6;
-      background: color-mix(in srgb, #8b5cf6 14%, transparent);
-    }
-
-    &--soft {
-      color: var(--text-muted);
-      background: var(--bg-card-hover);
-    }
+  &__reason {
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--text-secondary);
   }
 
   &__files {
+    margin-top: 3px;
+    font-family: var(--font-mono);
     font-size: 11px;
-    color: var(--text-muted);
+    line-height: 1.5;
+    color: var(--text-secondary);
+    word-break: break-all;
   }
 
-  &__status {
+  &__advice {
+    margin-top: 5px;
     font-size: 12px;
-    font-weight: 500;
+    line-height: 1.5;
+    color: #ef4444;
+    font-weight: 600;
 
-    &--enabled {
-      color: #22c55e;
-    }
-
-    &--disabled {
-      color: #ef4444;
-    }
+    .conflict-crash--medium & { color: #c2410c; }
   }
+}
 
-  &__toggle {
-    flex-shrink: 0;
-  }
+/* 明细加载中的轻提示 */
+.conflict-dialog__loading {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 4px 0;
+}
+
+/* 提示级重叠行里的资源类型 */
+.conflict-hint-row__kinds {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
 }
 
 /* Toggle switch for conflict cards */

@@ -51,6 +51,7 @@ from .data_store import (
     get_addonlist_state, set_addonlist_state,
     set_prefs_dirty,
     remove_mod_from_all_packs,
+    get_setting, set_setting,
 )
 
 
@@ -369,6 +370,12 @@ _METADATA_CACHE_DIR = _CACHE_DIR / 'vpk_metadata'
 _ADDONLIST_HISTORY_DIR = _CACHE_DIR / 'addonlist_history'
 # 历史快照最多保留几份：够覆盖最近几次误写 / 被游戏覆盖的情况，又不至于无限增长。
 ADDONLIST_HISTORY_LIMIT = 20
+# 「设置 → Addonlist 备份」里可调的定时自动备份参数（缺省值；实际以 data.json 的设置为准）。
+ADDONLIST_BACKUP_INTERVAL_MIN = 30
+ADDONLIST_BACKUP_MIN_INTERVAL = 1
+ADDONLIST_BACKUP_MAX_INTERVAL = 1440
+ADDONLIST_BACKUP_MIN_LIMIT = 1
+ADDONLIST_BACKUP_MAX_LIMIT = 200
 
 # ── 元数据缓存的版本号 ──────────────────────────────────────────────
 # 解析逻辑有实质变化时 +1：缓存键里带上它，旧磁盘缓存自然失效并重新解析。
@@ -1953,11 +1960,13 @@ class ModScanner:
         except OSError as exc:
             print(f'[AddonList] 历史快照失败（不影响本次写入）：{exc}')
 
-    def _rotate_addonlist_history(self) -> None:
-        """历史快照只保留最近 ADDONLIST_HISTORY_LIMIT 份，多余的从旧到新删掉。"""
+    def _rotate_addonlist_history(self, limit: int | None = None) -> None:
+        """历史快照只保留最近 `limit` 份（默认读用户配置，缺省 20），多余的从旧到新删掉。"""
+        if limit is None:
+            limit = self.get_addonlist_backup_config()['limit']
         try:
             files = sorted(self._history_dir().glob('addonlist-*.txt'))
-            for old in files[:-ADDONLIST_HISTORY_LIMIT]:
+            for old in files[:-limit]:
                 try:
                     old.unlink()
                 except OSError:
@@ -2042,6 +2051,171 @@ class ModScanner:
         except Exception:
             pass
         return {'status': 'ok', 'restored_from': safe, 'bytes': len(content)}
+
+    # ===== addonlist 备份设置 / 定时自动备份 / 导出导入 =====
+
+    def get_addonlist_backup_config(self) -> dict:
+        """读取用户备份设置 + 当前备份文件夹状态（供设置页与定时器使用）。"""
+
+        def _int(key: str, default: int, lo: int, hi: int) -> int:
+            try:
+                v = int(get_setting(key, default))
+            except (TypeError, ValueError):
+                v = default
+            return max(lo, min(hi, v))
+
+        enabled_raw = get_setting('addonlist_backup_enabled', True)
+        enabled = bool(enabled_raw) if isinstance(enabled_raw, (bool, int)) else True
+        hist = self._history_dir()
+        try:
+            count = len(list(hist.glob('addonlist-*.txt'))) if hist.exists() else 0
+        except OSError:
+            count = 0
+        return {
+            'enabled': enabled,
+            'interval_min': _int(
+                'addonlist_backup_interval_min', ADDONLIST_BACKUP_INTERVAL_MIN,
+                ADDONLIST_BACKUP_MIN_INTERVAL, ADDONLIST_BACKUP_MAX_INTERVAL,
+            ),
+            'limit': _int(
+                'addonlist_backup_limit', ADDONLIST_HISTORY_LIMIT,
+                ADDONLIST_BACKUP_MIN_LIMIT, ADDONLIST_BACKUP_MAX_LIMIT,
+            ),
+            'folder': str(hist),
+            'count': count,
+        }
+
+    def set_addonlist_backup_config(
+        self, *, enabled=None, interval_min=None, limit=None
+    ) -> dict:
+        """保存备份设置（范围夹紧后写入 data.json），返回最新配置。"""
+        if enabled is not None:
+            set_setting('addonlist_backup_enabled', bool(enabled))
+        if interval_min is not None:
+            v = int(interval_min)
+            set_setting(
+                'addonlist_backup_interval_min',
+                max(ADDONLIST_BACKUP_MIN_INTERVAL, min(ADDONLIST_BACKUP_MAX_INTERVAL, v)),
+            )
+        if limit is not None:
+            v = int(limit)
+            clamped = max(ADDONLIST_BACKUP_MIN_LIMIT, min(ADDONLIST_BACKUP_MAX_LIMIT, v))
+            set_setting('addonlist_backup_limit', clamped)
+            self._rotate_addonlist_history(clamped)
+        return self.get_addonlist_backup_config()
+
+    def backup_addonlist_now(self) -> dict:
+        """手动立刻备份一份当前 addonlist.txt（与最新快照内容相同则跳过）。"""
+        p = self._get_addonlist_path()
+        if not p:
+            raise ValueError('还没有配置 addons 目录，找不到 addonlist.txt')
+        if not p.exists():
+            raise FileNotFoundError('addonlist.txt 不存在')
+        self._snapshot_current_addonlist(p)
+        cfg = self.get_addonlist_backup_config()
+        return {'status': 'ok', **cfg}
+
+    @staticmethod
+    def _count_addonlist_entries(data: bytes) -> int:
+        try:
+            text = data.decode('utf-8-sig', errors='surrogateescape')
+        except Exception:
+            return 0
+        return sum(
+            1 for ln in text.splitlines() if re.match(r'^\s*"[^"]+"\s+"\d+"', ln)
+        )
+
+    def export_addonlist(self) -> dict:
+        """把当前 addonlist.txt 原样导出（返回原始字节，交给主进程「另存为」）。"""
+        p = self._get_addonlist_path()
+        if not p:
+            raise ValueError('还没有配置 addons 目录，找不到 addonlist.txt')
+        if not p.exists():
+            raise FileNotFoundError('addonlist.txt 不存在')
+        data = p.read_bytes()
+        stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+        return {
+            'data': data,
+            'default_name': f'addonlist-{stamp}.txt',
+            'bytes': len(data),
+            'entries': self._count_addonlist_entries(data),
+        }
+
+    def import_addonlist_bytes(self, data: bytes) -> dict:
+        """把一份备份文件的字节内容写回 addonlist.txt（写前先给当前内容留快照）。"""
+        if not isinstance(data, (bytes, bytearray)):
+            raise ValueError('备份内容格式不正确')
+        data = bytes(data)
+        if not data:
+            raise ValueError('备份文件是空的，已取消导入')
+        addonlist_path = self._get_addonlist_path()
+        if not addonlist_path:
+            raise ValueError('还没有配置 addons 目录，找不到 addonlist.txt')
+        # 覆盖前先把当前内容留一份快照，导入也能撤销。
+        self._snapshot_current_addonlist(addonlist_path)
+        addonlist_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = addonlist_path.with_suffix('.tmp')
+        tmp_path.write_bytes(data)
+        tmp_path.replace(addonlist_path)
+
+        fingerprint = hashlib.md5(data).hexdigest()
+        self._last_addonlist_fingerprint = fingerprint
+        self._last_addonlist_error = None
+        try:
+            set_addonlist_state(fingerprint, str(addonlist_path))
+        except Exception as e:
+            print(f'[AddonList] 导入后记录指纹失败：{e}')
+        try:
+            invalidate_scan_cache()
+        except Exception:
+            pass
+        return {
+            'status': 'ok',
+            'bytes': len(data),
+            'entries': self._count_addonlist_entries(data),
+        }
+
+    def start_addonlist_backup_scheduler(self) -> None:
+        """启动后台定时自动备份线程（进程内单例；重复调用无副作用）。
+
+        定时器每 30 秒醒来一次，读一次用户配置；距上次备份超过 `interval_min` 分钟
+        且开关打开时，就备份当前 addonlist.txt（内容与最新快照相同会自动跳过）。
+        另外，`_write_addonlist()` 在每次写盘前**仍会**留一份快照 —— 定时备份只是
+        额外的一层，不替代写前兜底。
+        """
+        if getattr(self, '_addonlist_backup_thread', None) is not None:
+            return
+        stop = threading.Event()
+        self._addonlist_backup_stop = stop
+        last_run = [time.monotonic()]
+
+        def _loop():
+            while not stop.is_set():
+                try:
+                    cfg = self.get_addonlist_backup_config()
+                    due = (
+                        cfg['enabled']
+                        and cfg['interval_min'] > 0
+                        and time.monotonic() - last_run[0] >= cfg['interval_min'] * 60
+                    )
+                    if due:
+                        p = self._get_addonlist_path()
+                        if p and p.exists():
+                            self._snapshot_current_addonlist(p)
+                        last_run[0] = time.monotonic()
+                except Exception as e:
+                    print(f'[AddonList] 定时备份跳过：{e}')
+                stop.wait(30)
+
+        t = threading.Thread(target=_loop, name='addonlist-backup', daemon=True)
+        self._addonlist_backup_thread = t
+        t.start()
+
+    def stop_addonlist_backup_scheduler(self) -> None:
+        stop = getattr(self, '_addonlist_backup_stop', None)
+        if stop is not None:
+            stop.set()
+        self._addonlist_backup_thread = None
 
     # ===== addonlist.txt 卫生：孤儿条目检测 + 一键清理 =====
     # addonlist.txt 里可能残留指向「已经不在 addons 目录」的 .vpk 的行（用户手删了包、

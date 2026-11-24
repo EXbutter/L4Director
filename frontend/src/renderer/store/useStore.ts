@@ -68,6 +68,21 @@ export interface ModData {
   duplicates?: DuplicateRef[];
   /** content = 两份内容完全一致；version = 标题相同、内容不同（多半是两个版本） */
   duplicate_kind?: 'content' | 'version' | null;
+  /**
+   * 包级闪退风险（v2，来自 conflict_engine.ModReport）。
+   * 与「路径重叠」不同：两个包各自只带半个模型、路径毫不重叠，装一起也会崩。
+   * 后端已算好，冲突弹窗据此在顶部给一条醒目提示。
+   */
+  crash_risk?: 'low' | 'medium' | 'high';
+  /** 与之拼出闪退的另一方 Mod 名 */
+  crash_with?: string;
+  /** 人话风险说明 */
+  crash_reason?: string;
+  /** 为了补齐对方模型，本包缺少/不完整的文件 */
+  crash_files?: string[];
+  /** 出问题的模型文件集 stem */
+  crash_bundle?: string;
+  crash_advice?: ConflictAdvice;
 }
 
 export interface DuplicateRef {
@@ -85,13 +100,37 @@ export function modKey(mod: { path?: string; name: string }): string {
   return mod.path || mod.name;
 }
 
+export interface ConflictAdvice {
+  /** disable = 建议禁用某一方；keep_one = 只保留一个；ignore = 无需处理 */
+  action?: 'disable' | 'keep_one' | 'ignore' | string;
+  /** 建议禁用的那一方（Mod 名）；空字符串表示不指定 */
+  target?: string;
+  /** 人话建议 */
+  text?: string;
+}
+
 export interface ConflictDetail {
   other: string;
   severity: 'hard' | 'script' | 'copy' | 'entry' | 'soft';
   count: number;
+  /** 涉及文件（后端最多给前 12 条；count 才是总数） */
   files: string[];
+  /** files 是否被截断（列表接口瘦身时标记） */
+  files_truncated?: boolean;
   other_role?: string;
   other_role_tags?: string[];
+  /** 主类型（model/material/texture/sound/script/ui…） */
+  kind?: string;
+  /** 主类型的中文标签 */
+  kind_label?: string;
+  /** 多类型计数（仅当冲突涉及多种资源时才给） */
+  kinds?: Record<string, number>;
+  /** 该冲突的闪退风险 */
+  risk?: 'low' | 'medium' | 'high';
+  /** 风险的人话说明 */
+  reason?: string;
+  /** 处理建议 */
+  advice?: ConflictAdvice;
 }
 
 export interface PackData {

@@ -4,6 +4,8 @@ import hashlib
 import os
 import threading
 import time
+import base64
+import binascii
 from pathlib import Path
 from typing import Optional
 
@@ -235,6 +237,81 @@ def restore_addonlist_backup(backup_id: str):
         raise HTTPException(status_code=400, detail="请先配置 Addons 目录")
     try:
         return app_state.scanner.restore_addonlist_backup(backup_id)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ── addonlist.txt 备份：设置（定时开关 / 间隔 / 保留数量）+ 立即备份 + 导出/导入 ──
+
+
+@router.get("/api/mods/addonlist-backup-settings")
+def get_addonlist_backup_settings():
+    """读取自动备份设置（开关 / 间隔分钟 / 保留数量 / 文件夹 / 当前份数）。"""
+    return app_state.scanner.get_addonlist_backup_config()
+
+
+@router.post("/api/mods/addonlist-backup-settings")
+def set_addonlist_backup_settings(payload: dict):
+    """保存自动备份设置（范围由后端夹紧）。"""
+    payload = payload or {}
+    try:
+        return app_state.scanner.set_addonlist_backup_config(
+            enabled=(payload.get('enabled') if 'enabled' in payload else None),
+            interval_min=(payload.get('interval_min') if 'interval_min' in payload else None),
+            limit=(payload.get('limit') if 'limit' in payload else None),
+        )
+    except (TypeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=f'备份设置不合法：{e}')
+
+
+@router.post("/api/mods/addonlist-backup-now")
+def addonlist_backup_now():
+    """立刻手动备份一份当前 addonlist.txt。"""
+    if not app_state.scanner.get_addons_path():
+        raise HTTPException(status_code=400, detail="请先配置 Addons 目录")
+    try:
+        return app_state.scanner.backup_addonlist_now()
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/api/mods/addonlist-export")
+def export_addonlist():
+    """导出当前 addonlist.txt（原始字节，base64），由主进程弹「另存为」写入磁盘。"""
+    if not app_state.scanner.get_addons_path():
+        raise HTTPException(status_code=400, detail="请先配置 Addons 目录")
+    try:
+        out = app_state.scanner.export_addonlist()
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {
+        'content_b64': base64.b64encode(out['data']).decode('ascii'),
+        'default_name': out['default_name'],
+        'bytes': out['bytes'],
+        'entries': out['entries'],
+    }
+
+
+@router.post("/api/mods/addonlist-import")
+def import_addonlist(payload: dict):
+    """导入一份备份文件写回 addonlist.txt（写前自动备份当前内容，可撤销）。"""
+    if not app_state.scanner.get_addons_path():
+        raise HTTPException(status_code=400, detail="请先配置 Addons 目录")
+    raw = (payload or {}).get('content_b64')
+    if not isinstance(raw, str) or not raw:
+        raise HTTPException(status_code=400, detail="缺少备份内容")
+    try:
+        data = base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=400, detail="备份内容不是合法的文件数据")
+    try:
+        return app_state.scanner.import_addonlist_bytes(data)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
