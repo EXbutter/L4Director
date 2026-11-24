@@ -1320,21 +1320,30 @@ def official_baseline_status(addons_path: Optional[str]) -> dict:
     return _official_index_state(addons_path)[1]
 
 
-def _conflict_entry(c, reports: dict, indices: dict) -> dict:
+def _conflict_entry(c, reports: dict, indices: dict,
+                    role_tags_by_name: Optional[dict] = None) -> dict:
     """给前端的一份冲突明细。files 只带前 12 个，避免 JSON 过大。
 
     c 是 conflict_engine.PairConflict；v2 起额外带类型（kind/kind_label）、
     多类型计数（kinds）、闪退风险（risk/reason）与处理建议（advice）。
+
+    role_tags_by_name 是「mod 名 -> role_tags」的预计算映射：role_tags 只看包内
+    文件集合，同一次扫描里每个包恒定，没必要为每条冲突明细重复计算（原热点，
+    4626 次明细调用 → 4768 次 role_tags）。传 None 时回退到按索引现算。
     """
     other = c.other
     other_rep = reports.get(other)
+    if role_tags_by_name is not None and other in role_tags_by_name:
+        other_role_tags = role_tags_by_name[other]
+    else:
+        other_role_tags = role_tags(indices.get(other, {}))
     return {
         'other': other,
         'severity': c.severity,
         'count': len(c.files),
         'files': c.files[:12],
         'other_role': getattr(other_rep, 'role', 'art') if other_rep else 'art',
-        'other_role_tags': role_tags(indices.get(other, {})),
+        'other_role_tags': other_role_tags,
         'kind': getattr(c, 'kind', 'other'),
         'kind_label': KIND_LABELS.get(getattr(c, 'kind', 'other'), getattr(c, 'kind', 'other')),
         'kinds': getattr(c, 'kinds', {}) or {},
@@ -1499,6 +1508,7 @@ def _detect_conflicts(mods: list[ModInfo], addons_path: Optional[str] = None):
 
     # 1) 读索引（坏包标记为 unreadable，不再像以前那样静默当空清单）
     indices: dict[str, dict[str, tuple[int, int]]] = {}
+    role_tags_by_name: dict[str, list[str]] = {}
     for mod in enabled_mods:
         try:
             idx = _get_vpk_index(Path(mod.path))
@@ -1512,6 +1522,7 @@ def _detect_conflicts(mods: list[ModInfo], addons_path: Optional[str] = None):
         indices[mod.name] = idx
         mod.role = detect_role(idx)
         mod.role_tags = role_tags(idx)
+        role_tags_by_name[mod.name] = mod.role_tags
 
     if len(indices) < 2:
         return
@@ -1541,14 +1552,14 @@ def _detect_conflicts(mods: list[ModInfo], addons_path: Optional[str] = None):
         alerts: list[dict] = []
         hints: list[dict] = []
         for c in rep.conflicts:
-            item = _conflict_entry(c, reports, indices)
+            item = _conflict_entry(c, reports, indices, role_tags_by_name)
             (alerts if c.severity in _ALERT_SEVERITIES else hints).append(item)
         for c in rep.copies:
-            hints.append(_conflict_entry(c, reports, indices))
+            hints.append(_conflict_entry(c, reports, indices, role_tags_by_name))
         for c in rep.entries:
-            hints.append(_conflict_entry(c, reports, indices))
+            hints.append(_conflict_entry(c, reports, indices, role_tags_by_name))
         for c in rep.overlaps:
-            hints.append(_conflict_entry(c, reports, indices))
+            hints.append(_conflict_entry(c, reports, indices, role_tags_by_name))
 
         # 严重度从高到低，同级按涉及文件数排序
         order = {SEVERITY_HARD: 0, SEVERITY_SCRIPT: 1, SEVERITY_COPY: 2,

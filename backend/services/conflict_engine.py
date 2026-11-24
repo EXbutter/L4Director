@@ -20,6 +20,7 @@ from __future__ import annotations
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -105,6 +106,7 @@ _OPTIONAL_EXTS = frozenset({'phy'})
 _RISK_RANK = {RISK_HIGH: 3, RISK_MEDIUM: 2, RISK_LOW: 1}
 
 
+@lru_cache(maxsize=65536)
 def classify_path(path: str) -> str:
     """把资源路径归到一个粗粒度类型（kind）。顺序敏感：先判 UI，再判其它。"""
     p = path.lower().replace('\\', '/')
@@ -125,6 +127,7 @@ def classify_path(path: str) -> str:
     return 'other'
 
 
+@lru_cache(maxsize=65536)
 def bundle_of(path: str) -> Optional[tuple[str, str]]:
     """模型文件集归一化：返回 (家族 stem, 扩展名)；非模型文件返回 None。
 
@@ -147,6 +150,7 @@ def bundle_of(path: str) -> Optional[tuple[str, str]]:
     return None
 
 
+@lru_cache(maxsize=65536)
 def path_facts(path: str) -> tuple[bool, Optional[tuple[str, str]]]:
     """(是否参与判定, 模型文件集归属)。元数据 / UI / 生成文件一律 (False, None)。"""
     if not is_relevant_path(path):
@@ -202,6 +206,7 @@ def _pair_bundle_risk(ex_a: set, ex_b: set):
     return RISK_MEDIUM, (ex_a ^ ex_b) & _OPTIONAL_EXTS, False
 
 
+@lru_cache(maxsize=65536)
 def _is_ui_path(path: str) -> bool:
     return path.lower().replace('\\', '/').startswith(UI_PREFIXES)
 
@@ -312,6 +317,7 @@ def role_tags(files: dict[str, tuple[int, int]]) -> list[str]:
     return tags or ['其他']
 
 
+@lru_cache(maxsize=65536)
 def is_relevant_path(path: str) -> bool:
     """是否参与冲突判定（元数据 / 生成文件 / UI 资源除外）。"""
     name = path.rsplit('/', 1)[-1]
@@ -572,7 +578,11 @@ def analyze(
         reason = ''
         advice: dict = {}
         if sev in (SEVERITY_HARD, SEVERITY_SCRIPT):
-            stems = {bundle_of(p)[0] for p in files_sorted if bundle_of(p) is not None}
+            stems = set()
+            for p in files_sorted:
+                bd = bundle_of(p)
+                if bd is not None:
+                    stems.add(bd[0])
             worst_rank = -1
             worst_stem = None
             target = ''
