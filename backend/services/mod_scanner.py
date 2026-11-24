@@ -772,6 +772,24 @@ def _save_manifest_to_disk(cache_key: str, manifest: set[str]):
         pass
 
 
+def _save_vpk_index_to_disk(cache_key: str, index: dict[str, tuple[int, int]]):
+    """把 VPK 目录索引写入磁盘缓存（复用 `_get_vpk_index` 的格式与 key）。
+
+    格式固定为 {'v': _INDEX_VERSION, 'files': {小写路径: [crc32, 长度]}}，
+    文件名沿用 `_get_vpk_cache_key` 生成的 key —— 这样 `_get_vpk_data` 在一次 open 里
+    产出的索引能被 `_get_vpk_index` 直接命中，旧磁盘缓存也照常可读。
+    """
+    try:
+        _INDEX_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_file = _INDEX_CACHE_DIR / f"{cache_key}.json"
+        cache_file.write_text(
+            json.dumps({'v': _INDEX_VERSION, 'files': index}, ensure_ascii=False),
+            encoding='utf-8',
+        )
+    except Exception:
+        pass
+
+
 def _load_metadata_from_disk(cache_key: str) -> Optional[dict]:
     """Load cached VPK metadata (title/author/cover/category/...) from disk.
 
@@ -931,12 +949,40 @@ def _get_vpk_data(path: Path) -> dict:
     try:
         v = open_vpk(path.resolve())
         
-        # ── 1. Extract addoninfo (metadata) ──
+        # ── 1+2. 单趟遍历目录树：一次拿到 addoninfo 条目、文件清单与冲突索引 ──
+        # 旧实现里这段对 `for entry in v` 走了两趟（addoninfo 一趟、manifest 一趟），
+        # 冲突检测稍后又调用 `_get_vpk_index` 二次 open_vpk 把同一棵目录树重新解析一遍。
+        # 现在同一次 open 内顺带产出 {路径: (crc32, 长度)} 索引并写入索引缓存，
+        # 让后面的 `_get_vpk_index` 直接命中、不再 open 第二次。
         addoninfo_files = []
-        for entry in v:
-            if isinstance(entry, str) and 'addoninfo' in entry.lower():
-                addoninfo_files.append(entry)
-        
+        manifest_paths: set[str] = set()
+        vpk_index: dict[str, tuple[int, int]] = {}
+        tree = getattr(v, 'tree', None)
+        tree_readable = isinstance(tree, dict)
+        if tree_readable:
+            for entry, meta in tree.items():
+                if not isinstance(entry, str) or not entry.strip():
+                    continue
+                if 'addoninfo' in entry.lower():
+                    addoninfo_files.append(entry)
+                rel = entry.lower().replace('\\', '/')
+                manifest_paths.add(rel)
+                try:
+                    _preload, crc, preload_len, _arch, _off, length = meta
+                    vpk_index[rel] = (
+                        int(crc) if crc else -1,
+                        int(length) + int(preload_len or 0),
+                    )
+                except Exception:
+                    pass
+        else:
+            # 兜底：目录树不可迭代时退回按名字遍历（拿不到 CRC，索引留空）
+            for entry in v:
+                if isinstance(entry, str) and entry.strip():
+                    if 'addoninfo' in entry.lower():
+                        addoninfo_files.append(entry)
+                    manifest_paths.add(entry.lower().replace('\\', '/'))
+
         for name in (addoninfo_files if addoninfo_files else ['addoninfo.txt']):
             try:
                 if v.get_file(name):
@@ -956,16 +1002,12 @@ def _get_vpk_data(path: Path) -> dict:
             except:
                 continue
         
-        # ── 2. Extract manifest (file list) for conflict detection & categorization ──
-        manifest_paths: set[str] = set()
-        for entry in v:
-            if isinstance(entry, str) and entry.strip():
-                manifest_paths.add(entry.lower().replace('\\', '/'))
-        if not manifest_paths and hasattr(v, 'tree') and isinstance(v.tree, dict):
-            for entry in v.tree:
-                if isinstance(entry, str) and entry.strip():
-                    manifest_paths.add(entry.lower().replace('\\', '/'))
-        
+        # 索引入库：内存缓存 + 磁盘缓存（复用 `_get_vpk_index` 的格式与 key）。
+        # 目录树读成功就写（即便为空），与 `_get_vpk_index` 的语义一致——避免下次再 open。
+        if tree_readable:
+            _VPK_INDEX_CACHE[path_str] = vpk_index
+            _save_vpk_index_to_disk(cache_key, vpk_index)
+
         # Warm the manifest cache
         if manifest_paths:
             _VPK_MANIFEST_CACHE[path_str] = manifest_paths
@@ -1171,14 +1213,7 @@ def _get_vpk_index(path: Path) -> dict[str, tuple[int, int]]:
                 int(crc) if crc else -1,
                 int(length) + int(preload_len or 0),
             )
-        try:
-            _INDEX_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            cache_file.write_text(
-                json.dumps({'v': _INDEX_VERSION, 'files': out}, ensure_ascii=False),
-                encoding='utf-8',
-            )
-        except Exception:
-            pass
+        _save_vpk_index_to_disk(cache_key, out)
     except Exception as e:
         # 最常见的一种「打不开」其实是压缩包被改名成 .vpk（下载站常见），
         # 游戏同样加载不了；直接说清楚，省得用户以为管理器解析有 bug。
