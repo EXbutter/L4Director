@@ -314,7 +314,7 @@ function UsageBar() {
   const barColor = getBarColor(smoothedBytes);
   const tip =
     campaignCount > 0
-      ? `已启用 Mod 占用 ${formatSize(totalBytes)}\n战役地图 ${campaignCount} 个不计入（共 ${formatSize(campaignBytes)}）\n地图只在玩那张图时按需载入，不常驻内存`
+      ? `已启用 Mod 占用 ${formatSize(totalBytes)}\n战役地图 ${campaignCount} 个不计入（共 ${formatSize(campaignBytes)}）`
       : `已启用 Mod 占用 ${formatSize(totalBytes)}`;
 
   // 位置恢复 / 拖拽 / 窗口缩放跟随统一由 useDraggablePill 处理
@@ -443,8 +443,7 @@ function BackendErrorOverlay() {
       <div className="app-backend-toast__body">
         <span className="app-backend-toast__title">正在等待后端服务…</span>
         <span className="app-backend-toast__detail">
-          首次启动/刚重启电脑时后端初始化较慢（可能被安全软件拦截），程序会自动重试并自动连上
-          ({retryCount + 1}) | 可导出日志反馈开发者
+          后端初始化较慢（首次启动或被安全软件拦截时常见），程序会自动重试并连上（第 {retryCount + 1} 次）
         </span>
       </div>
       <button

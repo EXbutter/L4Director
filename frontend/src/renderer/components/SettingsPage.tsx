@@ -587,9 +587,7 @@ export function SettingsPage() {
           </div>
           <div className="settings-group">
             <p className="settings-hint" style={{ marginBottom: 10 }}>
-              软件每次改写 <code>addonlist.txt</code> 前，都会把上一版自动存成历史快照
-              （保留最近 20 份，内容相同的不重复存）。写错、或被游戏 / Steam 云改成不想要的状态时，
-              可在这里一键回滚到某个时间点；回滚前也会先给当前内容留一份快照，所以回滚本身也能再撤销。
+              软件改写 <code>addonlist.txt</code> 前会自动留存历史快照（最近 20 份），可一键回滚；回滚前也会先留快照，回滚可再撤销。
             </p>
             {!addonsPath ? (
               <p className="settings-hint settings-hint--warn">
@@ -693,14 +691,10 @@ export function SettingsPage() {
           </div>
           <div className="settings-group">
             <p className="settings-desc">
-              填了它，创意工坊就从「抓网页」切到「官方搜索接口」：每页 <strong>100 条</strong>（原 30 条）、
-              带<strong>好评数 / 累计下载量</strong>、能显示<strong>精确结果总数</strong>、支持「最近更新」排序。
-              不填也能用，只是每页 30 条、慢一点。
+              填写后创意工坊改用官方接口：每页 <strong>100 条</strong>、显示<strong>好评数 / 下载量 / 结果总数</strong>、支持「最近更新」排序；不填则每页 30 条、较慢。
             </p>
             <p className="settings-desc" style={{ marginTop: -4 }}>
-              保存时会用 Windows 凭据（DPAPI）加密，<strong>config.json 里只有密文</strong>，
-              只有当前 Windows 账户能解开；日志和接口一律只显示指纹（首 4 末 4 位）。
-              换电脑或换 Windows 账户后需要重新粘贴一次。
+              保存时用 Windows 凭据加密，<strong>config.json 里只有密文</strong>，仅当前 Windows 账户可解密；换电脑或换账户需重新粘贴。
             </p>
 
             <div className="settings-path-row">
@@ -771,8 +765,7 @@ export function SettingsPage() {
               >
                 <span className="settings-current-label">注意：</span>
                 <span style={{ whiteSpace: 'normal' }}>
-                  配置文件里有加密过的 key，但当前账户解不开（换过 Windows 账户或电脑）。
-                  重新粘贴保存一次即可。
+                  配置文件里的 key 当前账户解不开（换过 Windows 账户或电脑），重新粘贴保存一次即可。
                 </span>
               </div>
             )}
@@ -796,10 +789,7 @@ export function SettingsPage() {
             )}
 
             <p className="settings-desc" style={{ marginTop: 10, fontSize: 11.5, opacity: 0.78 }}>
-              Key 用 Windows 凭据加密后写在本机 <code>~/.l4d2-manager/config.json</code>，
-              文件里只有密文；不会上传、不进仓库、日志与接口里只留指纹。
-              申请要求：Steam 账号、在商店消费满 5 美元（受限账号无法使用 Web API）、域名随便填。
-              Steam 使用条款要求 key 必须本人保管，所以它只能你自己填，不能随软件分发。
+              Key 加密后只存本机 <code>~/.l4d2-manager/config.json</code>，不会上传。申请需 Steam 账号、商店消费满 5 美元；按 Steam 条款须本人保管。
             </p>
           </div>
         </div>
@@ -811,15 +801,13 @@ export function SettingsPage() {
           </div>
           <div className="settings-group">
             <p className="settings-desc">
-              觉得字太小、发虚时在这里整体放大。缩放由 Chromium 按放大后的像素重新渲染
-              （不是把画面拉大），所以文字与图标是变清晰而不是变糊；对高分辨率屏幕、
-              或系统缩放设为 125% 以上的机器效果最明显。
+              整体放大界面文字与图标，对高分辨率屏幕或系统已放大 125% 以上的机器效果最明显。
             </p>
             <div className="settings-toggle-row">
               <div className="settings-toggle-info">
                 <span className="settings-toggle-label">界面缩放：{Math.round(uiScale * 100)}%</span>
                 <span className="settings-toggle-hint">
-                  默认 110%。修改后立即生效并记住，无需重启；调到 130%~150% 可明显放大文字。
+                  默认 110%，修改后立即生效；130%~150% 可明显放大。
                 </span>
               </div>
               <div className="settings-scale-group">
@@ -868,8 +856,7 @@ export function SettingsPage() {
           </div>
           <div className="settings-group">
             <p className="settings-desc">
-              选一个主色，标题栏、按钮、选中态、卡片描边和背景氛围光会整套跟着换。
-              日间/夜间会各自取合适的明度，不用手动调。
+              选一个主色，标题栏、按钮、选中态、卡片描边与背景氛围光会整套换色，日间/夜间自动取合适明度。
             </p>
 
             <div className="settings-swatches">
@@ -899,8 +886,7 @@ export function SettingsPage() {
           </div>
           <div className="settings-group">
             <p className="settings-desc">
-              通过 Steam 的公开接口查已订阅条目有没有新版，和本地文件比时间即可判断，
-              不需要登录，也不需要开着 Steam。发现新版后在「我的 Mod」页会标出「可更新」。
+              用 Steam 公开接口查已订阅条目是否有新版（无需登录或开 Steam），有新版时「我的 Mod」页会标「可更新」。
             </p>
 
             <div className="settings-toggle-row">
@@ -991,8 +977,7 @@ export function SettingsPage() {
           </div>
           <div className="settings-group">
             <p className="settings-desc">
-              界面发顿、风扇转得快时先从这里关。这些开关只改变界面的显示方式，
-              不会改动任何 Mod 的启停状态，也不影响游戏内的实际加载。
+              界面卡顿时可从这里的开关降负载；只影响显示，不改 Mod 启停，也不影响游戏内加载。
             </p>
 
             {/* 禁用动图 */}
@@ -1001,10 +986,9 @@ export function SettingsPage() {
                 <span className="settings-toggle-label">禁用动图</span>
                 <span className="settings-toggle-hint">
                   {cardAnim
-                    ? '打开后卡片封面只保留一张静态首帧：不再逐帧解码动图、不占额外显存，滚动时的开销降到最低。'
-                    : '已禁用：卡片只显示静态首帧，不下载动图、不逐帧解码，也不占显存。'}
-                  滚出视口的卡片本来就只有静态图，所以差别只在「正在看的那几张」。
-                  {systemReducedMotion() && ' 系统开启了「减少动态效果」，这里默认已打开。'}
+                    ? '已开启：卡片封面只播静态首帧，不逐帧解码、不占显存。'
+                    : '已禁用：卡片只显示静态首帧，不占显存。'}
+                  {systemReducedMotion() && ' 系统已开启「减少动态效果」。'}
                 </span>
               </div>
               <button
@@ -1028,9 +1012,7 @@ export function SettingsPage() {
                   {cacheInfo
                     ? `封面图、VPK 索引与元数据共 ${formatBytes(cacheInfo.total_bytes)}（${cacheInfo.total_files} 个文件）。`
                     : '正在统计占用…'}
-                  Mod 被更新或删除后，旧缓存不会再被读到，但也不会自己从磁盘上消失。
-                  清理只删「对应 Mod 已经不存在」的那部分，不动任何 Mod 文件与启停状态；
-                  还需要的缓存会在下次扫描时重新生成。
+                  清理只删除「对应 Mod 已不存在」的缓存，不动 Mod 文件与启停状态。
                 </span>
               </div>
               <button
@@ -1053,7 +1035,7 @@ export function SettingsPage() {
           </div>
           <div className="settings-group">
             <p className="settings-desc">
-              性能与显示相关的诊断选项，遇到卡顿/渲染异常时可以在这里排查。
+              性能与显示诊断选项，遇到卡顿或渲染异常时可用于排查。
             </p>
 
             {/* FPS 显示 */}
@@ -1082,8 +1064,7 @@ export function SettingsPage() {
                 <line x1="12" y1="8" x2="12.01" y2="8" />
               </svg>
               <span>
-                按 <strong>Ctrl + Shift + F</strong> 打开帧率诊断浮层：可看到帧率波动、动图节奏偏差、
-                单帧绘制耗时与长帧计数，并直接对照 180fps 对应的 5.56ms 单帧预算。
+                按 <strong>Ctrl + Shift + F</strong> 打开帧率诊断浮层，查看帧率波动、动图节奏与单帧耗时。
               </span>
             </div>
 
@@ -1108,7 +1089,7 @@ export function SettingsPage() {
             </div>
 
             <p className="settings-desc" style={{ marginTop: 12, marginBottom: 0, fontSize: 12 }}>
-              提示：想对比效果可直接点标题栏右上角的主题按钮；觉得切换发顿就把「主题切换过渡」关掉。
+              觉得切换发顿就把「主题切换过渡」关掉。
             </p>
           </div>
         </div>
@@ -1140,8 +1121,7 @@ export function SettingsPage() {
           </div>
           <div className="settings-group">
             <p className="settings-desc">
-              控制 Electron 是否使用 GPU 硬件加速渲染界面。禁用 GPU 加速可以解决某些显卡驱动兼容性问题（如黑屏、花屏），
-              但可能会增加 CPU 占用并略微降低界面流畅度。
+              控制 Electron 是否使用 GPU 硬件加速；禁用可解决部分显卡的黑屏/花屏问题，但会增加 CPU 占用。
             </p>
             <div className="settings-toggle-row">
               <div className="settings-toggle-info">
@@ -1180,12 +1160,11 @@ export function SettingsPage() {
           </div>
           <div className="settings-group">
             <p className="settings-desc">
-              选择一张本地图片作为应用背景，可无级调节毛玻璃模糊、暗化程度与背景透明度
-              （透明度越高背景越明显）。较大的图片会自动压缩到合适分辨率后再使用，避免影响性能。
+              选一张本地图片作背景，可无级调节模糊、暗化与透明度（大图会自动压缩）。
               <br />
               {background.imagePath
-                ? '「界面透明度」控制内部窗口（容器底色、侧边栏、内容区、卡片、标题栏）的通透程度：数值越高越透明，100% 时可直接透出底层的背景图。'
-                : '选择背景图后，「界面透明度」可让内部窗口（容器底色、侧边栏、内容区、卡片、标题栏）变透，从而直接透出背景图。'}
+                ? '「界面透明度」控制内部窗口的通透程度，100% 时直接透出背景图。'
+                : '选好背景后，「界面透明度」可让内部窗口透出背景图。'}
             </p>
 
             {/* Preview：与主界面保持一致的图层结构（背景图 + 暗化层 + 整体透明度） */}
@@ -1348,8 +1327,7 @@ export function SettingsPage() {
           </div>
           <div className="settings-group">
             <p className="settings-desc">
-              当应用出现异常时，可以将运行日志和系统信息导出为 ZIP 文件，发送给开发者以便排查问题。
-              导出的数据包括系统信息、后端日志、Mod 元数据快照，<strong>不包含 Mod 文件本身</strong>。
+              出现异常时可导出运行日志与系统信息为 ZIP 发给开发者排查；含系统信息、后端日志、Mod 元数据快照，<strong>不含 Mod 文件</strong>。
             </p>
             <div className="settings-actions">
               <button className="settings-btn settings-btn--primary" onClick={exportLogs}>
