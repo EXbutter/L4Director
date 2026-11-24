@@ -250,9 +250,16 @@
   gap: 5px;
   overflow: hidden;
   color: var(--text-muted);
+  // 底层用「不透明」的主题底色（--bg-primary-solid 在浅色/深色下都是 color-mix 到实色，
+  // 且不像 --bg-card-solid 那样只在有背景图时才有、也不像 --bg-primary 会被调成半透明），
+  // 再叠一层主题色渐变 + 斜纹，所以整块占位是实心的，不会透出卡片底或自定义背景壁纸。
   background:
-    radial-gradient(120% 120% at 50% 0%, rgba(var(--accent-rgb), 0.14), transparent 62%),
-    var(--accent-gradient-subtle);
+    radial-gradient(120% 120% at 50% 18%, rgba(var(--accent-rgb), 0.20), transparent 62%),
+    linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--accent) 16%, var(--bg-primary-solid)),
+      color-mix(in srgb, var(--accent) 7%, var(--bg-primary-solid))
+    );
 
   // 斜纹肌理：让「没有封面」看起来是有意为之，而不是加载失败的空白格
   &::before {
@@ -271,14 +278,14 @@
     position: relative;
     width: 38px;
     height: 38px;
-    opacity: 0.5;
+    opacity: 0.6;
   }
 
   &__label {
     position: relative;
     font-size: 11px;
     letter-spacing: 0.4px;
-    opacity: 0.65;
+    opacity: 0.8;
   }
 }
 
