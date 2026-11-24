@@ -409,9 +409,16 @@ def test_冲突条目带类型与具体文件(client, addons_dir):
 
     mods = {m['name']: m for m in client.get('/api/mods').json()['mods']}
     a = mods['a.vpk']
+    # 列表接口为了瘦身会截断 files 并清空 conflict_hints —— 完整的冲突明细/提示
+    # 走按需端点 /api/mods/{name}/conflict-hints（弹窗打开时前端会来取）。
+    full = client.get(f"/api/mods/{a['name']}/conflict-hints").json()
+    # 列表负载确实瘦身了：conflict_hints 不随列表下发，明细 files 一律 ≤5 条
+    assert a['conflict_hints'] == []
+    assert all(len(d['files']) <= 5 for d in a['conflict_details'])
+    assert full['conflict_hints'], '完整提示必须能从按需端点取回'
     # 测试环境没有游戏本体 → 官方基准缺失 → 这些重叠只能判 soft（进 hints），
     # 但类型/文件/风险这些字段必须齐备
-    detail = (a['conflict_details'] or a['conflict_hints'])[0]
+    detail = (full['conflict_details'] or full['conflict_hints'])[0]
     assert detail['kind'] in ('model', 'material', 'sound')
     assert detail['kind_label']
     assert detail['count'] >= 2

@@ -32,13 +32,91 @@ from services.mod_scanner import (
 
 router = APIRouter()
 
+# 列表里每条冲突明细最多带几个文件路径：冲突详情弹窗只需要给用户看「涉及哪些文件」
+# 的线索，完整清单并不是列表首屏要展示的东西。文件路径（动辄 40~60 字符）是冲突明细里
+# 最占体积的部分，再加上同一个冲突会同时出现在冲突双方的条目里，整份列表很容易被它撑大。
+_CONFLICT_FILES_PREVIEW = 5
+
+
+def _slim_conflict_detail(detail: dict) -> dict:
+    """把一条冲突/提示明细裁成「列表首屏」需要的字段。
+
+    冲突判定本身（严重度、涉及文件数 count、对方 Mod、对方角色标签）全部保留，
+    只把 files 数组截到前 _CONFLICT_FILES_PREVIEW 条，并用 files_truncated 标记
+    「还有更多」。完整的文件列表由 /api/mods/{name}/conflict-hints 按需取回，
+    所以弹窗打开后信息不缺失。
+    """
+    files = detail.get('files') or []
+    total = detail.get('count', len(files))
+    head = files[:_CONFLICT_FILES_PREVIEW]
+    slim = {
+        'other': detail.get('other'),
+        'severity': detail.get('severity'),
+        'count': total,
+        'files': head,
+        'other_role_tags': detail.get('other_role_tags') or [],
+    }
+    if total > len(head):
+        slim['files_truncated'] = True
+    return slim
+
+
+def _slim_mod_payload(mod) -> dict:
+    """GET /api/mods 列表用的瘦身版 Mod 字典（不改动 ModInfo 本身）。
+
+    - conflict_details：保留严重度/计数/对方角色标签，files 截断到前若干条；
+    - conflict_hints：列表不再全量下发（软重叠通常比硬冲突还多，是 payload 大户），
+      只保留条数 conflict_hints_count；完整提示由 /api/mods/{name}/conflict-hints 取回。
+    """
+    data = vars(mod).copy()
+    data['conflict_details'] = [
+        _slim_conflict_detail(d) for d in (mod.conflict_details or [])
+    ]
+    data['conflict_hints'] = []
+    data['conflict_hints_count'] = len(mod.conflict_hints or [])
+    return data
+
+
 @router.get("/api/mods")
 def list_mods():
-    """获取所有 Mod 列表"""
+    """获取所有 Mod 列表（冲突明细瘦身 + 冲突提示按需加载）。"""
     mods = app_state.scanner.scan_mods()
     return {
         "count": len(mods),
-        "mods": [vars(m) for m in mods]
+        "mods": [_slim_mod_payload(m) for m in mods]
+    }
+
+
+@router.get("/api/mods/{mod_name}/conflict-hints")
+def get_mod_conflict_hints(mod_name: str, path: Optional[str] = None):
+    """按需取回某个 Mod 的完整冲突明细与提示（列表接口只给了计数/前几条）。
+
+    列表 payload 为了瘦身把每条明细的 files 截断、conflict_hints 置空；
+    用户在「冲突详情」弹窗里需要看到完整文件清单与全部提示，就由这里补齐。
+    返回的是冲突判定原始结果，不改判定语义。
+    """
+    from urllib.parse import unquote
+    mod_name = unquote(mod_name)
+    path = unquote(path) if path else None
+
+    mods = app_state.scanner.scan_mods()
+    target = None
+    for m in mods:
+        if m.name != mod_name:
+            continue
+        if path is None or m.path == path:
+            target = m
+            break
+    if target is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"在 Mod 列表里找不到「{mod_name}」",
+        )
+    return {
+        "name": target.name,
+        "path": target.path,
+        "conflict_details": target.conflict_details,
+        "conflict_hints": target.conflict_hints,
     }
 
 

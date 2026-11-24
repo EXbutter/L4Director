@@ -21,6 +21,7 @@
  "GET /api/mods/delta",
  "GET /api/mods/scan-status",
  "GET /api/mods/stream",
+ "GET /api/mods/{mod_name}/conflict-hints",
  "GET /api/mods/{mod_name}/display-name",
  "GET /api/packs",
  "GET /api/settings",

@@ -587,6 +587,9 @@ export function MyModsPage() {
   const dupModalRef = useModalA11y(!!dupDialogPath, () => setDupDialogPath(null));
   const conflictModalRef = useModalA11y(!!conflictDialogMod, () => setConflictDialogMod(null));
   const [hintSnapshot, setHintSnapshot] = useState<ConflictDetail[]>([]);
+  // 列表接口为了瘦身只带「计数 + 前几条文件」且不随列表下发 conflict_hints；
+  // 打开冲突详情弹窗时用这个序号配合按需端点拉全量，避免旧请求覆盖新弹窗。
+  const conflictFetchSeqRef = useRef(0);
 
   useEffect(() => {
     // 仅当尚无数据时才自动拉取；后端连接后由 App 统一触发首次扫描
@@ -1018,13 +1021,28 @@ export function MyModsPage() {
   // Open conflict dialog and save snapshot
   const openConflictDialog = (modName: string) => {
     const mod = mods.find(m => m.name === modName);
+    // 先用列表里的瘦身数据占位（计数/前几条文件 + 对方角色标签都在），
+    // 真正完整的冲突明细与提示随后从按需端点补齐（列表已不再全量下发 hints）。
     setConflictSnapshot(mod?.conflict_details ? [...mod.conflict_details] : []);
     setHintSnapshot(mod?.conflict_hints ? [...mod.conflict_hints] : []);
     setConflictDialogMod(modName);
+
+    const seq = ++conflictFetchSeqRef.current;
+    const query = mod?.path ? `?path=${encodeURIComponent(mod.path)}` : '';
+    fetch(`${getApiBase()}/api/mods/${encodeURIComponent(modName)}/conflict-hints${query}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        // 弹窗已关闭 / 又打开了别的 Mod → 丢弃这次过期响应
+        if (seq !== conflictFetchSeqRef.current || !data) return;
+        if (Array.isArray(data.conflict_details)) setConflictSnapshot(data.conflict_details);
+        if (Array.isArray(data.conflict_hints)) setHintSnapshot(data.conflict_hints);
+      })
+      .catch(() => { /* 拉不到就沿用列表里的瘦身数据，不影响弹窗打开 */ });
   };
 
   // Close conflict dialog, clear snapshot, and refresh data
   const closeConflictDialog = () => {
+    conflictFetchSeqRef.current++;
     setConflictDialogMod(null);
     setConflictSnapshot([]);
     setHintSnapshot([]);
