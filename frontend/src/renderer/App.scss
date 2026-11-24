@@ -79,12 +79,12 @@
   // 由「界面透明度」滑杆控制；--ui-alpha 默认为 1，数值与原来完全一致。
   // --bg-card-solid 保持不透明（右键菜单/弹窗需要可读性），不参与调节。
   // PCL 风格：有背景图时面板用「白色毛玻璃」而不是原来的深灰
-  --bg-card: rgba(255, 255, 255, calc(0.78 * var(--ui-alpha, 1)));
+  --bg-card: rgba(255, 255, 255, calc(0.66 * var(--ui-alpha, 1)));
   --bg-card-solid: rgba(255, 255, 255, 0.96);
-  --bg-card-hover: rgba(255, 255, 255, calc(0.88 * var(--ui-alpha, 1)));
+  --bg-card-hover: rgba(255, 255, 255, calc(0.74 * var(--ui-alpha, 1)));
   --border-color: rgba(0, 0, 0, calc(0.08 * var(--ui-alpha, 1)));
-  --sidebar-bg: rgba(255, 255, 255, calc(0.85 * var(--ui-alpha, 1)));
-  --bg-primary: rgba(255, 255, 255, calc(0.85 * var(--ui-alpha, 1)));
+  --sidebar-bg: rgba(255, 255, 255, calc(0.72 * var(--ui-alpha, 1)));
+  --bg-primary: rgba(255, 255, 255, calc(0.72 * var(--ui-alpha, 1)));
   --sidebar-hover-bg: rgba(var(--accent-rgb), calc(0.08 * var(--ui-alpha, 1)));
   --sidebar-active-bg: rgba(var(--accent-rgb), calc(0.14 * var(--ui-alpha, 1)));
 
@@ -232,7 +232,9 @@
 }
 
 .app-main--transparent {
-  background: rgba(255, 255, 255, calc(0.60 * var(--ui-alpha, 1))) !important;
+  // 浅色主题下这层是「压在壁纸上的白纱」，原来 0.60/0.70 偏重，壁纸几乎被漂白；
+  // 现在减淡到 0.45/0.42，壁纸明显更透，同时仍能给页面标题等直接压在其上的深色文字兜住底。
+  background: rgba(255, 255, 255, calc(0.45 * var(--ui-alpha, 1))) !important;
 
   [data-theme='dark'] & {
     // 跟随主色（同样用同 alpha 混色的写法，透明度不受影响）
@@ -244,7 +246,7 @@
   }
 
   [data-theme='light'] & {
-    background: rgba(240, 246, 252, calc(0.70 * var(--ui-alpha, 1))) !important;
+    background: rgba(240, 246, 252, calc(0.42 * var(--ui-alpha, 1))) !important;
   }
 }
 
