@@ -10,7 +10,7 @@
 
 .page-header {
   margin-bottom: 24px;
-  padding-bottom: 16px;
+  padding: 20px 24px 16px;
   border-bottom: 1px solid var(--border-color);
 }
 
@@ -25,13 +25,16 @@
   font-size: 14px;
   color: var(--text-secondary);
   font-weight: 400;
+  margin-top: 4px;
 }
 
 .page-content {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  // 不额外加 padding / 自身滚动：滚动统一交给外层 .content-area，
+  // 间距统一靠各区块自身的 margin（原来这里 gap:24 会让设置页比别的页面更空）。
+  gap: 0;
 }
 
 .content-section {
@@ -39,6 +42,9 @@
   border-radius: 12px;
   padding: 20px;
   border: 1px solid var(--border-color);
+  box-shadow: 0 2px 8px rgba(var(--accent-rgb), 0.06);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .section-header {
@@ -52,7 +58,7 @@
 
 .section-header h2 {
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-primary);
 }
 
