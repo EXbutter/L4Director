@@ -1,5 +1,6 @@
 import type { CSSProperties, KeyboardEvent } from 'react';
 import { ThumbImage } from '../ThumbImage';
+import { DefaultCover } from '../DefaultCover';
 import { ItemStats } from './ItemStats';
 import { cleanDescription, formatCount, formatDate, formatSize, thumbnailUrl } from './types';
 import type { WorkshopItem } from './types';
@@ -52,6 +53,7 @@ export function WorkshopRow({ item, api, index = 0, onClick }: Props) {
           maxHeight={120}
           animation="hover"
           lazy
+          fallback={<DefaultCover />}
         />
       </div>
 

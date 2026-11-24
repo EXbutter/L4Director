@@ -236,3 +236,54 @@
 .thumb-frame > canvas {
   pointer-events: none;
 }
+
+/* 没有封面时的默认图（DefaultCover 组件）：主题色渐变 + 淡斜纹 + 大图标 + 「暂无封面」。
+   跟着 --accent 走，换主题色时占位图一起变，不会跟整体皮肤打架。 */
+.default-cover {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  overflow: hidden;
+  color: var(--text-muted);
+  background:
+    radial-gradient(120% 120% at 50% 0%, rgba(var(--accent-rgb), 0.14), transparent 62%),
+    var(--accent-gradient-subtle);
+
+  // 斜纹肌理：让「没有封面」看起来是有意为之，而不是加载失败的空白格
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: repeating-linear-gradient(
+      135deg,
+      rgba(var(--accent-rgb), 0.05) 0 8px,
+      transparent 8px 16px
+    );
+    pointer-events: none;
+  }
+
+  svg {
+    position: relative;
+    width: 38px;
+    height: 38px;
+    opacity: 0.5;
+  }
+
+  &__label {
+    position: relative;
+    font-size: 11px;
+    letter-spacing: 0.4px;
+    opacity: 0.65;
+  }
+}
+
+/* ThumbImage 图片彻底加载失败时的兜底占位（铺满缩略图外框） */
+.thumb-fallback {
+  position: absolute;
+  inset: 0;
+}

@@ -1,4 +1,4 @@
-import { useEffect, useState, type SyntheticEvent } from 'react';
+import { useEffect, useState, type ReactNode, type SyntheticEvent } from 'react';
 import {
   getPreparedThumbnail,
   THUMB_MAX_HEIGHT,
@@ -21,6 +21,8 @@ interface ThumbImageProps {
   maxHeight?: number;
   /** 加载/转码失败时通知父组件（由父组件决定是否换成占位图） */
   onError?: (event: SyntheticEvent<HTMLImageElement>) => void;
+  /** 图片彻底加载失败时显示的占位内容（不传则留空白，由父组件自行兜底） */
+  fallback?: ReactNode;
   /**
    * 动图什么时候播：
    *   - `viewport`（默认）：进入视口就播。「我的模组」用这个 —— 是本地文件，
@@ -75,6 +77,7 @@ export function ThumbImage({
   maxWidth = THUMB_MAX_WIDTH,
   maxHeight = THUMB_MAX_HEIGHT,
   onError,
+  fallback,
   animation = 'viewport',
   lazy = false,
 }: ThumbImageProps) {
@@ -96,6 +99,8 @@ export function ThumbImage({
   // 用 state 持有 DOM 节点而不是 ref：视口观测要在节点挂载后重新建立。
   // 外框现在是**常驻**的（以前要等转码完成才出现），观测才有稳定的锚点。
   const [frameEl, setFrameEl] = useState<HTMLSpanElement | null>(null);
+  // 图片彻底加载失败（后端代理 404 / 文件损坏）：本次生命周期内改为显示 fallback
+  const [failed, setFailed] = useState(false);
 
   // 用户在设置页开关动图预览时立即生效（不需要重新扫描或刷新列表）
   useEffect(() => subscribeCardAnimation(setEnabled), []);
@@ -123,6 +128,7 @@ export function ThumbImage({
     if (!ready) return;
     let cancelled = false;
     setDisplaySrc(null);
+    setFailed(false);
     setAnimated(false);
     setAnimUnavailable(false);
     setPainted(false);
@@ -185,7 +191,7 @@ export function ThumbImage({
       onPointerEnter={animation === 'hover' ? () => setHovered(true) : undefined}
       onPointerLeave={animation === 'hover' ? () => setHovered(false) : undefined}
     >
-      {displaySrc && (
+      {displaySrc && !failed && (
         <img
           src={displaySrc}
           alt={alt}
@@ -198,11 +204,14 @@ export function ThumbImage({
           // `fill-mode: both`，动画里那条 `opacity: 1` 在层叠里优先于内联样式，
           // 用 opacity 会被它一直盖住 —— 静态图根本不会让位（实测踩过）。
           style={playing && painted ? { visibility: 'hidden' } : undefined}
-          onError={(event) => onError?.(event)}
+          onError={(event) => {
+            setFailed(true);
+            onError?.(event);
+          }}
         />
       )}
 
-      {playing && displaySrc && (
+      {playing && displaySrc && !failed && (
         <AnimatedThumb
           src={src}
           alt={alt}
@@ -214,6 +223,8 @@ export function ThumbImage({
           onUnavailable={handleUnavailable}
         />
       )}
+
+      {failed && fallback && <span className="thumb-fallback">{fallback}</span>}
     </span>
   );
 }

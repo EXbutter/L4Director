@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react';
 import { ThumbImage } from '../ThumbImage';
+import { DefaultCover } from '../DefaultCover';
 import { ItemStats } from './ItemStats';
 import { formatCount, formatSize, thumbnailUrl } from './types';
 import type { WorkshopItem } from './types';
@@ -41,6 +42,7 @@ export function WorkshopCard({ item, api, index = 0, onClick }: Props) {
           maxHeight={226}
           animation="hover"
           lazy
+          fallback={<DefaultCover />}
         />
         {item.downloaded && <span className="wk-card__badge">已下载</span>}
         {/* 原来是好评率角标（55%），换成好评数 + 累计下载量：工坊条目的好评率

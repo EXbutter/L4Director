@@ -5,6 +5,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useStore, getApiBase, ModData, ConflictDetail, WorkshopUpdateItem } from '../store/useStore';
 import { ToolBar } from './ToolBar';
 import { ThumbImage } from './ThumbImage';
+import { DefaultCover } from './DefaultCover';
 import { ModSwitch } from './ModSwitch';
 import { showToast } from './Toast';
 import { confirmDialog } from './ConfirmDialog';
@@ -165,12 +166,7 @@ function ModPreview({ mod, displayName, favorited, onToggleFavorite }: {
         </div>
       ) : (
         <div className="mod-card__preview">
-          {isVisible ? null : null /* placeholder (still shows the SVG) */}
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <rect x="3" y="3" width="18" height="18" rx="3" />
-            <circle cx="9" cy="9" r="2" />
-            <path d="M21 15l-4-4-6 6-3-3-5 5" />
-          </svg>
+          <DefaultCover />
         </div>
       )}
 
