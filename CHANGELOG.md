@@ -2,12 +2,13 @@
 
 ## v1.3.5 — 开发中
 
-这一版给 `addonlist.txt` 加了一层写盘兜底：软件每次改写它之前，先把上一版自动存成历史快照（去重、轮转保留最近 20 份）；界面上（设置 → Addonlist 写盘兜底）可以一键把某个时间点写回文件。回滚前也会先给当前内容留一份快照，所以回滚本身也能再撤销。没有新页面、不改既有流程。
+这一版给 `addonlist.txt` 加了一层写盘兜底：软件每次改写它之前，先把上一版自动存成历史快照（去重、轮转保留最近 20 份）；界面上（设置 → Addonlist 写盘兜底）可以一键把某个时间点写回文件。回滚前也会先给当前内容留一份快照，所以回滚本身也能再撤销。另外补了 `addonlist.txt` 的卫生检查：找出指向已不存在 `.vpk` 的孤儿条目并可一键清理（清理前同样先留快照）。没有新页面、不改既有流程。
 
 ### 新增
 
 - **Addonlist 写盘兜底：自动历史快照 + 一键回滚**：`ModScanner._write_addonlist()` 在原子写之前调用 `_snapshot_current_addonlist()`，把即将被覆盖的 `addonlist.txt` 存进 `~/.l4d2-manager/addonlist_history/`（文件名带时间戳与内容 md5 前 8 位；与最新快照内容相同则跳过；`ADDONLIST_HISTORY_LIMIT = 20` 轮转）。新增 `GET /api/mods/addonlist-backups`（按时间倒序列出 id / 时间 / 大小 / 条目数）与 `POST /api/mods/addonlist-backups/{backup_id}/restore`（校验文件名防路径穿越；回滚前先给当前内容再留一份快照，写回走同一套 tmp→replace 原子替换并刷新指纹）。设置页新增「Addonlist 写盘兜底」区块，列出快照并提供「回滚到这份」，回滚走应用内确认弹窗。
-- **验证与测试**：新增 `scripts/verify_addonlist_history.py`（6 个场景、15 项断言：首次无快照 / 写前快照 / 去重 / 回滚 / 非法与不存在 id / 轮转上限）；`backend/tests/test_addonlist_history.py` 7 个用例（含走真实路由的 client 用例）。
+- **Addonlist 卫生：孤儿条目检测 + 一键清理**：`GET /api/mods/addonlist-orphans` 只读列出 `addonlist.txt` 里指向「已不在 addons 目录的 .vpk」的孤儿条目；`POST /api/mods/addonlist-clean-orphans` 只删这些孤儿行（头部、花括号、正常条目、无法解析的行原样保留），写前自动留历史快照，所以清理也能回滚；没有孤儿时是空操作（不写盘、不产生快照）。设置页「Addonlist 写盘兜底」区块内加了「检查孤儿条目 / 清理」入口。
+- **验证与测试**：新增 `scripts/verify_addonlist_history.py`（6 个场景、15 项断言）与 `scripts/verify_addonlist_orphans.py`（5 个场景、20 项断言）；`backend/tests/test_addonlist_history.py` 7 个用例、`backend/tests/test_addonlist_orphans.py` 8 个用例（均含走真实路由的 client 用例）。
 
 ## v1.3.4 — 2026-11-20
 

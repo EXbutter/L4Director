@@ -1997,6 +1997,113 @@ class ModScanner:
             pass
         return {'status': 'ok', 'restored_from': safe, 'bytes': len(content)}
 
+    # ===== addonlist.txt 卫生：孤儿条目检测 + 一键清理 =====
+    # addonlist.txt 里可能残留指向「已经不在 addons 目录」的 .vpk 的行（用户手删了包、
+    # 或整合包带进来的条目从没落地）。这类孤儿行不会自己消失，会让游戏的加载列表指空。
+    # 这里只做检测 + 清理两件事，清理是写文件，所以同样先留历史快照、走原子写。
+
+    def _existing_vpk_index(self) -> tuple[set, set]:
+        """addons 目录下现存 .vpk 的相对路径集合与文件名集合（均小写、正斜杠）。"""
+        addons_path = self.get_addons_path()
+        rel: set = set()
+        bases: set = set()
+        if not addons_path:
+            return rel, bases
+        root = Path(addons_path)
+        try:
+            for p in root.rglob('*.vpk'):
+                try:
+                    rel.add(p.relative_to(root).as_posix().lower())
+                except ValueError:
+                    rel.add(p.name.lower())
+                bases.add(p.name.lower())
+        except OSError:
+            pass
+        return rel, bases
+
+    def get_addonlist_orphans(self) -> dict:
+        """检测 addonlist.txt 里指向的 .vpk 已不存在的「孤儿条目」（只读，不动文件）。"""
+        entries = self._read_addonlist()
+        if not entries:
+            return {'orphans': [], 'total': 0, 'present': 0}
+        rel, bases = self._existing_vpk_index()
+        orphans: list = []
+        present = 0
+        for name in entries:
+            norm = name.replace('\\', '/').lstrip('/').lower()
+            base = norm.rsplit('/', 1)[-1]
+            if norm in rel or base in bases:
+                present += 1
+            else:
+                orphans.append(name)
+        return {'orphans': sorted(orphans), 'total': len(entries), 'present': present}
+
+    def clean_addonlist_orphans(self) -> dict:
+        """删掉 addonlist.txt 里指向不存在 .vpk 的孤儿行（写前自动历史快照）。
+
+        只删孤儿行：头部、花括号、正常条目、无法解析的行都原样保留。写前调
+        `_snapshot_current_addonlist()`，所以「清理」本身也能通过历史快照撤销。
+        """
+        addonlist_path = self._get_addonlist_path()
+        if not addonlist_path:
+            raise ValueError('还没有配置 addons 目录，找不到 addonlist.txt')
+        if not addonlist_path.exists():
+            raise FileNotFoundError('addonlist.txt 不存在')
+        old_text = self._read_addonlist_text()
+        if not old_text:
+            raise ValueError('addonlist.txt 读不出内容（可能被游戏占用），为避免覆盖本次未改动')
+        rel, bases = self._existing_vpk_index()
+        kept: list = []
+        removed: list = []
+        for line in old_text.splitlines():
+            s = line.strip()
+            if s and s not in ('{', '}') and not s.startswith('"AddonList"'):
+                m = re.match(r'^"([^"]+)"\s+"(\d+)"', s)
+                if m:
+                    norm = _decode_ansi_key(m.group(1)).replace('\\', '/').lstrip('/')
+                    low = norm.lower()
+                    base = low.rsplit('/', 1)[-1]
+                    if not (low in rel or base in bases):
+                        removed.append(norm)
+                        continue
+            kept.append(line)
+        if not removed:
+            return {'status': 'ok', 'removed': [], 'removed_count': 0, 'remaining': 0}
+
+        had_bom = False
+        try:
+            had_bom = addonlist_path.read_bytes()[:3] == b'\xef\xbb\xbf'
+        except Exception:
+            had_bom = False
+
+        data = ('\n'.join(kept) + '\n').encode('utf-8', errors='surrogateescape')
+        if had_bom:
+            data = b'\xef\xbb\xbf' + data
+
+        self._snapshot_current_addonlist(addonlist_path)
+        tmp_path = addonlist_path.with_suffix('.tmp')
+        tmp_path.write_bytes(data)
+        tmp_path.replace(addonlist_path)
+
+        fingerprint = hashlib.md5(data).hexdigest()
+        self._last_addonlist_fingerprint = fingerprint
+        self._last_addonlist_error = None
+        try:
+            set_addonlist_state(fingerprint, str(addonlist_path))
+        except Exception as e:
+            print(f'[AddonList] 清理孤儿条目后记录指纹失败：{e}')
+        try:
+            invalidate_scan_cache()
+        except Exception:
+            pass
+        remaining = len(self.get_addonlist_orphans()['orphans'])
+        return {
+            'status': 'ok',
+            'removed': sorted(removed),
+            'removed_count': len(removed),
+            'remaining': remaining,
+        }
+
     # ===== mod 启用状态偏好：软件里的设置是权威来源 =====
 
     def _mod_enabled_prefs(self) -> dict[str, bool]:

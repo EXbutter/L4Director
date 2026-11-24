@@ -157,6 +157,13 @@ export function SettingsPage() {
   const [backupsLoading, setBackupsLoading] = useState(false);
   const [restoringBackupId, setRestoringBackupId] = useState<string | null>(null);
 
+  // addonlist.txt 卫生：孤儿条目（指向已不存在的 .vpk）
+  const [orphanInfo, setOrphanInfo] = useState<
+    { orphans: string[]; total: number; present: number } | null
+  >(null);
+  const [orphanChecking, setOrphanChecking] = useState(false);
+  const [orphanCleaning, setOrphanCleaning] = useState(false);
+
   const loadCacheStats = async () => {
     try {
       const res = await fetch(`${getApiBase()}/api/cache/stats`);
@@ -221,6 +228,58 @@ export function SettingsPage() {
       showToast('回滚失败：无法连接到后端服务', 'error');
     } finally {
       setRestoringBackupId(null);
+    }
+  };
+
+  const loadAddonlistOrphans = async () => {
+    setOrphanChecking(true);
+    try {
+      const res = await fetch(`${getApiBase()}/api/mods/addonlist-orphans`);
+      if (res.ok) {
+        const data = await res.json();
+        setOrphanInfo({
+          orphans: Array.isArray(data?.orphans) ? data.orphans : [],
+          total: data?.total ?? 0,
+          present: data?.present ?? 0,
+        });
+      }
+    } catch {
+      // 检查失败不打断其它设置项
+    } finally {
+      setOrphanChecking(false);
+    }
+  };
+
+  const handleCleanAddonlistOrphans = async () => {
+    const count = orphanInfo?.orphans.length ?? 0;
+    if (count === 0) return;
+    const ok = await confirmDialog({
+      title: '清理孤儿条目',
+      description: (
+        <>
+          将从 addonlist.txt 删掉 <strong>{count}</strong> 条指向已不存在 .vpk 的条目。
+          清理前会自动留一份历史快照，可回滚。
+        </>
+      ),
+      confirmText: '清理',
+      tone: 'warning',
+    });
+    if (!ok) return;
+    setOrphanCleaning(true);
+    try {
+      const res = await fetch(`${getApiBase()}/api/mods/addonlist-clean-orphans`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data?.detail || '清理失败，请稍后重试', 'warning');
+        return;
+      }
+      showToast(`已清理 ${data?.removed_count ?? 0} 条孤儿条目`, 'success');
+      await loadAddonlistOrphans();
+      await loadAddonlistBackups();
+    } catch {
+      showToast('清理失败：无法连接到后端服务', 'error');
+    } finally {
+      setOrphanCleaning(false);
     }
   };
 
@@ -582,6 +641,46 @@ export function SettingsPage() {
                     ))}
                   </div>
                 )}
+
+                <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px dashed var(--border-color)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
+                    <span className="settings-hint">
+                      孤儿条目：addonlist.txt 里指向的 .vpk 已经不在 addons 目录（手删了包、或整合包带入的条目）。
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                    <button
+                      className="settings-btn settings-btn--secondary"
+                      onClick={() => void loadAddonlistOrphans()}
+                      disabled={orphanChecking}
+                    >
+                      {orphanChecking ? '检查中…' : '检查孤儿条目'}
+                    </button>
+                    {orphanInfo && (
+                      <span className="settings-hint">
+                        {orphanInfo.orphans.length === 0
+                          ? `没有孤儿条目（共 ${orphanInfo.total} 条）`
+                          : `发现 ${orphanInfo.orphans.length} 条孤儿`}
+                      </span>
+                    )}
+                    {orphanInfo && orphanInfo.orphans.length > 0 && (
+                      <button
+                        className="settings-btn settings-btn--ghost"
+                        onClick={() => void handleCleanAddonlistOrphans()}
+                        disabled={orphanCleaning}
+                      >
+                        {orphanCleaning ? '清理中…' : `清理这 ${orphanInfo.orphans.length} 条`}
+                      </button>
+                    )}
+                  </div>
+                  {orphanInfo && orphanInfo.orphans.length > 0 && (
+                    <ul style={{ margin: '8px 0 0', paddingLeft: 18, opacity: 0.8, fontSize: '0.9em' }}>
+                      {orphanInfo.orphans.map((name) => (
+                        <li key={name} style={{ wordBreak: 'break-all' }}>{name}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               </>
             )}
           </div>

@@ -163,6 +163,28 @@ def restore_addonlist_backup(backup_id: str):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+# ── addonlist.txt 卫生：孤儿条目（指向已不存在的 .vpk）检测与一键清理 ──
+
+
+@router.get("/api/mods/addonlist-orphans")
+def addonlist_orphans():
+    """检测 addonlist.txt 里的孤儿条目（只读）。"""
+    return app_state.scanner.get_addonlist_orphans()
+
+
+@router.post("/api/mods/addonlist-clean-orphans")
+def addonlist_clean_orphans():
+    """把 addonlist.txt 里的孤儿条目删掉（写前自动历史快照，可回滚）。"""
+    if not app_state.scanner.get_addons_path():
+        raise HTTPException(status_code=400, detail="请先配置 Addons 目录")
+    try:
+        return app_state.scanner.clean_addonlist_orphans()
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.post("/api/mods/{mod_name}/toggle")
 def toggle_mod(mod_name: str, path: Optional[str] = None):
     """切换 Mod 启用/禁用状态。
