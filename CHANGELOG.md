@@ -10,6 +10,10 @@
 - **Addonlist 卫生：孤儿条目检测 + 一键清理**：`GET /api/mods/addonlist-orphans` 只读列出 `addonlist.txt` 里指向「已不在 addons 目录的 .vpk」的孤儿条目；`POST /api/mods/addonlist-clean-orphans` 只删这些孤儿行（头部、花括号、正常条目、无法解析的行原样保留），写前自动留历史快照，所以清理也能回滚；没有孤儿时是空操作（不写盘、不产生快照）。设置页「Addonlist 写盘兜底」区块内加了「检查孤儿条目 / 清理」入口。
 - **验证与测试**：新增 `scripts/verify_addonlist_history.py`（6 个场景、15 项断言）与 `scripts/verify_addonlist_orphans.py`（5 个场景、20 项断言）；`backend/tests/test_addonlist_history.py` 7 个用例、`backend/tests/test_addonlist_orphans.py` 8 个用例（均含走真实路由的 client 用例）。
 
+### 修复
+
+- **创意工坊外观**：左侧筛选栏此前只有右描边、没有底色，自定义背景图会整个透上来——补上和卡片一致的毛玻璃底色；顶部搜索/筛选栏此前用不透明底色，拖「界面透明度」没有反应——改用会随滑杆变化的半透明面板底色（两处均加背景模糊，保证文字对比）。
+
 ## v1.3.4 — 2026-11-20
 
 这一版收尾 1.3.3 之后留下的三件事：把只在单测里跑的两个工具（首启窗口尺寸、卡片观察器）真正接进运行时，补完性能清单里剩下的主线程项，并把「拿不到游戏本体资源包 → 冲突判定静默降级」变成界面上看得见的提示。没有新页面、新功能。
