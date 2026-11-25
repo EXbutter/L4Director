@@ -155,8 +155,13 @@
     &-dropdown {
       position: absolute;
       top: calc(100% + 6px);
+      // 按钮靠右，下拉右对齐，避免贴近窗口右边时向左溢出
       right: 0;
+      left: auto;
       min-width: 150px;
+      // 选项多 / 矮窗口时内部滚动，不撑出窗口
+      max-height: min(60vh, 320px);
+      overflow-y: auto;
       background: var(--sidebar-bg);
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);

@@ -18,6 +18,7 @@ import {
   hasFullSet,
 } from '../utils/mix';
 import { observeViewport } from '../utils/viewportObserver';
+import { clampMenuPosition } from '../utils/clampMenu';
 import './ContentArea.scss';
 import './MyModsPage.scss';
 
@@ -550,6 +551,8 @@ export function MyModsPage() {
   const [renameModName, setRenameModName] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  // 右键菜单夹紧后的实际坐标（量完尺寸再定位，避免右下角溢出窗口）
+  const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
   const categoryTriggerRef = useRef<HTMLDivElement>(null);
   const packTriggerRef = useRef<HTMLDivElement>(null);
   const batchCategoryTriggerRef = useRef<HTMLDivElement>(null);
@@ -620,6 +623,17 @@ export function MyModsPage() {
       setCatParent(null);
       setMenuTagDraft(null);
     }
+  }, [contextMenu]);
+
+  // 右键菜单：量出真实尺寸后夹进视口（右下角点击不再溢出；不影响子菜单左右翻转逻辑）
+  useLayoutEffect(() => {
+    if (!contextMenu || !contextMenuRef.current) {
+      setContextMenuPos(null);
+      return;
+    }
+    const el = contextMenuRef.current;
+    const { x, y } = clampMenuPosition(contextMenu.x, contextMenu.y, el.offsetWidth, el.offsetHeight);
+    setContextMenuPos((prev) => (prev && prev.x === x && prev.y === y ? prev : { x, y }));
   }, [contextMenu]);
 
   // 切到别的子菜单时，分类子菜单回到大类层（下次打开不会停在上次的子级）
@@ -1806,7 +1820,7 @@ export function MyModsPage() {
         <div
           ref={contextMenuRef}
           className="context-menu show"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
+          style={{ left: contextMenuPos?.x ?? contextMenu.x, top: contextMenuPos?.y ?? contextMenu.y }}
         >
           {selectedMods.size > 0 ? (
             <>

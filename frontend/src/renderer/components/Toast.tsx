@@ -10,31 +10,59 @@ interface ToastMessage {
   exiting: boolean;
 }
 
+/** 同屏最多显示条数：超出丢弃最旧的一条，避免刷屏 */
+const MAX_TOASTS = 5;
+
+/** 停留时长按类型区分：错误更久，方便读完整段报错 */
+const DURATION: Record<ToastType, number> = {
+  success: 3000,
+  info: 3000,
+  warning: 4500,
+  error: 6500,
+};
+
 // 全局 Toast 管理
 let toastIdCounter = 0;
 let setToastsFn: React.Dispatch<React.SetStateAction<ToastMessage[]>> | null = null;
-let timersRef: Map<number, ReturnType<typeof setTimeout>> = new Map();
+const timersRef: Map<number, ReturnType<typeof setTimeout>> = new Map();
+
+function clearTimer(id: number) {
+  const timer = timersRef.get(id);
+  if (timer) {
+    clearTimeout(timer);
+    timersRef.delete(id);
+  }
+}
+
+/** 退场：先标记 exiting 触发滑出动画，300ms 后真正从列表移除 */
+function scheduleRemove(id: number) {
+  clearTimer(id);
+  setToastsFn?.((prev) => prev.map((t) => (t.id === id ? { ...t, exiting: true } : t)));
+  const timer = setTimeout(() => {
+    setToastsFn?.((prev) => prev.filter((t) => t.id !== id));
+    timersRef.delete(id);
+  }, 300);
+  timersRef.set(id, timer);
+}
 
 export function showToast(text: string, type: ToastType = 'info') {
   const id = ++toastIdCounter;
   const newToast: ToastMessage = { id, text, type, exiting: false };
 
-  if (setToastsFn) {
-    setToastsFn((prev) => [...prev, newToast]);
+  if (!setToastsFn) return;
 
-    // 3.5 秒后自动移除
-    const timer = setTimeout(() => {
-      // 先标记为 exiting（触发淡出动画）
-      setToastsFn?.((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, exiting: true } : t))
-      );
-      // 再 300ms 后移除
-      setTimeout(() => {
-        setToastsFn?.((prev) => prev.filter((t) => t.id !== id));
-      }, 300);
-    }, 3500);
-    timersRef.set(id, timer);
-  }
+  setToastsFn((prev) => {
+    const next = [...prev, newToast];
+    // 超出上限时丢弃最旧的一条，并清掉它的计时器
+    while (next.length > MAX_TOASTS) {
+      const dropped = next.shift();
+      if (dropped) clearTimer(dropped.id);
+    }
+    return next;
+  });
+
+  const timer = setTimeout(() => scheduleRemove(id), DURATION[type] ?? 3000);
+  timersRef.set(id, timer);
 }
 
 export function ToastContainer() {
@@ -49,6 +77,12 @@ export function ToastContainer() {
       timersRef.clear();
     };
   }, []);
+
+  const dismiss = (id: number) => {
+    // 点击 × 立即移除（同时清掉自动消失的计时器）
+    clearTimer(id);
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  };
 
   const getIcon = (type: ToastType) => {
     switch (type) {
@@ -96,6 +130,17 @@ export function ToastContainer() {
         >
           {getIcon(toast.type)}
           <span className="toast-item__text">{toast.text}</span>
+          <button
+            type="button"
+            className="toast-item__close"
+            aria-label="关闭提示"
+            title="关闭"
+            onClick={() => dismiss(toast.id)}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+          </button>
         </div>
       ))}
     </div>

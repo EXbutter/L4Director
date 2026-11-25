@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { useState, useMemo, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import type { CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { useStore, getApiBase, normalizeModKey, PackData, ModData, ConflictDetail } from '../store/useStore';
@@ -13,6 +13,7 @@ import { ModSwitch } from './ModSwitch';
 import { FAVORITE_TAG, isFineTag, orderCardTags } from './MyModsPage';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { observeViewport } from '../utils/viewportObserver';
+import { clampMenuPosition } from '../utils/clampMenu';
 import './ContentArea.scss';
 import './MyModsPage.scss';
 
@@ -175,7 +176,6 @@ export function PacksPage() {
     refreshAll: s.refreshAll,
     customTags: s.customTags,
   })));
-  const [exportError, setExportError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('name-asc');
   // 排版：卡片墙 / 单列列表。和「我的 Mod」分开记，两边互不影响
@@ -224,6 +224,8 @@ export function PacksPage() {
   const [conflictDialogMod, setConflictDialogMod] = useState<string | null>(null);
   const [conflictSnapshot, setConflictSnapshot] = useState<ConflictDetail[]>([]);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  // 右键菜单夹紧后的实际坐标（量完尺寸再定位，避免右下角溢出窗口）
+  const [packMenuPos, setPackMenuPos] = useState<{ x: number; y: number } | null>(null);
 
   // 弹窗的 Esc 关闭 + Tab 焦点陷阱（与 MyModsPage 同一套，见 hooks/useModalA11y）
   const createModalRef = useModalA11y(showCreateModal, () => setShowCreateModal(false));
@@ -246,6 +248,22 @@ export function PacksPage() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // 右键菜单：量出真实尺寸后夹进视口（右下角点击不再溢出）
+  useLayoutEffect(() => {
+    if (!packContextMenu || !contextMenuRef.current) {
+      setPackMenuPos(null);
+      return;
+    }
+    const el = contextMenuRef.current;
+    const { x, y } = clampMenuPosition(
+      packContextMenu.x,
+      packContextMenu.y,
+      el.offsetWidth,
+      el.offsetHeight
+    );
+    setPackMenuPos((prev) => (prev && prev.x === x && prev.y === y ? prev : { x, y }));
+  }, [packContextMenu]);
 
   const filtered = useMemo(() => {
     let list = packs;
@@ -497,20 +515,13 @@ export function PacksPage() {
       });
   }, [mods, selectedPack, addModsSearch, getModDisplayName]);
 
-  useEffect(() => {
-    if (exportError) {
-      const timer = setTimeout(() => setExportError(null), 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [exportError]);
-
   const handleExport = useCallback(async () => {
     if (!selectedPack) return;
-    setExportError(null);
     try {
       await exportPackAsZip(selectedPack.id);
     } catch (e: any) {
-      setExportError(e?.message || '导出失败');
+      // 统一走全局 Toast（右上角），不再另写居中固定横幅
+      showToast(e?.message || '导出失败', 'error');
     }
   }, [selectedPack, exportPackAsZip]);
 
@@ -652,32 +663,6 @@ export function PacksPage() {
 
   return (
     <div className="content-area">
-      {exportError && (
-        <div className="export-error-toast" style={{
-          position: 'fixed',
-          top: '60px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          background: '#ef4444',
-          color: 'white',
-          padding: '10px 20px',
-          borderRadius: '8px',
-          fontSize: '13px',
-          fontWeight: 500,
-          zIndex: 9999,
-          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-        }}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="8" x2="12" y2="12" />
-            <line x1="12" y1="16" x2="12.01" y2="16" />
-          </svg>
-          {exportError}
-        </div>
-      )}
       <ToolBar
         searchPlaceholder="搜索整合包..."
         sortOptions={sortOptions}
@@ -1304,7 +1289,7 @@ export function PacksPage() {
         <div
           ref={contextMenuRef}
           className="context-menu show"
-          style={{ left: packContextMenu.x, top: packContextMenu.y }}
+          style={{ left: packMenuPos?.x ?? packContextMenu.x, top: packMenuPos?.y ?? packContextMenu.y }}
         >
           <div className="context-menu__header">
             <span>操作</span>

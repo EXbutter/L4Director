@@ -1,29 +1,35 @@
 .toast-container {
   position: fixed;
-  // 100px 而不是贴着底边：下方还留出「创意工坊更新」进度条的位置，
-  // 两者同时出现时上下错开，不会叠在一起
-  bottom: 100px;
-  left: 50%;
-  transform: translateX(-50%);
+  // 右上角：44px 标题栏 + 56px 工具栏之下，避开工具栏右侧的排序/视图按钮
+  top: 104px;
+  right: 20px;
+  left: auto;
+  transform: none;
   z-index: 10001;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-end;
   gap: 8px;
   pointer-events: none;
 }
 
 .toast-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
-  padding: 10px 20px;
-  border-radius: 100px;
+  padding: 11px 14px;
+  // 多行报错用 12px 圆角；100px 药丸在多行时很难看
+  border-radius: 12px;
   font-size: 13px;
   font-weight: 500;
-  white-space: nowrap;
+  // 长错误允许换行，不再 nowrap 撑成超宽溢出
+  max-width: 400px;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35), 0 1px 4px rgba(0, 0, 0, 0.25);
-  animation: toast-slide-up 0.3s ease-out;
+  animation: toast-slide-in 0.3s ease-out;
   transition: opacity 0.3s ease, transform 0.3s ease;
   pointer-events: auto;
 
@@ -47,29 +53,59 @@
     color: #fff;
   }
 
+  // 退场向右滑出 + 淡出
   &.toast-item--exiting {
     opacity: 0;
-    transform: translateY(-16px) scale(0.95);
+    transform: translateX(16px);
   }
 
   .toast-item__icon {
     width: 16px;
     height: 16px;
     flex-shrink: 0;
+    // 顶部对齐：多行文本时图标不居中悬浮
+    margin-top: 2px;
   }
 
   .toast-item__text {
-    line-height: 1;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .toast-item__close {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    margin: -1px -3px -1px 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.78);
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease;
+
+    svg {
+      width: 13px;
+      height: 13px;
+    }
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.2);
+      color: #fff;
+    }
   }
 }
 
-@keyframes toast-slide-up {
+@keyframes toast-slide-in {
   from {
     opacity: 0;
-    transform: translateY(24px) scale(0.9);
+    transform: translateX(16px);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateX(0);
   }
 }
