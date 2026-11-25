@@ -69,6 +69,7 @@
  "POST /api/mods/{mod_name}/toggle",
  "POST /api/packs",
  "POST /api/packs/export",
+ "POST /api/packs/{pack_id}/apply",
  "POST /api/packs/{pack_id}/toggle",
  "POST /api/settings/addons-path",
  "POST /api/settings/auto-detect",
