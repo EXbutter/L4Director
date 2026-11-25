@@ -9,8 +9,40 @@
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 8px;
+  // 间距交给每条 .toast-slot 的 margin，便于退场时把间距一起收掉
+  gap: 0;
   pointer-events: none;
+}
+
+/* 每条 toast 的外层「槽」：退场时把可占高度 1fr→0fr 收起，
+   下面的 toast 就会平滑地向上补位（而不是瞬间跳位）。
+   与项目既定的折叠写法一致（grid-template-rows 0fr→1fr）。 */
+.toast-slot {
+  display: grid;
+  grid-template-rows: 1fr;
+  max-width: 400px;
+  margin-bottom: 8px;
+  transition:
+    grid-template-rows 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    margin-bottom 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.toast-slot:last-child {
+  margin-bottom: 0;
+}
+
+.toast-slot--exiting {
+  grid-template-rows: 0fr;
+  margin-bottom: 0;
+}
+
+.toast-slot > .toast-item {
+  min-height: 0;
+}
+
+/* 退场时裁掉溢出的内容，配合槽收起 */
+.toast-slot--exiting > .toast-item {
+  overflow: hidden;
 }
 
 .toast-item {
@@ -53,11 +85,9 @@
     color: #fff;
   }
 
-  // 退场：用 animation（和入场对称）而不是 transition ——
-  // 全局 `* { transition: 只做颜色 }` 与 `prefers-reduced-motion` 都会让
-  // transition 版的 opacity/transform 退场失效/被压成 0，动画版更可靠。
+  // 退场只负责淡出；「收起 + 下面向上补位」由外层 .toast-slot 的 grid 折叠完成
   &.toast-item--exiting {
-    animation: toast-slide-out 0.28s ease-in forwards;
+    animation: toast-fade-out 0.24s ease-in forwards;
     pointer-events: none;
   }
 
@@ -112,13 +142,11 @@
   }
 }
 
-@keyframes toast-slide-out {
+@keyframes toast-fade-out {
   from {
     opacity: 1;
-    transform: translateX(0);
   }
   to {
     opacity: 0;
-    transform: translateX(16px);
   }
 }

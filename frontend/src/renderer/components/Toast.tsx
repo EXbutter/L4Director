@@ -126,21 +126,25 @@ export function ToastContainer() {
       {toasts.map((toast) => (
         <div
           key={toast.id}
-          className={`toast-item toast-item--${toast.type}${toast.exiting ? ' toast-item--exiting' : ''}`}
+          className={`toast-slot${toast.exiting ? ' toast-slot--exiting' : ''}`}
         >
-          {getIcon(toast.type)}
-          <span className="toast-item__text">{toast.text}</span>
-          <button
-            type="button"
-            className="toast-item__close"
-            aria-label="关闭提示"
-            title="关闭"
-            onClick={() => dismiss(toast.id)}
+          <div
+            className={`toast-item toast-item--${toast.type}${toast.exiting ? ' toast-item--exiting' : ''}`}
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <path d="M18 6L6 18M6 6l12 12" />
-            </svg>
-          </button>
+            {getIcon(toast.type)}
+            <span className="toast-item__text">{toast.text}</span>
+            <button
+              type="button"
+              className="toast-item__close"
+              aria-label="关闭提示"
+              title="关闭"
+              onClick={() => dismiss(toast.id)}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
       ))}
     </div>
