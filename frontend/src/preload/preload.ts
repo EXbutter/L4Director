@@ -16,8 +16,17 @@ export interface ImportVpkResult {
   error?: string;
 }
 
-/** 自动更新状态（字段与主进程 src/main/updater.ts 的 UpdateState 一一对应） */
-export interface UpdateState {
+/** 整合包 ZIP 导入结果（与主进程 src/main/packImport.ts 的 PackImportZipResult 对应） */
+export interface PackImportZipResult {
+  ok: boolean;
+  /** 复用拖放导入得到的结果（复制数 / 重复 / 同名冲突等） */
+  importResult?: ImportVpkResult;
+  /** 建包用的成员名：导入后确实存在于 addons 根目录的 vpk 原名 */
+  members: string[];
+  error?: string;
+}
+
+/** 自动更新状态（字段与主进程 src/main/updater.ts 的 UpdateState 一一对应） */export interface UpdateState {
   phase: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'up-to-date' | 'error' | 'unsupported';
   currentVersion: string;
   version: string;
@@ -66,6 +75,10 @@ interface ElectronAPI {
   showContextMenu: (options: any) => Promise<void>;
   onContextMenuClick: (callback: (result: { action: string; modName: string }) => void) => void;
   importDroppedVpks: (filePaths: string[], addonsPath: string) => Promise<ImportVpkResult>;
+  /** 弹出文件选择框挑一个整合包 ZIP，返回路径（取消时 canceled=true） */
+  pickPackZip: () => Promise<{ canceled: boolean; path?: string }>;
+  /** 导入整合包 ZIP：主进程解压+落盘，返回导入结果与建包成员 */
+  importPackZip: (zipPath: string, addonsPath: string) => Promise<PackImportZipResult>;
   onBackendReady: (callback: () => void) => void;
   onBackendInfo: (callback: (info: { port: number }) => void) => void;
   /** 主动查询后端实际端口（避免 push 通知在挂载前丢失） */
@@ -123,6 +136,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   importDroppedVpks: (filePaths: string[], addonsPath: string) =>
     ipcRenderer.invoke('file:importDroppedVpks', filePaths, addonsPath),
+  pickPackZip: () => ipcRenderer.invoke('packs:pickZip'),
+  importPackZip: (zipPath: string, addonsPath: string) =>
+    ipcRenderer.invoke('packs:importZip', zipPath, addonsPath),
   // 监听后端就绪事件
   onBackendReady: (callback: () => void) => {
     ipcRenderer.on('backend:ready', () => callback());

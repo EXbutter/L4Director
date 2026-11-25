@@ -5,6 +5,7 @@ import * as os from 'os';
 import { spawn, ChildProcess } from 'child_process';
 import { createZip, ZipEntry } from './zip';
 import { importDroppedVpks } from './vpkImport';
+import { importPackZip } from './packImport';
 import { initUpdater, getUpdateState, getUpdaterLogPath } from './updater';
 import { computeInitialWindow, effectiveMinSize, type SavedBounds, type WorkArea } from './windowBounds';
 
@@ -555,6 +556,23 @@ function createWindow() {
   // 实现在 vpkImport.ts：复制 vpk 的同时带上同名封面图，并按内容哈希拦掉重复 Mod。
   ipcMain.handle('file:importDroppedVpks', async (_event, filePaths: string[], addonsPath: string) => {
     return importDroppedVpks(filePaths, addonsPath);
+  });
+  // ========================================
+
+  // ============ 整合包 ZIP 导入 IPC ============
+  // 实现在 packImport.ts：解压 → 按 _name_map.json 还原原名 → 复用 importDroppedVpks。
+  ipcMain.handle('packs:pickZip', async () => {
+    if (!mainWindow) return { canceled: true };
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '导入整合包',
+      properties: ['openFile'],
+      filters: [{ name: '整合包 ZIP', extensions: ['zip'] }],
+    });
+    if (result.canceled || result.filePaths.length === 0) return { canceled: true };
+    return { canceled: false, path: result.filePaths[0] };
+  });
+  ipcMain.handle('packs:importZip', async (_event, zipPath: string, addonsPath: string) => {
+    return importPackZip(zipPath, addonsPath);
   });
   // ========================================
 

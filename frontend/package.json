@@ -84,7 +84,8 @@
   },
   "dependencies": {
     "builder-util-runtime": "^9.7.0",
-    "electron-updater": "^6.8.11"
+    "electron-updater": "^6.8.11",
+    "extract-zip": "^2.0.1"
   },
   "devDependencies": {
     "@types/react": "^18.2.48",
