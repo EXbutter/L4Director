@@ -220,8 +220,6 @@ export function PacksPage() {
   const [importingZip, setImportingZip] = useState(false);
   // 描述草稿（详情页 inline 编辑，失焦保存）
   const [descDraft, setDescDraft] = useState('');
-  // 连点「启用/禁用」时：记一个「结束后再切换一次」的标记（方向由后端决定，无需前端记目标值）
-  const queuedPackAgainRef = useRef(false);
   // 冲突详情弹窗
   const [conflictDialogMod, setConflictDialogMod] = useState<string | null>(null);
   const [conflictSnapshot, setConflictSnapshot] = useState<ConflictDetail[]>([]);
@@ -454,10 +452,6 @@ export function PacksPage() {
     return new Set((selectedPack?.disabledMembers || []).map((n) => normalizeModKey(n)));
   }, [selectedPack?.disabledMembers]);
 
-  // 整包「启用/禁用」开关：由包内 Mod 的真实状态推导。
-  // 以前是本地 useState(true)，打开一个 Mod 全是禁用状态的整合包也会显示成「启用」。
-  const toggleOn = packMods.length > 0 && packMods.every((m) => m.enabled);
-
   // 筛选用的计数（始终按整合包的完整成员统计，不受当前筛选影响）
   const packStats = useMemo(() => {
     let enabled = 0;
@@ -630,53 +624,6 @@ export function PacksPage() {
     }
   };
 
-  const runPackToggle = async (packId: string) => {
-    setTogglingPack(true);
-    try {
-      // 不传方向：由后端按成员的真实状态决定（前端不再自己猜，避免算错导致「点了没反应」）
-      const result = await enablePackMods(packId);
-      if (result === null) {
-        showToast('整合包切换失败', 'error');
-      } else {
-        const label = result.enable ? '启用' : '禁用';
-        if (result.missing.length > 0) {
-          showToast(
-            `已${label} ${result.changed} 个，另有 ${result.missing.length} 个成员在磁盘上找不到对应文件`,
-            'warning'
-          );
-        } else {
-          showToast(`已${label}整合包中的 ${result.changed} 个 Mod`, 'success');
-        }
-      }
-    } finally {
-      setTogglingPack(false);
-    }
-  };
-
-  const handleTogglePack = async () => {
-    // 注意：不能用 packMods.length 判断空包 —— mods 列表还没加载完时会被误判成「空包」。
-    // 这里只看整合包自己的成员数量，并且给用户明确反馈（不再静默 return）。
-    if (!selectedPack) return;
-    if (selectedPack.modNames.length === 0) {
-      showToast('这个整合包里还没有 Mod', 'warning');
-      return;
-    }
-    const packId = selectedPack.id;
-
-    if (togglingPack) {
-      // 正在执行中再次点击：打标记，等当前这次结束再切换一轮（连点不会丢操作）
-      queuedPackAgainRef.current = true;
-      return;
-    }
-
-    await runPackToggle(packId);
-
-    if (queuedPackAgainRef.current) {
-      queuedPackAgainRef.current = false;
-      await runPackToggle(packId);
-    }
-  };
-
   const openAddModsModal = () => {
     setAddModsSearch('');
     setSelectedAddMods(new Set());
@@ -742,11 +689,15 @@ export function PacksPage() {
         onViewModeChange={changeViewMode}
       />
       
-      <div className="packs-header">
-        <h2 className="packs-title">整合包列表</h2>
-        <div className="packs-header__actions">
+      <div className="packs-pagebar">
+        <div className="packs-pagebar__intro">
+          <div className="packs-kicker">Library</div>
+          <h1 className="packs-pagebar__title">整合包</h1>
+          <p className="packs-pagebar__sub">把一组 Mod 存成场景，一键切换整套启停</p>
+        </div>
+        <div className="packs-pagebar__acts">
           <button
-            className="packs-import-btn"
+            className="packs-btn-ghost"
             onClick={openImportModal}
             title={
               enabledMods.length > 0
@@ -761,11 +712,11 @@ export function PacksPage() {
             </svg>
             导入已启用 Mod
             {enabledMods.length > 0 && (
-              <span className="packs-import-btn__count">{enabledMods.length}</span>
+              <span className="packs-btn-ghost__badge">{enabledMods.length}</span>
             )}
           </button>
           <button
-            className="packs-import-btn"
+            className="packs-btn-ghost"
             onClick={handleImportZip}
             disabled={importingZip}
             title="从 .zip 整合包文件导入（「导出整合包」得到的 ZIP 可直接导回）"
@@ -777,7 +728,7 @@ export function PacksPage() {
             </svg>
             {importingZip ? '导入中…' : '导入整合包'}
           </button>
-          <button className="packs-create-btn" onClick={() => setShowCreateModal(true)}>
+          <button className="packs-btn-primary" onClick={() => setShowCreateModal(true)}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M12 5v14M5 12h14" />
             </svg>
@@ -788,49 +739,120 @@ export function PacksPage() {
 
       {selectedPack ? (
         <div className="pack-detail">
-          <div className="pack-detail-header">
-            <button className="pack-detail-back" onClick={() => selectPack(null)} title="返回整合包列表">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
-            <div className="pack-detail-info">
-              <h3>{selectedPack.name}</h3>
-              <input
-                className="pack-detail-desc"
-                type="text"
-                placeholder="添加描述…"
-                value={descDraft}
-                onChange={(e) => setDescDraft(e.target.value)}
-                onBlur={handleDescriptionBlur}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
-                }}
-              />
-              <span>
-                {packMods.length} 个 Mod · 启用 {packStats.enabled}/{packMods.length}
-                {missingMembers.length > 0 && ` · ${missingMembers.length} 个失效`}
-                {filteredPackMods.length !== packMods.length && ` · 已筛出 ${filteredPackMods.length} 个`}
-              </span>
-            </div>
-            <div className="pack-detail-primary">
-              <label className="pack-apply-opt" title="勾选后，应用本包时会把本包以外的 Mod 一并关闭">
-                <input
-                  type="checkbox"
-                  checked={disableOthers}
-                  onChange={(e) => setDisableOthers(e.target.checked)}
-                />
-                同时关闭本包以外的 Mod
-              </label>
-              <button
-                type="button"
-                className="pack-apply-btn"
-                onClick={handleApplyPack}
-                disabled={applyingPack || selectedPack.modNames.length === 0}
-                title={selectedPack.modNames.length === 0 ? '整合包为空' : '按本包目标启停恢复'}
-              >
-                {applyingPack ? '应用中…' : '应用此整合包'}
+          <div className="packs-hero">
+            <div className="packs-hero__main">
+              <button className="packs-hero__back" onClick={() => selectPack(null)} title="返回整合包列表">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M15 19l-7-7 7-7" />
+                </svg>
               </button>
+              <div className="packs-hero__cover">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+                  <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" />
+                  <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                  <line x1="12" y1="22.08" x2="12" y2="12" />
+                </svg>
+              </div>
+              <div className="packs-hero__id">
+                <div className="packs-hero__row">
+                  <h2 className="packs-hero__name">{selectedPack.name}</h2>
+                  {packMods.length === 0 ? (
+                    <span className="packs-pill packs-pill--empty"><i />空整合包</span>
+                  ) : packStats.enabled === packMods.length ? (
+                    <span className="packs-pill packs-pill--ok"><i />全部启用</span>
+                  ) : packStats.enabled === 0 ? (
+                    <span className="packs-pill packs-pill--off"><i />全部禁用</span>
+                  ) : (
+                    <span className="packs-pill packs-pill--partial"><i />部分启用</span>
+                  )}
+                </div>
+                <div className="packs-hero__sub">
+                  <span>{packMods.length} 个 Mod</span>
+                  <span className="packs-hero__dot" />
+                  <input
+                    className="pack-detail-desc"
+                    type="text"
+                    placeholder="点击添加描述…"
+                    value={descDraft}
+                    onChange={(e) => setDescDraft(e.target.value)}
+                    onBlur={handleDescriptionBlur}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
+                    }}
+                  />
+                </div>
+                <div className="packs-hero__chips">
+                  <span className="packs-stat packs-stat--ok"><i />已启用 <b>{packStats.enabled}</b></span>
+                  <span className="packs-stat packs-stat--off"><i />已禁用 <b>{packStats.disabled}</b></span>
+                  <span className={`packs-stat packs-stat--warn${packStats.conflict === 0 ? ' packs-stat--zero' : ''}`}><i />冲突 <b>{packStats.conflict}</b></span>
+                  {missingMembers.length > 0 && (
+                    <span className="packs-stat packs-stat--missing"><i />失效 <b>{missingMembers.length}</b></span>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="packs-hero__side">
+              <div className="packs-side-top">
+                <label className="packs-switchline" title="勾选后，应用本包时会把本包以外的 Mod 一并关闭">
+                  <input
+                    type="checkbox"
+                    className="packs-switchline__input"
+                    checked={disableOthers}
+                    onChange={(e) => setDisableOthers(e.target.checked)}
+                  />
+                  <span className="packs-switchline__track" />
+                  同时关闭本包以外
+                </label>
+                <button
+                  type="button"
+                  className="packs-apply-btn"
+                  onClick={handleApplyPack}
+                  disabled={applyingPack || selectedPack.modNames.length === 0}
+                  title={selectedPack.modNames.length === 0 ? '整合包为空' : '按本包目标启停恢复'}
+                >
+                  <svg viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                    <path d="M6 4l14 8-14 8V4z" />
+                  </svg>
+                  {applyingPack ? '应用中…' : '应用此整合包'}
+                </button>
+              </div>
+              <div className="packs-side-tools">
+                <button type="button" className="packs-iconbtn" onClick={handleUpdateSnapshot} title="从当前启停状态更新本包">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" />
+                    <polyline points="17 21 17 13 7 13 7 21" />
+                    <polyline points="7 3 7 8 15 8" />
+                  </svg>
+                </button>
+                <button type="button" className="packs-iconbtn" title="添加 Mod 到整合包" onClick={openAddModsModal}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                </button>
+                <button type="button" className="packs-iconbtn" title="导出 ZIP" onClick={handleExport}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                  </svg>
+                </button>
+                <div className="packs-seg">
+                  <button
+                    type="button"
+                    className={`packs-seg__item${packMods.length > 0 && packStats.enabled === packMods.length ? ' packs-seg__item--on' : ''}`}
+                    onClick={() => runPackBulk(true)}
+                    disabled={togglingPack || selectedPack.modNames.length === 0}
+                  >
+                    全部启用
+                  </button>
+                  <button
+                    type="button"
+                    className={`packs-seg__item${packMods.length > 0 && packStats.enabled === 0 ? ' packs-seg__item--on' : ''}`}
+                    onClick={() => runPackBulk(false)}
+                    disabled={togglingPack || selectedPack.modNames.length === 0}
+                  >
+                    全部禁用
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -848,102 +870,56 @@ export function PacksPage() {
               </button>
             </div>
           )}
-
-          <div className="pack-detail-toolrow">
-            <button
-              type="button"
-              className="pack-detail-secondary"
-              onClick={handleUpdateSnapshot}
-              title="把成员里当前禁用状态记入本包"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" />
-                <polyline points="17 21 17 13 7 13 7 21" />
-                <polyline points="7 3 7 8 15 8" />
-              </svg>
-              从当前启停状态更新本包
-            </button>
-            <div className="pack-detail-toolrow__spacer" />
-            <button className="pack-detail-action" title="添加 Mod 到整合包" onClick={openAddModsModal}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-            </button>
-            <button className="pack-detail-action pack-detail-action--export" title="导出 ZIP" onClick={handleExport}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              className="pack-bulk-btn"
-              onClick={() => runPackBulk(true)}
-              disabled={togglingPack || selectedPack.modNames.length === 0}
-            >
-              全部启用
-            </button>
-            <button
-              type="button"
-              className="pack-bulk-btn"
-              onClick={() => runPackBulk(false)}
-              disabled={togglingPack || selectedPack.modNames.length === 0}
-            >
-              全部禁用
-            </button>
-          </div>
           
           {/* 包内 Mod 筛选：搜索 + 启用状态（口径和「我的 Mod」页面一致） */}
-          <div className="pack-filters">
-            <div className="pack-filters__search">
-              <svg className="pack-filters__search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <div className="packs-filterbar">
+            <div className="packs-search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <circle cx="11" cy="11" r="8" />
                 <path d="M21 21l-4.35-4.35" />
               </svg>
               <input
                 type="text"
-                className="pack-filters__input"
                 placeholder="在整合包内搜索 Mod..."
                 value={packModSearch}
                 onChange={(e) => setPackModSearch(e.target.value)}
               />
               {packModSearch && (
-                <button className="pack-filters__clear" title="清空" onClick={() => setPackModSearch('')}>
+                <button className="packs-search__clear" title="清空" onClick={() => setPackModSearch('')}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M18 6L6 18M6 6l12 12" />
                   </svg>
                 </button>
               )}
             </div>
-            <div className="pack-filters__tabs">
+            <div className="packs-tabs">
               <button
-                className={`pack-filters__tab ${packStatusFilter === 'all' ? 'active' : ''}`}
+                className={`packs-tab${packStatusFilter === 'all' ? ' packs-tab--active' : ''}`}
                 onClick={() => setPackStatusFilter('all')}
               >
-                全部
-                <span className="pack-filters__count">{packStats.all}</span>
+                全部 <b>{packStats.all}</b>
               </button>
               <button
-                className={`pack-filters__tab pack-filters__tab--enabled ${packStatusFilter === 'enabled' ? 'active' : ''}`}
+                className={`packs-tab packs-tab--ok${packStatusFilter === 'enabled' ? ' packs-tab--active' : ''}`}
                 onClick={() => setPackStatusFilter(packStatusFilter === 'enabled' ? 'all' : 'enabled')}
               >
-                ✅ 已启用
-                <span className="pack-filters__count">{packStats.enabled}</span>
+                <i />已启用 <b>{packStats.enabled}</b>
               </button>
               <button
-                className={`pack-filters__tab pack-filters__tab--disabled ${packStatusFilter === 'disabled' ? 'active' : ''}`}
+                className={`packs-tab packs-tab--off${packStatusFilter === 'disabled' ? ' packs-tab--active' : ''}`}
                 onClick={() => setPackStatusFilter(packStatusFilter === 'disabled' ? 'all' : 'disabled')}
               >
-                🚫 已禁用
-                <span className="pack-filters__count">{packStats.disabled}</span>
+                <i />已禁用 <b>{packStats.disabled}</b>
               </button>
               <button
-                className={`pack-filters__tab pack-filters__tab--conflict ${packStatusFilter === 'conflict' ? 'active' : ''}`}
+                className={`packs-tab packs-tab--warn${packStatusFilter === 'conflict' ? ' packs-tab--active' : ''}`}
                 onClick={() => setPackStatusFilter(packStatusFilter === 'conflict' ? 'all' : 'conflict')}
               >
-                ⚠️ 冲突
-                <span className="pack-filters__count">{packStats.conflict}</span>
+                <i />冲突 <b>{packStats.conflict}</b>
               </button>
             </div>
+            <div className="packs-filterbar__spacer" />
+            <span className="packs-count">筛出 {filteredPackMods.length} / {packMods.length}</span>
           </div>
 
           <div className={`my-mods-grid pack-detail-grid ${viewMode === 'list' ? 'my-mods-grid--list' : ''}`}>
