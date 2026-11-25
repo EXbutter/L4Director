@@ -79,9 +79,9 @@ export function ToastContainer() {
   }, []);
 
   const dismiss = (id: number) => {
-    // 点击 × 立即移除（同时清掉自动消失的计时器）
-    clearTimer(id);
-    setToasts((prev) => prev.filter((t) => t.id !== id));
+    // 点击 ×：走和自动超时同一套「先标 exiting 播退场动画、300ms 后再移除」，
+    // 不再直接 filter 掉（那样会瞬间消失、没有退场动画）。
+    scheduleRemove(id);
   };
 
   const getIcon = (type: ToastType) => {
