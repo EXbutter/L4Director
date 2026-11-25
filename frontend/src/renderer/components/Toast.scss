@@ -9,7 +9,9 @@
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 8px;
+  // 间距交给每条 .toast-item 的 margin-bottom，退出折叠时一起收到 0，
+  // 下面的 toast 就能连续上移补位（不留空档）。
+  gap: 0;
   pointer-events: none;
 }
 
@@ -17,7 +19,12 @@
   display: flex;
   align-items: flex-start;
   gap: 8px;
+  margin-bottom: 8px;
   padding: 11px 14px;
+  // 关键：flex 子项默认 min-height:auto 会被内容高度卡住，
+  // 导致退场 height:0 收不干净（最后一段突然消失=你看到的“弹动”）。
+  // 置 0 才能让折叠真正收到 0，下面连续上移。
+  min-height: 0;
   // 多行报错用 12px 圆角；100px 药丸在多行时很难看
   border-radius: 12px;
   font-size: 13px;
@@ -31,6 +38,10 @@
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35), 0 1px 4px rgba(0, 0, 0, 0.25);
   animation: toast-slide-in 0.28s ease-out;
   pointer-events: auto;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
 
   &.toast-item--success {
     background: linear-gradient(135deg, #22c55e, #16a34a);
@@ -52,10 +63,10 @@
     color: #fff;
   }
 
-  // 退场只负责淡出；「剩余项向上补位」由 Toast.tsx 的 FLIP（transform）完成，
-  // 不改变布局高度，因此不同 toast 之间不会重叠。
+  // 退场：高度折叠由 Toast.tsx 内联 transition 控制；这里停掉入场动画并裁切内容
   &.toast-item--exiting {
-    animation: toast-fade-out 0.24s ease-in forwards;
+    animation: none;
+    overflow: hidden;
     pointer-events: none;
   }
 
@@ -107,14 +118,5 @@
   to {
     opacity: 1;
     transform: translateX(0);
-  }
-}
-
-@keyframes toast-fade-out {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0;
   }
 }

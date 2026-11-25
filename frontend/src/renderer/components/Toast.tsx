@@ -21,8 +21,8 @@ const DURATION: Record<ToastType, number> = {
   error: 6500,
 };
 
-/** 退场淡出时长 & 移除延迟（延迟略大于淡出，保证动画播完再拔 DOM） */
-const EXIT_FADE_MS = 240;
+/** 退场折叠时长 & 移除延迟（延迟略大于折叠，保证收完再拔 DOM，末帧不跳） */
+const EXIT_COLLAPSE_MS = 280;
 const EXIT_REMOVE_MS = 300;
 
 // 全局 Toast 管理
@@ -38,7 +38,7 @@ function clearTimer(id: number) {
   }
 }
 
-/** 退场：先标记 exiting 触发淡出，延迟后真正从列表移除 */
+/** 退场：先标记 exiting（触发高度折叠动画），延迟后真正从列表移除 */
 function scheduleRemove(id: number) {
   clearTimer(id);
   setToastsFn?.((prev) => prev.map((t) => (t.id === id ? { ...t, exiting: true } : t)));
@@ -57,7 +57,6 @@ export function showToast(text: string, type: ToastType = 'info') {
 
   setToastsFn((prev) => {
     const next = [...prev, newToast];
-    // 超出上限时丢弃最旧的一条，并清掉它的计时器
     while (next.length > MAX_TOASTS) {
       const dropped = next.shift();
       if (dropped) clearTimer(dropped.id);
@@ -71,9 +70,7 @@ export function showToast(text: string, type: ToastType = 'info') {
 
 export function ToastContainer() {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  // FLIP：记录每个 toast 的 DOM 节点与上一帧位置
   const nodesRef = useRef<Map<number, HTMLElement>>(new Map());
-  const prevRectsRef = useRef<Map<number, DOMRect>>(new Map());
 
   useEffect(() => {
     setToastsFn = setToasts;
@@ -84,37 +81,37 @@ export function ToastContainer() {
     };
   }, []);
 
-  // FLIP：某条 toast 被移除后，让「剩下的 toast」从旧位置平滑向上补位。
-  // 用 transform 位移做动画，不改变布局高度，所以绝不会互相重叠。
+  // 退场折叠：把「正在退出」的那条自身高度从实测像素收到 0。
+  // 高度是真实布局高度，父容器是 flex 列 —— 它每帧变矮，下面的 toast 就自然、
+  // 连续地向上补位；不使用 transform 位移，因此不会出现「整列弹动」或互相重叠。
   useLayoutEffect(() => {
-    const nextRects = new Map<number, DOMRect>();
-    nodesRef.current.forEach((el, id) => nextRects.set(id, el.getBoundingClientRect()));
-
     nodesRef.current.forEach((el, id) => {
-      const prev = prevRectsRef.current.get(id);
-      const cur = nextRects.get(id);
-      if (!prev || !cur) return; // 新出现的 toast 不做 FLIP
-      const dy = prev.top - cur.top;
-      if (Math.abs(dy) < 1) return; // 位置没变就不动
-      // 先瞬移到旧位置，再过渡回新位置（向上补位）
-      el.style.transition = 'none';
-      el.style.transform = `translateY(${dy}px)`;
-      void el.offsetHeight; // 强制重排，确保上面这帧生效
-      el.style.transition = 'transform 0.26s cubic-bezier(0.22, 1, 0.36, 1)';
-      el.style.transform = 'translateY(0)';
-      const done = () => {
-        el.style.transition = '';
-        el.style.transform = '';
-        el.removeEventListener('transitionend', done);
-      };
-      el.addEventListener('transitionend', done);
-    });
+      const t = toasts.find((x) => x.id === id);
+      if (!t || !t.exiting) return;
+      if ((el as HTMLElement).dataset.collapsing === '1') return;
+      (el as HTMLElement).dataset.collapsing = '1';
 
-    prevRectsRef.current = nextRects;
+      const h = el.offsetHeight;
+      // 先钉住当前高度，下一帧再收到 0，height: auto → 0 无法过渡
+      el.style.height = `${h}px`;
+      el.style.overflow = 'hidden';
+      void el.offsetHeight; // 强制重排，确保起始帧生效
+      el.style.transition =
+        `height ${EXIT_COLLAPSE_MS}ms cubic-bezier(0.22, 1, 0.36, 1), ` +
+        `padding-top ${EXIT_COLLAPSE_MS}ms cubic-bezier(0.22, 1, 0.36, 1), ` +
+        `padding-bottom ${EXIT_COLLAPSE_MS}ms cubic-bezier(0.22, 1, 0.36, 1), ` +
+        `margin-bottom ${EXIT_COLLAPSE_MS}ms cubic-bezier(0.22, 1, 0.36, 1), ` +
+        `opacity 200ms ease-in`;
+      el.style.height = '0px';
+      el.style.marginBottom = '0px';
+      el.style.paddingTop = '0px';
+      el.style.paddingBottom = '0px';
+      el.style.opacity = '0';
+    });
   }, [toasts]);
 
   const dismiss = (id: number) => {
-    // 点击 ×：走和自动超时同一套退场（淡出 + 移除后剩余项平滑上移）
+    // 点击 ×：和自动超时同一套（折叠退场）
     scheduleRemove(id);
   };
 
