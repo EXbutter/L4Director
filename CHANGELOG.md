@@ -24,6 +24,7 @@
 - 新增 `backend/tests/test_packs.py`（25 用例，覆盖数据模型容错、`update_pack`、apply 一次写盘、toggle 兼容）、`scripts/verify_packs.py`（38 断言、自包含）、`frontend/tests/packImport.test.ts`（8 用例，覆盖 `_name_map` 往返 / 判重 / zip-slip / 符号链接拒绝）；`backend/tests/routes_snapshot.json` 同步新增路由。
 - 后端 pytest **177**、前端 vitest **75** 全绿；`npm run build`（含 build:main）通过。
 - 新增运行时依赖 `extract-zip@^2.0.1`（主进程解压整合包 ZIP）。
+- 修复 `ld.ps1` 在 Windows PowerShell 5.1 下因「无 BOM 的 UTF-8 中文注释」导致的解析报错（`.\ld run` 无法启动）：脚本改为 UTF-8 with BOM。
 
 ## v1.3.5 — 2026-11-25
 
