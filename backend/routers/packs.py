@@ -12,18 +12,43 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 
 import app_state
 from services.data_store import (
-    add_mod_to_pack,
-    add_mods_to_pack,
     add_pack,
     delete_pack,
     get_packs,
-    remove_mod_from_pack,
-    remove_mods_from_pack,
-    rename_pack,
+    update_pack,
 )
 from services.game_process import mark_pending_reapply_if_game_running
 
 router = APIRouter()
+
+
+def _pack_payload(p) -> dict:
+    """整合包的统一返回结构（GET 列表 / 创建 / 更新共用）。"""
+    return {
+        "id": p.id,
+        "name": p.name,
+        "mod_ids": p.mod_ids,
+        "disabled_members": p.disabled_members,
+        "description": p.description,
+        "cover_mod": p.cover_mod,
+        "created_at": p.created_at,
+        "updated_at": p.updated_at,
+    }
+
+
+def _member_norm(name: str) -> str:
+    """成员名归一化：与 data_store / mod_scanner 的 _normalize_mod_key 一致。
+
+    只用于「disabled_members 是否命中成员」的比对，兼容历史写法
+    （`mod-xxx.vpk` / 缺扩展名 / 大小写 / 带目录）。
+    """
+    n = str(name or '').strip().replace('\\', '/')
+    n = n.rsplit('/', 1)[-1]
+    if n.lower().startswith('mod-'):
+        n = n[4:]
+    if n.lower().endswith('.vpk'):
+        n = n[:-4]
+    return n.lower()
 
 @router.post("/api/packs/export")
 def export_pack(data: dict):
@@ -168,13 +193,7 @@ def list_packs():
     packs = get_packs()
     return {
         "count": len(packs),
-        "packs": [{
-            "id": p.id,
-            "name": p.name,
-            "mod_ids": p.mod_ids,
-            "created_at": p.created_at,
-            "updated_at": p.updated_at,
-        } for p in packs]
+        "packs": [_pack_payload(p) for p in packs],
     }
 
 
@@ -191,16 +210,7 @@ def create_pack(data: dict):
     raw_mods = data.get("mod_ids")
     mod_ids = [str(m) for m in raw_mods] if isinstance(raw_mods, list) else None
     pack = add_pack(name, mod_ids)
-    return {
-        "status": "ok",
-        "pack": {
-            "id": pack.id,
-            "name": pack.name,
-            "mod_ids": pack.mod_ids,
-            "created_at": pack.created_at,
-            "updated_at": pack.updated_at,
-        }
-    }
+    return {"status": "ok", "pack": _pack_payload(pack)}
 
 
 @router.delete("/api/packs/{pack_id}")
@@ -213,42 +223,43 @@ def delete_pack_api(pack_id: str):
 
 
 @router.put("/api/packs/{pack_id}")
-def update_pack(pack_id: str, data: dict):
-    """更新整合包（重命名或修改内容）"""
-    # Check rename
+def update_pack_api(pack_id: str, data: dict):
+    """更新整合包（改名 / 整体替换成员 / 增删成员 / 启停快照 / 描述 / 封面）。
+
+    所有字段合并成**一次**原子写盘（见 data_store.update_pack），中途不会留下
+    「名字改了、成员没改完」的半截状态。字段全部可选：
+      - name?: str
+      - mod_ids?: string[]     整体替换成员（规范去重、保序）
+      - add_mods? / remove_mods? / add_mod? / remove_mod?   增量增删
+      - disabled_members?: string[]   本包内目标禁用（自动收敛为成员子集）
+      - description?: str
+      - cover_mod?: string|null       传 null 清空（回到默认封面）
+    """
+    kwargs = {}
     if "name" in data:
-        new_name = data["name"].strip()
-        if new_name:
-            if not rename_pack(pack_id, new_name):
-                raise HTTPException(status_code=404, detail="整合包未找到")
-
-    # Check add/remove mods
-    # 同时支持单个与批量：批量走 *_mods 数组，只写一次盘（避免逐个请求导致
-    # 界面停在「只加进去一部分」的中间状态）
+        kwargs["name"] = data["name"]
+    if isinstance(data.get("mod_ids"), list):
+        kwargs["mod_ids"] = [str(m) for m in data["mod_ids"]]
     if isinstance(data.get("add_mods"), list):
-        add_mods_to_pack(pack_id, [str(m) for m in data["add_mods"]])
+        kwargs["add_mods"] = [str(m) for m in data["add_mods"]]
     if isinstance(data.get("remove_mods"), list):
-        remove_mods_from_pack(pack_id, [str(m) for m in data["remove_mods"]])
+        kwargs["remove_mods"] = [str(m) for m in data["remove_mods"]]
     if "add_mod" in data:
-        add_mod_to_pack(pack_id, data["add_mod"])
+        kwargs["add_mod"] = data["add_mod"]
     if "remove_mod" in data:
-        remove_mod_from_pack(pack_id, data["remove_mod"])
+        kwargs["remove_mod"] = data["remove_mod"]
+    if isinstance(data.get("disabled_members"), list):
+        kwargs["disabled_members"] = [str(m) for m in data["disabled_members"]]
+    if "description" in data:
+        kwargs["description"] = data["description"]
+    if "cover_mod" in data:
+        # 显式 null = 清空封面；这里必须把 None 传下去（不能当成「没传」）
+        kwargs["cover_mod"] = data["cover_mod"]
 
-    # Return updated pack
-    packs = get_packs()
-    pack = next((p for p in packs if p.id == pack_id), None)
-    if not pack:
+    pack = update_pack(pack_id, **kwargs)
+    if pack is None:
         raise HTTPException(status_code=404, detail="整合包未找到")
-    return {
-        "status": "ok",
-        "pack": {
-            "id": pack.id,
-            "name": pack.name,
-            "mod_ids": pack.mod_ids,
-            "created_at": pack.created_at,
-            "updated_at": pack.updated_at,
-        }
-    }
+    return {"status": "ok", "pack": _pack_payload(pack)}
 
 
 # ===== 整合包批量启用/禁用 API =====
@@ -287,4 +298,70 @@ def toggle_pack(pack_id: str, data: dict):
         # 实际生效的「成员名 -> 启用状态」：前端用它做局部更新，
         # 从而不需要在每次启停后重新扫描一遍全部 Mod
         "updated": result.get("updated", {}),
+    }
+
+
+# ===== 应用整合包（场景切换）：按本包目标启停精确恢复 =====
+
+
+@router.post("/api/packs/{pack_id}/apply")
+def apply_pack(pack_id: str, data: dict):
+    """应用此整合包：按本包记录的目标启停精确恢复每个成员的状态。
+
+    与 `toggle`（整包全开/全关）不同，这里每个成员的目标状态可以不同：
+    在 `disabled_members` 里的置 False，其余成员置 True。
+    `disable_others=True` 时，还会把「当前启用但不在本包成员里」的 Mod 一并关掉 ——
+    这样从「射击包」切到「近战包」时，上一个包的角色替换不会残留在外面互相覆盖。
+
+    关键点：所有目标状态**一次性**交给 `scanner.set_mods_states()`，只读写一次
+    addonlist.txt（绝不循环 toggle / 多次写文件），随后按需打「游戏退出后重新应用」标记。
+    返回 `{status, enable_map, changed, missing, outside_disabled}`。
+    """
+    packs = get_packs()
+    pack = next((p for p in packs if p.id == pack_id), None)
+    if not pack:
+        raise HTTPException(status_code=404, detail="整合包未找到")
+
+    disable_others = bool((data or {}).get("disable_others", False))
+
+    members = list(pack.mod_ids or [])
+    disabled_exact = set(pack.disabled_members or [])
+    disabled_norm = {_member_norm(m) for m in (pack.disabled_members or [])}
+
+    targets: dict[str, bool] = {}
+    for member in members:
+        is_disabled = (member in disabled_exact) or (_member_norm(member) in disabled_norm)
+        targets[member] = not is_disabled
+
+    outside_candidates: list[str] = []
+    if disable_others:
+        member_set = set(members)
+        member_norm = {_member_norm(m) for m in members}
+        try:
+            all_mods = app_state.scanner.scan_mods()
+        except Exception as e:
+            print(f"[Packs] apply: 扫描全部 Mod 失败（跳过包外禁用）：{e}")
+            all_mods = []
+        for mod in all_mods:
+            name = mod.name
+            if name in member_set or _member_norm(name) in member_norm:
+                continue
+            if getattr(mod, "enabled", False):
+                targets[name] = False
+                outside_candidates.append(name)
+
+    result = app_state.scanner.set_mods_states(targets)
+    # 游戏运行期间改启停会被游戏退出时写回的内存状态覆盖：标记一下，退出后以软件设置为准重写
+    mark_pending_reapply_if_game_running()
+
+    updated = result.get("updated", {}) or {}
+    # 只有真正写进 addonlist 的包外项才算「已关闭」（missing 的不算）
+    outside_disabled = [n for n in outside_candidates if n in updated]
+
+    return {
+        "status": "ok",
+        "enable_map": updated,
+        "changed": result.get("changed", 0),
+        "missing": result.get("missing", []),
+        "outside_disabled": outside_disabled,
     }
