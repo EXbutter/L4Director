@@ -141,6 +141,11 @@ export function PacksPage() {
     toggleMod,
     enablePackMods,
     exportPackAsZip,
+    applyPack,
+    updatePackSnapshot,
+    removeMissingMembers,
+    setPackDescription,
+    importPack,
     packContextMenu,
     setPackContextMenu,
     getModDisplayName,
@@ -159,6 +164,11 @@ export function PacksPage() {
     toggleMod: s.toggleMod,
     enablePackMods: s.enablePackMods,
     exportPackAsZip: s.exportPackAsZip,
+    applyPack: s.applyPack,
+    updatePackSnapshot: s.updatePackSnapshot,
+    removeMissingMembers: s.removeMissingMembers,
+    setPackDescription: s.setPackDescription,
+    importPack: s.importPack,
     packContextMenu: s.packContextMenu,
     setPackContextMenu: s.setPackContextMenu,
     getModDisplayName: s.getModDisplayName,
@@ -201,6 +211,15 @@ export function PacksPage() {
   const [addModsSearch, setAddModsSearch] = useState('');
   const [selectedAddMods, setSelectedAddMods] = useState<Set<string>>(new Set());
   const [togglingPack, setTogglingPack] = useState(false);
+  // 「应用此整合包」：是否同时关闭包外 Mod（默认关）+ 执行中标记
+  const [disableOthers, setDisableOthers] = useState(false);
+  const [applyingPack, setApplyingPack] = useState(false);
+  // 新建 / 导入弹窗：保存当前启停状态（默认开）
+  const [saveSnapshot, setSaveSnapshot] = useState(true);
+  // 导入整合包 ZIP 执行中
+  const [importingZip, setImportingZip] = useState(false);
+  // 描述草稿（详情页 inline 编辑，失焦保存）
+  const [descDraft, setDescDraft] = useState('');
   // 连点「启用/禁用」时：记一个「结束后再切换一次」的标记（方向由后端决定，无需前端记目标值）
   const queuedPackAgainRef = useRef(false);
   // 冲突详情弹窗
@@ -256,11 +275,13 @@ export function PacksPage() {
     return list;
   }, [search, sortBy, packs]);
 
-  const handleCreatePack = () => {
-    if (newPackName.trim()) {
-      createPack(newPackName.trim());
-      setNewPackName('');
-      setShowCreateModal(false);
+  const handleCreatePack = async () => {
+    if (!newPackName.trim()) return;
+    const created = await createPack(newPackName.trim());
+    setNewPackName('');
+    setShowCreateModal(false);
+    if (created && saveSnapshot && created.modNames.length > 0) {
+      await updatePackSnapshot(created.id);
     }
   };
 
@@ -300,6 +321,10 @@ export function PacksPage() {
       showToast(`已创建「${created.name}」，包含 ${created.modNames.length} 个 Mod`, 'success');
       // 直接进详情页：省得用户建完之后还要在列表里再找一遍
       selectPack(created);
+      // 按需保存当前启停状态（导入的都是已启用 Mod，通常为空快照）
+      if (saveSnapshot && created.modNames.length > 0) {
+        await updatePackSnapshot(created.id);
+      }
     } finally {
       setImporting(false);
     }
@@ -339,16 +364,56 @@ export function PacksPage() {
     setPackContextMenu(null);
   };
 
+  // mods 的归一化索引：成员匹配（含 coverMod / 失效判断）统一走 normalizeModKey
+  const modsByKey = useMemo(() => {
+    const map = new Map<string, ModData>();
+    for (const m of mods) {
+      const k = normalizeModKey(m.name);
+      if (!map.has(k)) map.set(k, m);
+    }
+    return map;
+  }, [mods]);
+
   const getPackCoverMod = useCallback((pack: PackData): ModData | null => {
+    // 1) 优先用钉住的封面（coverMod）
+    if (pack.coverMod) {
+      const pinned = modsByKey.get(normalizeModKey(pack.coverMod));
+      if (pinned) return pinned;
+    }
     if (pack.modNames.length === 0) return null;
-    // 从后往前找最后一个「仍然存在」的 Mod 作为封面：
-    // 直接取最后一个时，一旦它被删除，整张卡片就再没有封面了
+    // 2) 否则从后往前找最后一个「仍然存在」的 Mod 作为封面：
+    //    直接取最后一个时，一旦它被删除，整张卡片就再没有封面了
     for (let i = pack.modNames.length - 1; i >= 0; i -= 1) {
-      const found = mods.find((m) => m.name === pack.modNames[i]);
+      const found = modsByKey.get(normalizeModKey(pack.modNames[i]));
       if (found) return found;
     }
     return null;
-  }, [mods]);
+  }, [modsByKey]);
+
+  // 单个整合包的派生统计：总数 / 存在数 / 启用数 / 冲突数 / 失效数
+  const deriveStats = useCallback((pack: PackData) => {
+    let present = 0;
+    let enabled = 0;
+    let conflict = 0;
+    let missing = 0;
+    const seen = new Set<string>();
+    for (const name of pack.modNames) {
+      const k = normalizeModKey(name);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const m = modsByKey.get(k);
+      if (!m) {
+        missing += 1;
+        continue;
+      }
+      present += 1;
+      if (m.enabled) {
+        enabled += 1;
+        if (m.conflicts && m.conflicts.length > 0) conflict += 1;
+      }
+    }
+    return { total: seen.size, present, enabled, conflict, missing };
+  }, [modsByKey]);
 
   const packMods = useMemo(() => {
     if (!selectedPack) return [];
@@ -369,6 +434,25 @@ export function PacksPage() {
     }
     return result;
   }, [selectedPack, mods]);
+
+  // 失效成员：成员里磁盘上已不存在的（用 mods + normalizeModKey 判断）
+  const missingMembers = useMemo(() => {
+    if (!selectedPack) return [] as string[];
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const name of selectedPack.modNames) {
+      const k = normalizeModKey(name);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      if (!modsByKey.has(k)) out.push(name);
+    }
+    return out;
+  }, [selectedPack, modsByKey]);
+
+  // 本包内「目标为禁用」的成员 key 集合（用于成员卡上的「本包内关闭」角标）
+  const disabledMemberKeys = useMemo(() => {
+    return new Set((selectedPack?.disabledMembers || []).map((n) => normalizeModKey(n)));
+  }, [selectedPack?.disabledMembers]);
 
   // 整包「启用/禁用」开关：由包内 Mod 的真实状态推导。
   // 以前是本地 useState(true)，打开一个 Mod 全是禁用状态的整合包也会显示成「启用」。
@@ -435,6 +519,116 @@ export function PacksPage() {
       setExportError(e?.message || '导出失败');
     }
   }, [selectedPack, exportPackAsZip]);
+
+  // 描述草稿：切换整合包时重置（仅在 id 变化时同步，避免保存后光标跳）
+  useEffect(() => {
+    setDescDraft(selectedPack?.description || '');
+  }, [selectedPack?.id]);
+
+  const handleDescriptionBlur = () => {
+    if (!selectedPack) return;
+    const next = descDraft.trim();
+    if (next !== (selectedPack.description || '')) {
+      setPackDescription(selectedPack.id, next);
+    }
+  };
+
+  // 「应用此整合包」：按本包目标启停精确恢复，可选关闭包外 Mod
+  const handleApplyPack = async () => {
+    if (!selectedPack) return;
+    if (selectedPack.modNames.length === 0) {
+      showToast('这个整合包里还没有 Mod', 'warning');
+      return;
+    }
+    if (applyingPack) return;
+    setApplyingPack(true);
+    try {
+      const result = await applyPack(selectedPack.id, { disableOthers });
+      if (!result) return; // 失败已在 store 里 toast
+      const parts: string[] = [`已应用「${selectedPack.name}」`];
+      if (result.changed > 0) parts.push(`改动 ${result.changed} 个`);
+      if (result.outsideDisabled.length > 0) parts.push(`关闭包外 ${result.outsideDisabled.length} 个`);
+      if (result.missing.length > 0) parts.push(`${result.missing.length} 个成员失效`);
+      showToast(parts.join('，'), result.missing.length > 0 ? 'warning' : 'success');
+    } finally {
+      setApplyingPack(false);
+    }
+  };
+
+  // 「从当前启停状态更新本包」：把成员里当前禁用的记入 disabledMembers
+  const handleUpdateSnapshot = async () => {
+    if (!selectedPack) return;
+    await updatePackSnapshot(selectedPack.id);
+    showToast('已按当前启停状态更新本包', 'success');
+  };
+
+  // 「清理失效成员」
+  const handleCleanMissing = async () => {
+    if (!selectedPack) return;
+    const count = missingMembers.length;
+    if (count === 0) {
+      showToast('没有失效成员需要清理', 'info');
+      return;
+    }
+    await removeMissingMembers(selectedPack.id);
+    showToast(`已清理 ${count} 个失效成员`, 'success');
+  };
+
+  // 「导入整合包」：主进程挑 ZIP + 解压落盘，再建包进入详情
+  const handleImportZip = async () => {
+    if (importingZip) return;
+    const api = (window as any).electronAPI;
+    if (!api || typeof api.pickPackZip !== 'function') {
+      showToast('当前版本不支持导入整合包', 'error');
+      return;
+    }
+    let picked: { canceled: boolean; path?: string } | null = null;
+    try {
+      picked = await api.pickPackZip();
+    } catch {
+      picked = null;
+    }
+    if (!picked || picked.canceled || !picked.path) return;
+    setImportingZip(true);
+    try {
+      const created = await importPack(picked.path, { saveSnapshot: true });
+      if (created) {
+        showToast(`已导入「${created.name}」，包含 ${created.modNames.length} 个 Mod`, 'success');
+        selectPack(created);
+      }
+    } finally {
+      setImportingZip(false);
+    }
+  };
+
+  // 旧的整包滑块降级为「全部启用 / 全部禁用」
+  const runPackBulk = async (enable: boolean) => {
+    if (!selectedPack) return;
+    if (selectedPack.modNames.length === 0) {
+      showToast('这个整合包里还没有 Mod', 'warning');
+      return;
+    }
+    if (togglingPack) return;
+    setTogglingPack(true);
+    try {
+      const result = await enablePackMods(selectedPack.id, enable);
+      if (result === null) {
+        showToast('操作失败', 'error');
+        return;
+      }
+      const label = enable ? '启用' : '禁用';
+      if (result.missing.length > 0) {
+        showToast(
+          `已${label} ${result.changed} 个，另有 ${result.missing.length} 个成员在磁盘上找不到对应文件`,
+          'warning'
+        );
+      } else {
+        showToast(`已${label}整合包中的 ${result.changed} 个 Mod`, 'success');
+      }
+    } finally {
+      setTogglingPack(false);
+    }
+  };
 
   const runPackToggle = async (packId: string) => {
     setTogglingPack(true);
@@ -570,6 +764,19 @@ export function PacksPage() {
               <span className="packs-import-btn__count">{enabledMods.length}</span>
             )}
           </button>
+          <button
+            className="packs-import-btn"
+            onClick={handleImportZip}
+            disabled={importingZip}
+            title="从 .zip 整合包文件导入（「导出整合包」得到的 ZIP 可直接导回）"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+              <polyline points="17 8 12 3 7 8" />
+              <line x1="12" y1="3" x2="12" y2="15" />
+            </svg>
+            {importingZip ? '导入中…' : '导入整合包'}
+          </button>
           <button className="packs-create-btn" onClick={() => setShowCreateModal(true)}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M12 5v14M5 12h14" />
@@ -582,47 +789,107 @@ export function PacksPage() {
       {selectedPack ? (
         <div className="pack-detail">
           <div className="pack-detail-header">
-            <button className="pack-detail-back" onClick={() => selectPack(null)}>
+            <button className="pack-detail-back" onClick={() => selectPack(null)} title="返回整合包列表">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M15 19l-7-7 7-7" />
               </svg>
             </button>
             <div className="pack-detail-info">
               <h3>{selectedPack.name}</h3>
+              <input
+                className="pack-detail-desc"
+                type="text"
+                placeholder="添加描述…"
+                value={descDraft}
+                onChange={(e) => setDescDraft(e.target.value)}
+                onBlur={handleDescriptionBlur}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
+                }}
+              />
               <span>
-                {packMods.length} 个 Mod
+                {packMods.length} 个 Mod · 启用 {packStats.enabled}/{packMods.length}
+                {missingMembers.length > 0 && ` · ${missingMembers.length} 个失效`}
                 {filteredPackMods.length !== packMods.length && ` · 已筛出 ${filteredPackMods.length} 个`}
               </span>
             </div>
+            <div className="pack-detail-primary">
+              <label className="pack-apply-opt" title="勾选后，应用本包时会把本包以外的 Mod 一并关闭">
+                <input
+                  type="checkbox"
+                  checked={disableOthers}
+                  onChange={(e) => setDisableOthers(e.target.checked)}
+                />
+                同时关闭本包以外的 Mod
+              </label>
+              <button
+                type="button"
+                className="pack-apply-btn"
+                onClick={handleApplyPack}
+                disabled={applyingPack || selectedPack.modNames.length === 0}
+                title={selectedPack.modNames.length === 0 ? '整合包为空' : '按本包目标启停恢复'}
+              >
+                {applyingPack ? '应用中…' : '应用此整合包'}
+              </button>
+            </div>
+          </div>
+
+          {missingMembers.length > 0 && (
+            <div className="pack-warn-bar">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 9v4M12 17v0" strokeLinecap="round" />
+                <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+              </svg>
+              <span>
+                <strong>{missingMembers.length}</strong> 个成员已失效（磁盘上已找不到对应文件）
+              </span>
+              <button type="button" className="pack-warn-bar__btn" onClick={handleCleanMissing}>
+                清理失效成员
+              </button>
+            </div>
+          )}
+
+          <div className="pack-detail-toolrow">
             <button
-              className="pack-detail-action"
-              title="添加 Mod 到整合包"
-              onClick={openAddModsModal}
+              type="button"
+              className="pack-detail-secondary"
+              onClick={handleUpdateSnapshot}
+              title="把成员里当前禁用状态记入本包"
             >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" />
+                <polyline points="17 21 17 13 7 13 7 21" />
+                <polyline points="7 3 7 8 15 8" />
+              </svg>
+              从当前启停状态更新本包
+            </button>
+            <div className="pack-detail-toolrow__spacer" />
+            <button className="pack-detail-action" title="添加 Mod 到整合包" onClick={openAddModsModal}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M12 5v14M5 12h14" />
               </svg>
             </button>
-              <button 
-                className="pack-detail-action pack-detail-action--export"
-                title="导出 ZIP"
-                onClick={handleExport}
-              >
+            <button className="pack-detail-action pack-detail-action--export" title="导出 ZIP" onClick={handleExport}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" />
               </svg>
             </button>
-            <div 
-              className={`pack-detail-toggle ${toggleOn ? 'pack-detail-toggle--on' : 'pack-detail-toggle--off'}${togglingPack ? ' pack-detail-toggle--busy' : ''}`}
-              onClick={handleTogglePack}
-              title={packMods.length === 0 ? '整合包为空' : (toggleOn ? '点击禁用全部' : '点击启用全部')}
+            <button
+              type="button"
+              className="pack-bulk-btn"
+              onClick={() => runPackBulk(true)}
+              disabled={togglingPack || selectedPack.modNames.length === 0}
             >
-              <div className="pack-detail-toggle__track">
-                <span className="pack-detail-toggle__label pack-detail-toggle__label--on">启用</span>
-                <span className="pack-detail-toggle__label pack-detail-toggle__label--off">禁用</span>
-                <div className="pack-detail-toggle__thumb" />
-              </div>
-            </div>
+              全部启用
+            </button>
+            <button
+              type="button"
+              className="pack-bulk-btn"
+              onClick={() => runPackBulk(false)}
+              disabled={togglingPack || selectedPack.modNames.length === 0}
+            >
+              全部禁用
+            </button>
           </div>
           
           {/* 包内 Mod 筛选：搜索 + 启用状态（口径和「我的 Mod」页面一致） */}
@@ -685,6 +952,8 @@ export function PacksPage() {
                 const displayName = getModTitle(mod, getModDisplayName(mod.name));
                 // 冲突只在「已启用」的 Mod 之间才有意义：禁用后立刻不再显示冲突
                 const hasConflicts = mod.enabled && !!mod.conflicts && mod.conflicts.length > 0;
+                // 该成员在本包里被记录为「目标禁用」（应用本包时会被关闭）
+                const isTargetDisabled = disabledMemberKeys.has(normalizeModKey(mod.name));
                 return (
                   <div
                     key={getStableModId(mod)}
@@ -726,6 +995,9 @@ export function PacksPage() {
                           </span>
                         )}
                       </div>
+                      {isTargetDisabled && (
+                        <span className="pack-member-flag" title="应用本包时该成员会被关闭">本包内关闭</span>
+                      )}
                       {mod.author && <span className="mod-card__author">{mod.author}</span>}
                       {mod.description && (
                         <span className="mod-card__description">{mod.description}</span>
@@ -782,6 +1054,7 @@ export function PacksPage() {
           {filtered.length > 0 ? (
             filtered.map((pack, index) => {
               const coverMod = getPackCoverMod(pack);
+              const stats = deriveStats(pack);
               return (
                 <div
                   key={pack.id}
@@ -807,7 +1080,19 @@ export function PacksPage() {
                     <div className="mod-card__info-header">
                       <span className="mod-card__name">{pack.name}</span>
                     </div>
-                    <span className="mod-card__meta">{pack.modNames.length} 个 Mod</span>
+                    <span className="mod-card__meta">
+                      {stats.total} 个 Mod
+                    </span>
+                    {pack.description && <span className="mod-card__desc" title={pack.description}>{pack.description}</span>}
+                    <div className="pack-card__badges">
+                      <span className="pack-badge pack-badge--enabled">启用 {stats.enabled}/{stats.present}</span>
+                      {stats.conflict > 0 && (
+                        <span className="pack-badge pack-badge--conflict">⚠冲突 {stats.conflict}</span>
+                      )}
+                      {stats.missing > 0 && (
+                        <span className="pack-badge pack-badge--missing">⚠失效 {stats.missing}</span>
+                      )}
+                    </div>
                     {pack.createdAt && (
                       // 不再用 opacity 弱化：半透明文字与背景混合后会发虚，
                       // 直接沿用 .mod-card__meta 的 --text-muted 颜色即可
@@ -818,7 +1103,7 @@ export function PacksPage() {
                     {pack.modNames.length > 0 && (
                       <div className="mod-card__tags" style={{ marginTop: '4px' }}>
                         {pack.modNames.slice(0, 3).map((mname, idx) => {
-                          const m = mods.find(mod => mod.name === mname);
+                          const m = modsByKey.get(normalizeModKey(mname));
                           return (
                             <span key={idx} className="mod-card__tag" title={mname}>
                               {m ? getModTitle(m, getModDisplayName(m.name)) : mname}
@@ -952,6 +1237,15 @@ export function PacksPage() {
               disabled={importing}
               onKeyDown={(e) => e.key === 'Enter' && handleImportEnabled()}
             />
+            <label className="pack-modal-opt">
+              <input
+                type="checkbox"
+                checked={saveSnapshot}
+                onChange={(e) => setSaveSnapshot(e.target.checked)}
+                disabled={importing}
+              />
+              保存当前启停状态
+            </label>
             <div className="modal-actions">
               <button
                 className="modal-btn modal-btn-cancel"
@@ -985,6 +1279,14 @@ export function PacksPage() {
               autoFocus
               onKeyDown={(e) => e.key === 'Enter' && handleCreatePack()}
             />
+            <label className="pack-modal-opt">
+              <input
+                type="checkbox"
+                checked={saveSnapshot}
+                onChange={(e) => setSaveSnapshot(e.target.checked)}
+              />
+              保存当前启停状态
+            </label>
             <div className="modal-actions">
               <button className="modal-btn modal-btn-cancel" onClick={() => setShowCreateModal(false)}>
                 取消
