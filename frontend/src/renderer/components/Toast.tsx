@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import './Toast.scss';
 
 export type ToastType = 'success' | 'info' | 'warning' | 'error';
@@ -11,7 +11,7 @@ interface ToastMessage {
 }
 
 /** 同屏最多显示条数：超出丢弃最旧的一条，避免刷屏 */
-const MAX_TOASTS = 5;
+const MAX_TOASTS = 8;
 
 /** 停留时长按类型区分：错误更久，方便读完整段报错 */
 const DURATION: Record<ToastType, number> = {
@@ -20,6 +20,10 @@ const DURATION: Record<ToastType, number> = {
   warning: 4500,
   error: 6500,
 };
+
+/** 退场淡出时长 & 移除延迟（延迟略大于淡出，保证动画播完再拔 DOM） */
+const EXIT_FADE_MS = 240;
+const EXIT_REMOVE_MS = 300;
 
 // 全局 Toast 管理
 let toastIdCounter = 0;
@@ -34,14 +38,14 @@ function clearTimer(id: number) {
   }
 }
 
-/** 退场：先标记 exiting 触发滑出动画，300ms 后真正从列表移除 */
+/** 退场：先标记 exiting 触发淡出，延迟后真正从列表移除 */
 function scheduleRemove(id: number) {
   clearTimer(id);
   setToastsFn?.((prev) => prev.map((t) => (t.id === id ? { ...t, exiting: true } : t)));
   const timer = setTimeout(() => {
     setToastsFn?.((prev) => prev.filter((t) => t.id !== id));
     timersRef.delete(id);
-  }, 300);
+  }, EXIT_REMOVE_MS);
   timersRef.set(id, timer);
 }
 
@@ -67,21 +71,56 @@ export function showToast(text: string, type: ToastType = 'info') {
 
 export function ToastContainer() {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  // FLIP：记录每个 toast 的 DOM 节点与上一帧位置
+  const nodesRef = useRef<Map<number, HTMLElement>>(new Map());
+  const prevRectsRef = useRef<Map<number, DOMRect>>(new Map());
 
   useEffect(() => {
     setToastsFn = setToasts;
     return () => {
       setToastsFn = null;
-      // 清理所有定时器
       timersRef.forEach((timer) => clearTimeout(timer));
       timersRef.clear();
     };
   }, []);
 
+  // FLIP：某条 toast 被移除后，让「剩下的 toast」从旧位置平滑向上补位。
+  // 用 transform 位移做动画，不改变布局高度，所以绝不会互相重叠。
+  useLayoutEffect(() => {
+    const nextRects = new Map<number, DOMRect>();
+    nodesRef.current.forEach((el, id) => nextRects.set(id, el.getBoundingClientRect()));
+
+    nodesRef.current.forEach((el, id) => {
+      const prev = prevRectsRef.current.get(id);
+      const cur = nextRects.get(id);
+      if (!prev || !cur) return; // 新出现的 toast 不做 FLIP
+      const dy = prev.top - cur.top;
+      if (Math.abs(dy) < 1) return; // 位置没变就不动
+      // 先瞬移到旧位置，再过渡回新位置（向上补位）
+      el.style.transition = 'none';
+      el.style.transform = `translateY(${dy}px)`;
+      void el.offsetHeight; // 强制重排，确保上面这帧生效
+      el.style.transition = 'transform 0.26s cubic-bezier(0.22, 1, 0.36, 1)';
+      el.style.transform = 'translateY(0)';
+      const done = () => {
+        el.style.transition = '';
+        el.style.transform = '';
+        el.removeEventListener('transitionend', done);
+      };
+      el.addEventListener('transitionend', done);
+    });
+
+    prevRectsRef.current = nextRects;
+  }, [toasts]);
+
   const dismiss = (id: number) => {
-    // 点击 ×：走和自动超时同一套「先标 exiting 播退场动画、300ms 后再移除」，
-    // 不再直接 filter 掉（那样会瞬间消失、没有退场动画）。
+    // 点击 ×：走和自动超时同一套退场（淡出 + 移除后剩余项平滑上移）
     scheduleRemove(id);
+  };
+
+  const setNode = (id: number) => (el: HTMLDivElement | null) => {
+    if (el) nodesRef.current.set(id, el);
+    else nodesRef.current.delete(id);
   };
 
   const getIcon = (type: ToastType) => {
@@ -126,25 +165,22 @@ export function ToastContainer() {
       {toasts.map((toast) => (
         <div
           key={toast.id}
-          className={`toast-slot${toast.exiting ? ' toast-slot--exiting' : ''}`}
+          ref={setNode(toast.id)}
+          className={`toast-item toast-item--${toast.type}${toast.exiting ? ' toast-item--exiting' : ''}`}
         >
-          <div
-            className={`toast-item toast-item--${toast.type}${toast.exiting ? ' toast-item--exiting' : ''}`}
+          {getIcon(toast.type)}
+          <span className="toast-item__text">{toast.text}</span>
+          <button
+            type="button"
+            className="toast-item__close"
+            aria-label="关闭提示"
+            title="关闭"
+            onClick={() => dismiss(toast.id)}
           >
-            {getIcon(toast.type)}
-            <span className="toast-item__text">{toast.text}</span>
-            <button
-              type="button"
-              className="toast-item__close"
-              aria-label="关闭提示"
-              title="关闭"
-              onClick={() => dismiss(toast.id)}
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <path d="M18 6L6 18M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+          </button>
         </div>
       ))}
     </div>
