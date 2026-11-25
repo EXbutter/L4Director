@@ -45,9 +45,30 @@ class PackData:
     """整合包数据"""
     id: str
     name: str
-    mod_ids: list[str] = field(default_factory=list)  # 存储文件路径 hash 而非文件名
+    # 成员顺序的唯一来源（有序）。历史版本里它存的是 mod 文件名 / 归一化名。
+    mod_ids: list[str] = field(default_factory=list)
     created_at: str = ""
     updated_at: str = ""
+    # 本包内「目标为禁用」的成员（归一化 key），是 mod_ids 的子集。
+    # 场景切换（apply）时按它决定每个成员该开还是该关。
+    disabled_members: list[str] = field(default_factory=list)
+    # 包级描述（卡片上一行说明），空串表示没填。
+    description: str = ""
+    # 钉住的封面成员 key；None = 沿用「最后一个仍存在的成员」。
+    cover_mod: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> "PackData":
+        """用字典构造，**过滤掉未知键**后再实例化。
+
+        只加键、不迁 data.json 结构的前提下，旧版软件回滚后读到新版本写入的
+        未知键（disabled_members/description/cover_mod 之外的未来字段）时，
+        `PackData(**raw)` 会直接抛 TypeError —— 整个整合包列表都读不出来。
+        这里丢掉不认识的键，保证前向/后向兼容。
+        """
+        known = {f.name for f in fields(cls)}
+        data = {k: v for k, v in (raw or {}).items() if k in known}
+        return cls(**data)
 
 
 @dataclass
@@ -552,7 +573,7 @@ def get_packs() -> list[PackData]:
     """Get all packs."""
     with _file_lock:
         data = _read_data_raw()
-        return [PackData(**p) for p in data['packs']]
+        return [PackData.from_dict(p) for p in data['packs']]
 
 
 def save_packs(packs: list[PackData]):
@@ -638,6 +659,8 @@ def remove_mod_from_pack(pack_id: str, mod_id: str) -> bool:
     for p in packs:
         if p.id == pack_id and mod_id in p.mod_ids:
             p.mod_ids = [m for m in p.mod_ids if m != mod_id]
+            # 成员被移除后，它不该再留在「本包内目标禁用」列表里（否则会变成幽灵引用）
+            p.disabled_members = [m for m in p.disabled_members if m != mod_id]
             p.updated_at = datetime.now().isoformat()
             save_packs(packs)
             return True
@@ -698,9 +721,15 @@ def remove_mods_from_pack(pack_id: str, mod_ids: list[str]) -> bool:
             if p.get('id') != pack_id:
                 continue
             ids = list(p.get('mod_ids', []))
-            new_ids = [m for m in ids if m not in mod_ids]
+            drop = set(mod_ids)
+            new_ids = [m for m in ids if m not in drop]
             if len(new_ids) != len(ids):
                 p['mod_ids'] = new_ids
+                # 移除成员的同时，把它从「本包内目标禁用」列表里摘掉
+                disabled = list(p.get('disabled_members', []) or [])
+                new_disabled = [m for m in disabled if m not in drop]
+                if new_disabled != disabled:
+                    p['disabled_members'] = new_disabled
                 p['updated_at'] = datetime.now().isoformat()
                 changed = True
             break
@@ -724,11 +753,131 @@ def remove_mod_from_all_packs(mod_id: str) -> int:
             kept = [m for m in ids if _normalize_mod_key(m) != target]
             if len(kept) != len(ids):
                 p['mod_ids'] = kept
+                # 同步清理「本包内目标禁用」里的同一份引用（按归一化名比对）
+                disabled = list(p.get('disabled_members', []) or [])
+                new_disabled = [m for m in disabled if _normalize_mod_key(m) != target]
+                if new_disabled != disabled:
+                    p['disabled_members'] = new_disabled
                 p['updated_at'] = datetime.now().isoformat()
                 affected += 1
         if affected:
             _write_data_raw(data)
         return affected
+
+
+# 用于区分「调用方没传这个字段」与「显式传 None 清空」（cover_mod 用）
+_UNSET = object()
+
+
+def _dedupe_str_list(values) -> list[str]:
+    """去掉空串、去重、保序（成员整体替换 / disabled_members 归一化共用）。"""
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in (values or []):
+        v = str(raw or '').strip()
+        if v and v not in seen:
+            seen.add(v)
+            out.append(v)
+    return out
+
+
+def update_pack(
+    pack_id: str,
+    *,
+    name: Optional[str] = None,
+    mod_ids: Optional[list[str]] = None,
+    add_mods: Optional[list[str]] = None,
+    remove_mods: Optional[list[str]] = None,
+    add_mod: Optional[str] = None,
+    remove_mod: Optional[str] = None,
+    disabled_members: Optional[list[str]] = None,
+    description: Optional[str] = None,
+    cover_mod=_UNSET,
+) -> Optional[PackData]:
+    """一次性更新整合包的多个字段（**同一次原子写盘**，要么全成要么不动）。
+
+    PUT /api/packs/{id} 会因为「改名 + 整体替换成员 + 改快照/描述/封面」同时到达，
+    以前拆成 rename/add/remove 多次调用会有多次 fsync + .bak，中途失败还会留下半截
+    状态。这里把全部改动收进一次 `_write_data_raw`。
+
+    参数为 None 表示「本次不改这个字段」（cover_mod 用 _UNSET 区分「不改」与「显式置 null 清空」）。
+    返回更新后的 PackData；包不存在返回 None。
+    """
+    with _file_lock:
+        data = _read_data_raw()
+        target = next((p for p in data['packs'] if p.get('id') == pack_id), None)
+        if target is None:
+            return None
+
+        changed = False
+
+        if name is not None:
+            new_name = str(name).strip()
+            if new_name and new_name != target.get('name'):
+                target['name'] = new_name
+                changed = True
+
+        # ── 成员：先整体替换（如提供），再增删，全程保序去重 ──
+        ids = list(target.get('mod_ids', []) or [])
+        if mod_ids is not None:
+            ids = _dedupe_str_list(mod_ids)
+        for m in (add_mods or []):
+            v = str(m or '').strip()
+            if v and v not in ids:
+                ids.append(v)
+        if add_mod is not None:
+            v = str(add_mod).strip()
+            if v and v not in ids:
+                ids.append(v)
+        drop: set[str] = {str(m) for m in (remove_mods or [])}
+        if remove_mod is not None:
+            drop.add(str(remove_mod))
+        if drop:
+            ids = [m for m in ids if m not in drop]
+        if ids != list(target.get('mod_ids', []) or []):
+            target['mod_ids'] = ids
+            changed = True
+
+        # ── 目标禁用成员：必须是成员的子集；移除成员时自动摘掉 ──
+        # 匹配同时容忍「成员原写法」与「归一化名」（与 apply 侧 _member_norm 一致），
+        # 但**存回成员的原始写法**，保证 disabled_members 恒为 mod_ids 的子集。
+        allowed = set(ids)
+        allowed_norm: dict[str, str] = {}
+        for m in ids:
+            allowed_norm.setdefault(_normalize_mod_key(m), m)
+        current_disabled = list(target.get('disabled_members', []) or [])
+        wanted = _dedupe_str_list(disabled_members) if disabled_members is not None else current_disabled
+        new_disabled: list[str] = []
+        seen_disabled: set[str] = set()
+        for m in wanted:
+            canon = m if m in allowed else allowed_norm.get(_normalize_mod_key(m))
+            if canon is not None and canon not in seen_disabled:
+                seen_disabled.add(canon)
+                new_disabled.append(canon)
+        if new_disabled != current_disabled:
+            target['disabled_members'] = new_disabled
+            changed = True
+
+        if description is not None:
+            new_desc = str(description)
+            if new_desc != (target.get('description') or ''):
+                target['description'] = new_desc
+                changed = True
+
+        if cover_mod is not _UNSET:
+            if cover_mod is None:
+                new_cover = None
+            else:
+                v = str(cover_mod).strip()
+                new_cover = v or None
+            if new_cover != target.get('cover_mod'):
+                target['cover_mod'] = new_cover
+                changed = True
+
+        if changed:
+            target['updated_at'] = datetime.now().isoformat()
+            _write_data_raw(data)
+        return PackData.from_dict(target)
 
 
 # ===== Settings API =====
