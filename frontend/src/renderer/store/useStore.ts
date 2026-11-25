@@ -137,6 +137,15 @@ export interface PackData {
   id: string;
   name: string;
   modNames: string[];  // frontend uses modNames, but API uses mod_ids
+  /**
+   * 本包内「目标为禁用」的成员（与 modNames 同一套写法；匹配一律走 normalizeModKey）。
+   * 后端字段是 `disabled_members`，是 mod_ids 的子集 —— 记住哪些成员应处于关闭状态。
+   */
+  disabledMembers: string[];
+  /** 包级描述（可编辑，详情页 inline 保存） */
+  description: string;
+  /** 钉住的封面成员 key（null = 沿用「最后一个仍存在的成员」） */
+  coverMod: string | null;
   createdAt: string;
 }
 
@@ -380,6 +389,34 @@ interface AppState {
    * 导致「点了没反应」。返回后端统计（changed/missing/enable）；失败返回 null。
    */
   enablePackMods: (packId: string, enable?: boolean) => Promise<{ changed: number; missing: string[]; enable: boolean } | null>;
+  /**
+   * 「应用此整合包」——按本包目标启停精确恢复（场景化切换）。
+   * 目标 = 成员中不在 disabledMembers 的置真、在的置假；`disableOthers` 时把
+   * 当前启用但不在成员里的 Mod 一并关掉。后端一次写盘，前端拿 enable_map 局部更新。
+   */
+  applyPack: (
+    packId: string,
+    opts?: { disableOthers?: boolean }
+  ) => Promise<{ changed: number; missing: string[]; outsideDisabled: string[] } | null>;
+  /**
+   * 「从当前启停状态更新本包」：把成员里当前处于禁用状态的记录下来，
+   * PUT disabled_members。沿用乐观更新 + fetchPacks 兜底。
+   */
+  updatePackSnapshot: (packId: string) => Promise<void>;
+  /** 整体替换整合包成员（PUT mod_ids，规范去重、保序） */
+  replacePackMods: (packId: string, names: string[]) => Promise<void>;
+  /** 清掉成员里在磁盘上已不存在的「失效成员」（PUT remove_mods） */
+  removeMissingMembers: (packId: string) => Promise<void>;
+  /** 更新整合包描述（PUT description） */
+  setPackDescription: (packId: string, desc: string) => Promise<void>;
+  /**
+   * 导入整合包 ZIP（主进程解压 + 复用拖放导入的落盘/去重逻辑，再建包）。
+   * 成功后返回新建的包（失败返回 null），调用方可立刻 selectPack 进入详情。
+   */
+  importPack: (
+    zipPath: string,
+    opts?: { name?: string; saveSnapshot?: boolean }
+  ) => Promise<PackData | null>;
   /**
    * 一键混搭：一批里「这套启用、这些同类关掉」，一次写回 addonlist.txt。
    * 只有同一批里既有开也有关才用得上（整合包接口一次只朝一个方向）。
@@ -1983,6 +2020,9 @@ export const useStore = create<AppState>((set, get) => ({
           id: p.id,
           name: p.name,
           modNames: p.mod_ids || [],
+          disabledMembers: Array.isArray(p.disabled_members) ? p.disabled_members : [],
+          description: typeof p.description === 'string' ? p.description : '',
+          coverMod: typeof p.cover_mod === 'string' && p.cover_mod ? p.cover_mod : null,
           createdAt: p.created_at || p.updated_at || new Date().toISOString(),
         }));
         set((state) => {
@@ -2023,6 +2063,9 @@ export const useStore = create<AppState>((set, get) => ({
               id: data.pack.id,
               name: data.pack.name,
               modNames: (data.pack.mod_ids as string[]) || [],
+              disabledMembers: Array.isArray(data.pack.disabled_members) ? data.pack.disabled_members : [],
+              description: typeof data.pack.description === 'string' ? data.pack.description : '',
+              coverMod: typeof data.pack.cover_mod === 'string' && data.pack.cover_mod ? data.pack.cover_mod : null,
               createdAt: data.pack.created_at || new Date().toISOString(),
             }
           : null);
@@ -2334,6 +2377,287 @@ export const useStore = create<AppState>((set, get) => ({
     } catch (e) {
       console.error('Failed to toggle pack mods:', e);
       set({ error: '整合包切换失败：网络错误' });
+      return null;
+    }
+  },
+
+  applyPack: async (packId, opts) => {
+    const disableOthers = !!opts?.disableOthers;
+    try {
+      const res = await fetch(`${API_BASE}/api/packs/${packId}/apply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ disable_others: disableOthers }),
+      });
+      const data = await res.json().catch(() => ({} as any));
+      if (!res.ok) {
+        const message = (data && data.detail) || '应用整合包失败';
+        set({ error: message });
+        showToast(message, 'error');
+        return null;
+      }
+
+      // 目标状态已写回 addonlist.txt
+      set({ modsDirty: true });
+
+      // 后端返回 enable_map：成员名 → 目标启停。局部更新，不触发全量扫描。
+      const enableMap: Record<string, unknown> =
+        data && typeof data.enable_map === 'object' && data.enable_map ? data.enable_map : {};
+      const byKey = new Map<string, boolean>();
+      for (const [name, val] of Object.entries(enableMap)) {
+        byKey.set(normalizeModKey(name), !!val);
+      }
+
+      if (byKey.size > 0) {
+        let matchedAny = false;
+        const nextMods = get().mods.map((m) => {
+          const key = normalizeModKey(m.name);
+          if (!byKey.has(key)) return m;
+          matchedAny = true;
+          const enabled = byKey.get(key) as boolean;
+          if (enabled === m.enabled) return m;
+          return {
+            ...m,
+            enabled,
+            // 禁用后冲突不再成立；启用则等静默刷新校正
+            conflicts: enabled ? m.conflicts : [],
+            conflict_details: enabled ? m.conflict_details : [],
+            conflict_hints: enabled ? m.conflict_hints : [],
+          };
+        });
+        if (matchedAny) {
+          set({ mods: nextMods });
+          scheduleSilentModsRefresh();
+        } else {
+          await get().fetchModsSilently();
+        }
+      } else {
+        // 空包 / 只关包外项：局部无从更新，静默刷新兜底
+        await get().fetchModsSilently();
+      }
+
+      void get().fetchApplyState();
+
+      return {
+        changed: typeof data.changed === 'number' ? data.changed : 0,
+        missing: Array.isArray(data.missing) ? (data.missing as string[]) : [],
+        outsideDisabled: Array.isArray(data.outside_disabled) ? (data.outside_disabled as string[]) : [],
+      };
+    } catch (e) {
+      console.error('Failed to apply pack:', e);
+      set({ error: '应用整合包失败：网络错误' });
+      showToast('应用整合包失败：网络错误', 'error');
+      return null;
+    }
+  },
+
+  updatePackSnapshot: async (packId) => {
+    const state = get();
+    const pack = state.packs.find((p) => p.id === packId);
+    if (!pack) return;
+
+    const byKey = new Map<string, ModData>();
+    for (const m of state.mods) {
+      const k = normalizeModKey(m.name);
+      if (!byKey.has(k)) byKey.set(k, m);
+    }
+    // 成员里当前处于禁用状态的 → 记录为本包目标禁用（保持 mod_names 原写法，保证是 mod_ids 的子集）
+    const disabled: string[] = [];
+    const seen = new Set<string>();
+    for (const name of pack.modNames) {
+      const key = normalizeModKey(name);
+      const mod = byKey.get(key);
+      if (mod && !mod.enabled && !seen.has(key)) {
+        seen.add(key);
+        disabled.push(name);
+      }
+    }
+
+    // 乐观更新
+    set((s) => ({
+      packs: s.packs.map((p) => (p.id === packId ? { ...p, disabledMembers: disabled } : p)),
+      selectedPack:
+        s.selectedPack?.id === packId ? { ...s.selectedPack, disabledMembers: disabled } : s.selectedPack,
+    }));
+
+    try {
+      const res = await fetch(`${API_BASE}/api/packs/${packId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ disabled_members: disabled }),
+      });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({} as any));
+        showToast((detail && detail.detail) || '更新整合包启停快照失败', 'error');
+      }
+    } catch (e) {
+      console.error('Failed to update pack snapshot:', e);
+      showToast('更新整合包启停快照失败：网络错误', 'error');
+    }
+    await get().fetchPacks();
+  },
+
+  replacePackMods: async (packId, names) => {
+    const unique = Array.from(new Set(names.filter(Boolean)));
+    const keySet = new Set(unique.map(normalizeModKey));
+    // 乐观更新：整体替换成员，disabled_members 只保留仍在成员里的项
+    set((s) => ({
+      packs: s.packs.map((p) =>
+        p.id === packId
+          ? {
+              ...p,
+              modNames: unique,
+              disabledMembers: p.disabledMembers.filter((n) => keySet.has(normalizeModKey(n))),
+            }
+          : p
+      ),
+      selectedPack:
+        s.selectedPack?.id === packId
+          ? {
+              ...s.selectedPack,
+              modNames: unique,
+              disabledMembers: s.selectedPack.disabledMembers.filter((n) => keySet.has(normalizeModKey(n))),
+            }
+          : s.selectedPack,
+    }));
+    try {
+      await fetch(`${API_BASE}/api/packs/${packId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mod_ids: unique }),
+      });
+    } catch (e) {
+      console.error('Failed to replace pack mods:', e);
+    }
+    await get().fetchPacks();
+  },
+
+  removeMissingMembers: async (packId) => {
+    const state = get();
+    const pack = state.packs.find((p) => p.id === packId);
+    if (!pack) return;
+
+    const presentKeys = new Set(state.mods.map((m) => normalizeModKey(m.name)));
+    const missing = pack.modNames.filter((n) => !presentKeys.has(normalizeModKey(n)));
+    if (missing.length === 0) {
+      showToast('没有失效成员需要清理', 'info');
+      return;
+    }
+    const missingKeys = new Set(missing.map(normalizeModKey));
+
+    // 乐观移除
+    set((s) => ({
+      packs: s.packs.map((p) =>
+        p.id === packId
+          ? {
+              ...p,
+              modNames: p.modNames.filter((n) => !missingKeys.has(normalizeModKey(n))),
+              disabledMembers: p.disabledMembers.filter((n) => !missingKeys.has(normalizeModKey(n))),
+            }
+          : p
+      ),
+      selectedPack:
+        s.selectedPack?.id === packId
+          ? {
+              ...s.selectedPack,
+              modNames: s.selectedPack.modNames.filter((n) => !missingKeys.has(normalizeModKey(n))),
+              disabledMembers: s.selectedPack.disabledMembers.filter((n) => !missingKeys.has(normalizeModKey(n))),
+            }
+          : s.selectedPack,
+    }));
+
+    try {
+      await fetch(`${API_BASE}/api/packs/${packId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ remove_mods: missing }),
+      });
+    } catch (e) {
+      console.error('Failed to remove missing members:', e);
+    }
+    await get().fetchPacks();
+  },
+
+  setPackDescription: async (packId, desc) => {
+    const value = desc ?? '';
+    // 乐观更新，失焦即保存
+    set((s) => ({
+      packs: s.packs.map((p) => (p.id === packId ? { ...p, description: value } : p)),
+      selectedPack: s.selectedPack?.id === packId ? { ...s.selectedPack, description: value } : s.selectedPack,
+    }));
+    try {
+      const res = await fetch(`${API_BASE}/api/packs/${packId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description: value }),
+      });
+      if (!res.ok) {
+        showToast('保存整合包描述失败', 'error');
+      }
+    } catch (e) {
+      console.error('Failed to set pack description:', e);
+      showToast('保存整合包描述失败：网络错误', 'error');
+    }
+    await get().fetchPacks();
+  },
+
+  importPack: async (zipPath, opts) => {
+    const api = (window as any).electronAPI;
+    if (!api || typeof api.importPackZip !== 'function') {
+      const msg = '当前版本不支持导入整合包';
+      set({ error: msg });
+      showToast(msg, 'error');
+      return null;
+    }
+
+    let addonsPath = get().addonsPath;
+    if (!addonsPath) {
+      await get().fetchSettings();
+      addonsPath = get().addonsPath;
+    }
+    if (!addonsPath) {
+      const msg = '尚未设置 addons 目录，无法导入整合包';
+      set({ error: msg });
+      showToast(msg, 'error');
+      return null;
+    }
+
+    try {
+      const result = await api.importPackZip(zipPath, addonsPath);
+      if (!result || !result.ok) {
+        const msg = (result && result.error) || '导入整合包失败';
+        set({ error: msg });
+        showToast(msg, 'error');
+        return null;
+      }
+      const members: string[] = Array.isArray(result.members) ? result.members : [];
+      if (members.length === 0) {
+        showToast('ZIP 中没有可导入的 Mod', 'warning');
+        return null;
+      }
+      const fallbackName =
+        String(zipPath || '')
+          .split(/[\\/]/)
+          .pop()
+          ?.replace(/\.zip$/i, '') || '导入的整合包';
+      const packName = (opts?.name && opts.name.trim()) || fallbackName;
+      const created = await get().createPack(packName, members);
+      if (!created) {
+        showToast('整合包创建失败', 'error');
+        return null;
+      }
+      // 先把新落盘的 Mod 拉进列表（新文件才会出现在 mods 里），再按需要记录启停快照
+      await get().fetchModsSilently();
+      if (opts?.saveSnapshot) {
+        await get().updatePackSnapshot(created.id);
+      }
+      // 返回最新实例（快照写回后 fetchPacks 已重建对象）
+      return get().packs.find((p) => p.id === created.id) || created;
+    } catch (e) {
+      console.error('Failed to import pack:', e);
+      const msg = '导入整合包失败：网络错误';
+      set({ error: msg });
+      showToast(msg, 'error');
       return null;
     }
   },
