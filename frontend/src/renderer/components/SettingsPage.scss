@@ -582,3 +582,23 @@
   }
 }
 
+/* 设置页分组标题：左侧主色竖条 + 组名 + 简短说明 */
+.settings-cat-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 26px 4px 12px;
+}
+.settings-cat-head:first-of-type { margin-top: 4px; }
+/* 第一组标题前紧邻的是 .page-header（同为 div），:first-of-type 匹配不到它，补一条相邻选择器 */
+.page-header + .settings-cat-head { margin-top: 4px; }
+.settings-cat-head__bar {
+  width: 4px; height: 20px; border-radius: 3px;
+  background: var(--accent); flex-shrink: 0;
+}
+.settings-cat-head h2 {
+  margin: 0; font-size: 17px; font-weight: 800; color: var(--text-primary);
+}
+.settings-cat-head__sub { font-size: 12.5px; color: var(--text-muted); }
+
+

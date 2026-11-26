@@ -511,8 +511,14 @@ export function SettingsPage() {
           <p>配置 Mod 管理器的工作路径与偏好</p>
         </div>
 
+        <div className="settings-cat-head">
+          <span className="settings-cat-head__bar" />
+          <h2>常规</h2>
+          <span className="settings-cat-head__sub">游戏目录与数据安全</span>
+        </div>
+
         {/* Addons Directory Section */}
-        <div className="content-section" style={{ marginBottom: 20 }}>
+        <div className="content-section" style={{ marginBottom: 14 }}>
           <div className="section-header">
             <h2>Addons 目录</h2>
           </div>
@@ -589,7 +595,7 @@ export function SettingsPage() {
         </div>
 
         {/* Addonlist 备份 Section：只放设置与导出/导入，不再内联列快照 */}
-        <div className="content-section" style={{ marginBottom: 20 }}>
+        <div className="content-section" style={{ marginBottom: 14 }}>
           <div className="section-header">
             <h2>Addonlist 备份</h2>
           </div>
@@ -708,118 +714,14 @@ export function SettingsPage() {
           </div>
         </div>
 
-        {/* Steam API Key Section */}
-        <div className="content-section" style={{ marginBottom: 20 }}>
-          <div className="section-header">
-            <h2>Steam API Key（可选）</h2>
-          </div>
-          <div className="settings-group">
-            <p className="settings-desc">
-              填写后创意工坊改用官方接口：每页 <strong>100 条</strong>、显示<strong>好评数 / 下载量 / 结果总数</strong>、支持「最近更新」排序；不填则每页 30 条、较慢。
-            </p>
-            <p className="settings-desc" style={{ marginTop: -4 }}>
-              保存时用 Windows 凭据加密，<strong>config.json 里只有密文</strong>，仅当前 Windows 账户可解密；换电脑或换账户需重新粘贴。
-            </p>
-
-            <div className="settings-path-row">
-              <input
-                type="password"
-                className="settings-path-input"
-                placeholder={keyState.configured ? `已保存：${keyState.masked}（重新粘贴可替换）` : '粘贴 32 位十六进制 key'}
-                value={keyInput}
-                onChange={(e) => { setKeyInput(e.target.value); setKeyMsg(null); }}
-                spellCheck={false}
-                autoComplete="off"
-              />
-              <button
-                className="settings-btn settings-btn--secondary"
-                onClick={() => void handleTestKey()}
-                disabled={keyBusy !== 'idle' || !keyInput.trim()}
-              >
-                {keyBusy === 'testing' ? '测试中…' : '测试'}
-              </button>
-            </div>
-
-            <div className="settings-actions">
-              <button
-                className="settings-btn settings-btn--primary"
-                onClick={() => void handleSaveKey()}
-                disabled={keyBusy !== 'idle' || (!keyInput.trim() && !keyState.configured)}
-              >
-                {keyBusy === 'saving' ? '保存中…' : '保存'}
-              </button>
-              {keyState.configured && (
-                <button
-                  className="settings-btn settings-btn--ghost"
-                  onClick={() => { setKeyInput(''); void handleSaveKey(); }}
-                  disabled={keyBusy !== 'idle'}
-                >
-                  清除
-                </button>
-              )}
-              <a
-                className="settings-btn settings-btn--ghost"
-                style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
-                onClick={() => {
-                  const el = window.electronAPI as { openExternal?: (u: string) => Promise<void> } | undefined;
-                  void el?.openExternal?.('https://steamcommunity.com/dev/apikey');
-                }}
-              >
-                申请地址 ↗
-              </a>
-            </div>
-
-            {keyMsg && (
-              <div
-                className="settings-current"
-                style={{
-                  color: keyMsg.kind === 'err' ? '#ef4444' : '#10b981',
-                  borderColor: keyMsg.kind === 'err' ? 'rgba(239,68,68,.35)' : 'rgba(16,185,129,.35)',
-                }}
-              >
-                <span className="settings-current-label">结果：</span>
-                <span style={{ whiteSpace: 'normal' }}>{keyMsg.text}</span>
-              </div>
-            )}
-
-            {keyState.readable === false && (
-              <div
-                className="settings-current"
-                style={{ color: '#f59e0b', borderColor: 'rgba(245,158,11,.35)' }}
-              >
-                <span className="settings-current-label">注意：</span>
-                <span style={{ whiteSpace: 'normal' }}>
-                  配置文件里的 key 当前账户解不开（换过 Windows 账户或电脑），重新粘贴保存一次即可。
-                </span>
-              </div>
-            )}
-
-            {keyState.configured && !keyMsg && (
-              <div className="settings-current">
-                <span className="settings-current-label">当前：</span>
-                <span className="settings-current-path">已配置 {keyState.masked}</span>
-                <span
-                  style={{
-                    marginLeft: 8,
-                    whiteSpace: 'normal',
-                    color: keyState.storage === 'plaintext' ? '#f59e0b' : 'var(--text-secondary)',
-                  }}
-                >
-                  {keyState.storage === 'dpapi' && '· 已用 Windows 凭据加密，仅当前账户可解密'}
-                  {keyState.storage === 'env' && '· 来自环境变量 L4DIRECTOR_STEAM_KEY'}
-                  {keyState.storage === 'plaintext' && '· 明文保存在 config.json，重新保存一次即可加密'}
-                </span>
-              </div>
-            )}
-
-            <p className="settings-desc" style={{ marginTop: 10, fontSize: 11.5, opacity: 0.78 }}>
-              Key 加密后只存本机 <code>~/.l4d2-manager/config.json</code>，不会上传。申请需 Steam 账号、商店消费满 5 美元；按 Steam 条款须本人保管。
-            </p>
-          </div>
+        <div className="settings-cat-head">
+          <span className="settings-cat-head__bar" />
+          <h2>外观与界面</h2>
+          <span className="settings-cat-head__sub">缩放 / 字体 / 主题色 / 背景 / 看板娘</span>
         </div>
 
         {/* 界面显示 Section */}
-        <div className="content-section" style={{ marginBottom: 20 }}>
+        <div className="content-section" style={{ marginBottom: 14 }}>
           <div className="section-header">
             <h2>界面显示</h2>
           </div>
@@ -874,7 +776,7 @@ export function SettingsPage() {
         </div>
 
         {/* 主题色卡 Section */}
-        <div className="content-section" style={{ marginBottom: 20 }}>
+        <div className="content-section" style={{ marginBottom: 14 }}>
           <div className="section-header">
             <h2>主题色</h2>
           </div>
@@ -903,282 +805,8 @@ export function SettingsPage() {
           </div>
         </div>
 
-        {/* 创意工坊更新 Section */}
-        <div className="content-section" style={{ marginBottom: 20 }}>
-          <div className="section-header">
-            <h2>创意工坊更新</h2>
-          </div>
-          <div className="settings-group">
-            <p className="settings-desc">
-              用 Steam 公开接口查已订阅条目是否有新版（无需登录或开 Steam），有新版时「我的 Mod」页会标「可更新」。
-            </p>
-
-            <div className="settings-toggle-row">
-              <div className="settings-toggle-info">
-                <span className="settings-toggle-label">
-                  {workshopUpdates?.auto_check !== false ? '启动时自动检查：已开启' : '启动时自动检查：已关闭'}
-                </span>
-                <span className="settings-toggle-hint">
-                  打开软件后顺带查一次（后台进行，不影响 Mod 列表加载）；
-                  关掉后只能手动点「检查更新」
-                </span>
-              </div>
-              <button
-                className={`settings-toggle-switch ${workshopUpdates?.auto_check !== false ? 'active' : ''}`}
-                onClick={() => setWorkshopUpdateSettings({ auto_check: workshopUpdates?.auto_check === false })}
-              >
-                <span className="settings-toggle-knob" />
-              </button>
-            </div>
-
-            <div className="settings-toggle-row" style={{ marginTop: 12 }}>
-              <div className="settings-toggle-info">
-                <span className="settings-toggle-label">检查间隔</span>
-                <span className="settings-toggle-hint">
-                  距上次检查超过这么久才会自动再查，避免每次开软件都发请求
-                </span>
-              </div>
-              <div className="settings-scale-group">
-                {[3, 6, 12, 24].map((h) => (
-                  <button
-                    key={h}
-                    className={`settings-scale-btn ${Math.round(workshopUpdates?.interval_hours ?? 6) === h ? 'active' : ''}`}
-                    onClick={() => setWorkshopUpdateSettings({ interval_hours: h })}
-                  >
-                    {h} 小时
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="settings-actions" style={{ marginTop: 12 }}>
-              {workshopUpdates?.checking ? (
-                // 检查在后台跑，这里给的是「停」而不是禁用：不用等它慢慢超时
-                <button
-                  className="settings-btn settings-btn--secondary"
-                  onClick={cancelWorkshopCheck}
-                  title="点一下立刻停止检查，已经查到的结果会保留"
-                >
-                  取消检查
-                  {workshopUpdates.check_progress?.total
-                    ? ` ${workshopUpdates.check_progress.stage === 'compare'
-                        ? '比对中'
-                        : `${workshopUpdates.check_progress.done}/${workshopUpdates.check_progress.total}`}`
-                    : ' · 扫描本地中'}
-                </button>
-              ) : (
-                <button
-                  className="settings-btn settings-btn--secondary"
-                  onClick={checkWorkshopUpdates}
-                >
-                  立即检查
-                </button>
-              )}
-              <div className="settings-current">
-                <span className="settings-current-label">上次检查：</span>
-                <span className="settings-current-path">
-                  {workshopUpdates?.checked_at
-                    ? new Date(workshopUpdates.checked_at * 1000).toLocaleString('zh-CN')
-                    : '还没有检查过'}
-                  {workshopUpdates && workshopUpdates.update_count > 0
-                    ? ` · ${workshopUpdates.update_count} 个可更新`
-                    : ''}
-                </span>
-              </div>
-            </div>
-            {workshopUpdates?.last_error && !workshopUpdates.checking ? (
-              <p className="settings-hint settings-hint--warn" style={{ marginTop: 8 }}>
-                上次没查成功：{workshopUpdates.last_error}
-              </p>
-            ) : null}
-          </div>
-        </div>
-
-        {/* 性能 Section */}
-        <div className="content-section" style={{ marginBottom: 20 }}>
-          <div className="section-header">
-            <h2>性能</h2>
-          </div>
-          <div className="settings-group">
-            <p className="settings-desc">
-              界面卡顿时可从这里的开关降负载；只影响显示，不改 Mod 启停，也不影响游戏内加载。
-            </p>
-
-            {/* 禁用动图 */}
-            <div className="settings-toggle-row">
-              <div className="settings-toggle-info">
-                <span className="settings-toggle-label">禁用动图</span>
-                <span className="settings-toggle-hint">
-                  {cardAnim
-                    ? '已开启：卡片封面只播静态首帧，不逐帧解码、不占显存。'
-                    : '已禁用：卡片只显示静态首帧，不占显存。'}
-                  {systemReducedMotion() && ' 系统已开启「减少动态效果」。'}
-                </span>
-              </div>
-              <button
-                className={`settings-toggle-switch ${cardAnim ? '' : 'active'}`}
-                onClick={() => {
-                  const next = !cardAnim;
-                  setCardAnim(next);
-                  setCardAnimationEnabled(next);
-                }}
-                title={cardAnim ? '点击禁用动图' : '点击恢复动图'}
-              >
-                <span className="settings-toggle-knob" />
-              </button>
-            </div>
-
-            {/* 本地缓存统计与回收 */}
-            <div className="settings-toggle-row">
-              <div className="settings-toggle-info">
-                <span className="settings-toggle-label">本地缓存</span>
-                <span className="settings-toggle-hint">
-                  {cacheInfo
-                    ? `封面图、VPK 索引与元数据共 ${formatBytes(cacheInfo.total_bytes)}（${cacheInfo.total_files} 个文件）。`
-                    : '正在统计占用…'}
-                  清理只删除「对应 Mod 已不存在」的缓存，不动 Mod 文件与启停状态。
-                </span>
-              </div>
-              <button
-                className={`settings-btn settings-btn--secondary ${cacheCleaning ? 'loading' : ''}`}
-                style={{ flexShrink: 0 }}
-                onClick={handleCleanCache}
-                disabled={cacheCleaning}
-                title="删除已经没有对应 Mod 的缓存文件"
-              >
-                {cacheCleaning ? '清理中…' : '清理缓存'}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* 调试 Section */}
-        <div className="content-section" style={{ marginBottom: 20 }}>
-          <div className="section-header">
-            <h2>调试</h2>
-          </div>
-          <div className="settings-group">
-            <p className="settings-desc">
-              性能与显示诊断选项，遇到卡顿或渲染异常时可用于排查。
-            </p>
-
-            {/* FPS 显示 */}
-            <div className="settings-toggle-row">
-              <div className="settings-toggle-info">
-                <span className="settings-toggle-label">
-                  {showFps ? '标题栏 FPS 显示：已开启' : '标题栏 FPS 显示：已关闭'}
-                </span>
-                <span className="settings-toggle-hint">
-                  在标题栏右侧显示实时帧率（绿 ≥55 / 橙 ≥30 / 红 &lt;30），用于判断界面是否掉帧
-                </span>
-              </div>
-              <button
-                className={`settings-toggle-switch ${showFps ? 'active' : ''}`}
-                onClick={toggleFps}
-              >
-                <span className="settings-toggle-knob" />
-              </button>
-            </div>
-
-            {/* 帧率诊断浮层入口：标题栏只给一个总帧率，想看动图的开销要看浮层 */}
-            <div className="settings-gpu-note">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="16" x2="12" y2="12" />
-                <line x1="12" y1="8" x2="12.01" y2="8" />
-              </svg>
-              <span>
-                按 <strong>Ctrl + Shift + F</strong> 打开帧率诊断浮层，查看帧率波动、动图节奏与单帧耗时。
-              </span>
-            </div>
-
-            {/* 主题切换过渡 */}
-            <div className="settings-toggle-row">
-              <div className="settings-toggle-info">
-                <span className="settings-toggle-label">
-                  {themeTransition ? '主题切换过渡：已开启' : '主题切换过渡：已关闭'}
-                </span>
-                <span className="settings-toggle-hint">
-                  {themeTransition
-                    ? '日间/夜间切换有约 0.25 秒的平滑淡入，观感更柔和（绘制开销略高）'
-                    : '主题瞬间切换，最省性能（适合低配机器或关闭 GPU 加速时）'}
-                </span>
-              </div>
-              <button
-                className={`settings-toggle-switch ${themeTransition ? 'active' : ''}`}
-                onClick={toggleThemeTransition}
-              >
-                <span className="settings-toggle-knob" />
-              </button>
-            </div>
-
-            <p className="settings-desc" style={{ marginTop: 12, marginBottom: 0, fontSize: 12 }}>
-              觉得切换发顿就把「主题切换过渡」关掉。
-            </p>
-          </div>
-        </div>
-
-        {/* Mascot Section */}
-        <div className="content-section" style={{ marginBottom: 20 }}>
-          <div className="section-header">
-            <h2>小春看板娘</h2>
-          </div>
-          <div className="settings-group">
-            <p className="settings-desc">
-              在应用右下角显示或隐藏小春看板娘图标，支持拖拽到任意位置。
-            </p>
-            <div className="settings-actions">
-              <button
-                className={`settings-btn ${showMascot ? 'settings-btn--primary' : 'settings-btn--ghost'}`}
-                onClick={toggleMascot}
-              >
-                {showMascot ? '✓ 显示中' : '隐藏中'}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* GPU 硬件加速 Section */}
-        <div className="content-section" style={{ marginBottom: 20 }}>
-          <div className="section-header">
-            <h2>GPU 硬件加速</h2>
-          </div>
-          <div className="settings-group">
-            <p className="settings-desc">
-              控制 Electron 是否使用 GPU 硬件加速；禁用可解决部分显卡的黑屏/花屏问题，但会增加 CPU 占用。
-            </p>
-            <div className="settings-toggle-row">
-              <div className="settings-toggle-info">
-                <span className="settings-toggle-label">
-                  {gpuAccelerationDisabled ? '已禁用' : '已启用'}
-                </span>
-                <span className="settings-toggle-hint">
-                  {gpuAccelerationDisabled
-                    ? '使用 CPU 渲染，兼容性更好，性能较低'
-                    : '使用 GPU 渲染，性能更佳，部分显卡可能有兼容性问题'}
-                </span>
-              </div>
-              <button
-                className={`settings-toggle-switch ${!gpuAccelerationDisabled ? 'active' : ''}`}
-                onClick={toggleGpuAcceleration}
-                disabled={gpuAccelerationLoading}
-              >
-                <span className="settings-toggle-knob" />
-              </button>
-            </div>
-            <div className="settings-gpu-note">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="16" x2="12" y2="12" />
-                <line x1="12" y1="8" x2="12.01" y2="8" />
-              </svg>
-              <span>更改此设置需要<strong>重启应用</strong>后才能生效。</span>
-            </div>
-          </div>
-        </div>
-
         {/* Background Section */}
-        <div className="content-section">
+        <div className="content-section" style={{ marginBottom: 14 }}>
           <div className="section-header">
             <h2>背景设置</h2>
           </div>
@@ -1330,8 +958,410 @@ export function SettingsPage() {
           </div>
         </div>
 
+        {/* Mascot Section */}
+        <div className="content-section" style={{ marginBottom: 14 }}>
+          <div className="section-header">
+            <h2>小春看板娘</h2>
+          </div>
+          <div className="settings-group">
+            <p className="settings-desc">
+              在应用右下角显示或隐藏小春看板娘图标，支持拖拽到任意位置。
+            </p>
+            <div className="settings-actions">
+              <button
+                className={`settings-btn ${showMascot ? 'settings-btn--primary' : 'settings-btn--ghost'}`}
+                onClick={toggleMascot}
+              >
+                {showMascot ? '✓ 显示中' : '隐藏中'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="settings-cat-head">
+          <span className="settings-cat-head__bar" />
+          <h2>性能与调试</h2>
+          <span className="settings-cat-head__sub">性能开关、缓存、GPU、FPS 诊断</span>
+        </div>
+
+        {/* 性能 Section */}
+        <div className="content-section" style={{ marginBottom: 14 }}>
+          <div className="section-header">
+            <h2>性能</h2>
+          </div>
+          <div className="settings-group">
+            <p className="settings-desc">
+              界面卡顿时可从这里的开关降负载；只影响显示，不改 Mod 启停，也不影响游戏内加载。
+            </p>
+
+            {/* 禁用动图 */}
+            <div className="settings-toggle-row">
+              <div className="settings-toggle-info">
+                <span className="settings-toggle-label">禁用动图</span>
+                <span className="settings-toggle-hint">
+                  {cardAnim
+                    ? '已开启：卡片封面只播静态首帧，不逐帧解码、不占显存。'
+                    : '已禁用：卡片只显示静态首帧，不占显存。'}
+                  {systemReducedMotion() && ' 系统已开启「减少动态效果」。'}
+                </span>
+              </div>
+              <button
+                className={`settings-toggle-switch ${cardAnim ? '' : 'active'}`}
+                onClick={() => {
+                  const next = !cardAnim;
+                  setCardAnim(next);
+                  setCardAnimationEnabled(next);
+                }}
+                title={cardAnim ? '点击禁用动图' : '点击恢复动图'}
+              >
+                <span className="settings-toggle-knob" />
+              </button>
+            </div>
+
+            {/* 本地缓存统计与回收 */}
+            <div className="settings-toggle-row">
+              <div className="settings-toggle-info">
+                <span className="settings-toggle-label">本地缓存</span>
+                <span className="settings-toggle-hint">
+                  {cacheInfo
+                    ? `封面图、VPK 索引与元数据共 ${formatBytes(cacheInfo.total_bytes)}（${cacheInfo.total_files} 个文件）。`
+                    : '正在统计占用…'}
+                  清理只删除「对应 Mod 已不存在」的缓存，不动 Mod 文件与启停状态。
+                </span>
+              </div>
+              <button
+                className={`settings-btn settings-btn--secondary ${cacheCleaning ? 'loading' : ''}`}
+                style={{ flexShrink: 0 }}
+                onClick={handleCleanCache}
+                disabled={cacheCleaning}
+                title="删除已经没有对应 Mod 的缓存文件"
+              >
+                {cacheCleaning ? '清理中…' : '清理缓存'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* GPU 硬件加速 Section */}
+        <div className="content-section" style={{ marginBottom: 14 }}>
+          <div className="section-header">
+            <h2>GPU 硬件加速</h2>
+          </div>
+          <div className="settings-group">
+            <p className="settings-desc">
+              控制 Electron 是否使用 GPU 硬件加速；禁用可解决部分显卡的黑屏/花屏问题，但会增加 CPU 占用。
+            </p>
+            <div className="settings-toggle-row">
+              <div className="settings-toggle-info">
+                <span className="settings-toggle-label">
+                  {gpuAccelerationDisabled ? '已禁用' : '已启用'}
+                </span>
+                <span className="settings-toggle-hint">
+                  {gpuAccelerationDisabled
+                    ? '使用 CPU 渲染，兼容性更好，性能较低'
+                    : '使用 GPU 渲染，性能更佳，部分显卡可能有兼容性问题'}
+                </span>
+              </div>
+              <button
+                className={`settings-toggle-switch ${!gpuAccelerationDisabled ? 'active' : ''}`}
+                onClick={toggleGpuAcceleration}
+                disabled={gpuAccelerationLoading}
+              >
+                <span className="settings-toggle-knob" />
+              </button>
+            </div>
+            <div className="settings-gpu-note">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="16" x2="12" y2="12" />
+                <line x1="12" y1="8" x2="12.01" y2="8" />
+              </svg>
+              <span>更改此设置需要<strong>重启应用</strong>后才能生效。</span>
+            </div>
+          </div>
+        </div>
+
+        {/* 调试 Section */}
+        <div className="content-section" style={{ marginBottom: 14 }}>
+          <div className="section-header">
+            <h2>调试</h2>
+          </div>
+          <div className="settings-group">
+            <p className="settings-desc">
+              性能与显示诊断选项，遇到卡顿或渲染异常时可用于排查。
+            </p>
+
+            {/* FPS 显示 */}
+            <div className="settings-toggle-row">
+              <div className="settings-toggle-info">
+                <span className="settings-toggle-label">
+                  {showFps ? '标题栏 FPS 显示：已开启' : '标题栏 FPS 显示：已关闭'}
+                </span>
+                <span className="settings-toggle-hint">
+                  在标题栏右侧显示实时帧率（绿 ≥55 / 橙 ≥30 / 红 &lt;30），用于判断界面是否掉帧
+                </span>
+              </div>
+              <button
+                className={`settings-toggle-switch ${showFps ? 'active' : ''}`}
+                onClick={toggleFps}
+              >
+                <span className="settings-toggle-knob" />
+              </button>
+            </div>
+
+            {/* 帧率诊断浮层入口：标题栏只给一个总帧率，想看动图的开销要看浮层 */}
+            <div className="settings-gpu-note">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="16" x2="12" y2="12" />
+                <line x1="12" y1="8" x2="12.01" y2="8" />
+              </svg>
+              <span>
+                按 <strong>Ctrl + Shift + F</strong> 打开帧率诊断浮层，查看帧率波动、动图节奏与单帧耗时。
+              </span>
+            </div>
+
+            {/* 主题切换过渡 */}
+            <div className="settings-toggle-row">
+              <div className="settings-toggle-info">
+                <span className="settings-toggle-label">
+                  {themeTransition ? '主题切换过渡：已开启' : '主题切换过渡：已关闭'}
+                </span>
+                <span className="settings-toggle-hint">
+                  {themeTransition
+                    ? '日间/夜间切换有约 0.25 秒的平滑淡入，观感更柔和（绘制开销略高）'
+                    : '主题瞬间切换，最省性能（适合低配机器或关闭 GPU 加速时）'}
+                </span>
+              </div>
+              <button
+                className={`settings-toggle-switch ${themeTransition ? 'active' : ''}`}
+                onClick={toggleThemeTransition}
+              >
+                <span className="settings-toggle-knob" />
+              </button>
+            </div>
+
+            <p className="settings-desc" style={{ marginTop: 12, marginBottom: 0, fontSize: 12 }}>
+              觉得切换发顿就把「主题切换过渡」关掉。
+            </p>
+          </div>
+        </div>
+
+        <div className="settings-cat-head">
+          <span className="settings-cat-head__bar" />
+          <h2>创意工坊</h2>
+          <span className="settings-cat-head__sub">Steam API Key 与更新检查</span>
+        </div>
+
+        {/* Steam API Key Section */}
+        <div className="content-section" style={{ marginBottom: 14 }}>
+          <div className="section-header">
+            <h2>Steam API Key（可选）</h2>
+          </div>
+          <div className="settings-group">
+            <p className="settings-desc">
+              填写后创意工坊改用官方接口：每页 <strong>100 条</strong>、显示<strong>好评数 / 下载量 / 结果总数</strong>、支持「最近更新」排序；不填则每页 30 条、较慢。
+            </p>
+            <p className="settings-desc" style={{ marginTop: -4 }}>
+              保存时用 Windows 凭据加密，<strong>config.json 里只有密文</strong>，仅当前 Windows 账户可解密；换电脑或换账户需重新粘贴。
+            </p>
+
+            <div className="settings-path-row">
+              <input
+                type="password"
+                className="settings-path-input"
+                placeholder={keyState.configured ? `已保存：${keyState.masked}（重新粘贴可替换）` : '粘贴 32 位十六进制 key'}
+                value={keyInput}
+                onChange={(e) => { setKeyInput(e.target.value); setKeyMsg(null); }}
+                spellCheck={false}
+                autoComplete="off"
+              />
+              <button
+                className="settings-btn settings-btn--secondary"
+                onClick={() => void handleTestKey()}
+                disabled={keyBusy !== 'idle' || !keyInput.trim()}
+              >
+                {keyBusy === 'testing' ? '测试中…' : '测试'}
+              </button>
+            </div>
+
+            <div className="settings-actions">
+              <button
+                className="settings-btn settings-btn--primary"
+                onClick={() => void handleSaveKey()}
+                disabled={keyBusy !== 'idle' || (!keyInput.trim() && !keyState.configured)}
+              >
+                {keyBusy === 'saving' ? '保存中…' : '保存'}
+              </button>
+              {keyState.configured && (
+                <button
+                  className="settings-btn settings-btn--ghost"
+                  onClick={() => { setKeyInput(''); void handleSaveKey(); }}
+                  disabled={keyBusy !== 'idle'}
+                >
+                  清除
+                </button>
+              )}
+              <a
+                className="settings-btn settings-btn--ghost"
+                style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
+                onClick={() => {
+                  const el = window.electronAPI as { openExternal?: (u: string) => Promise<void> } | undefined;
+                  void el?.openExternal?.('https://steamcommunity.com/dev/apikey');
+                }}
+              >
+                申请地址 ↗
+              </a>
+            </div>
+
+            {keyMsg && (
+              <div
+                className="settings-current"
+                style={{
+                  color: keyMsg.kind === 'err' ? '#ef4444' : '#10b981',
+                  borderColor: keyMsg.kind === 'err' ? 'rgba(239,68,68,.35)' : 'rgba(16,185,129,.35)',
+                }}
+              >
+                <span className="settings-current-label">结果：</span>
+                <span style={{ whiteSpace: 'normal' }}>{keyMsg.text}</span>
+              </div>
+            )}
+
+            {keyState.readable === false && (
+              <div
+                className="settings-current"
+                style={{ color: '#f59e0b', borderColor: 'rgba(245,158,11,.35)' }}
+              >
+                <span className="settings-current-label">注意：</span>
+                <span style={{ whiteSpace: 'normal' }}>
+                  配置文件里的 key 当前账户解不开（换过 Windows 账户或电脑），重新粘贴保存一次即可。
+                </span>
+              </div>
+            )}
+
+            {keyState.configured && !keyMsg && (
+              <div className="settings-current">
+                <span className="settings-current-label">当前：</span>
+                <span className="settings-current-path">已配置 {keyState.masked}</span>
+                <span
+                  style={{
+                    marginLeft: 8,
+                    whiteSpace: 'normal',
+                    color: keyState.storage === 'plaintext' ? '#f59e0b' : 'var(--text-secondary)',
+                  }}
+                >
+                  {keyState.storage === 'dpapi' && '· 已用 Windows 凭据加密，仅当前账户可解密'}
+                  {keyState.storage === 'env' && '· 来自环境变量 L4DIRECTOR_STEAM_KEY'}
+                  {keyState.storage === 'plaintext' && '· 明文保存在 config.json，重新保存一次即可加密'}
+                </span>
+              </div>
+            )}
+
+            <p className="settings-desc" style={{ marginTop: 10, fontSize: 11.5, opacity: 0.78 }}>
+              Key 加密后只存本机 <code>~/.l4d2-manager/config.json</code>，不会上传。申请需 Steam 账号、商店消费满 5 美元；按 Steam 条款须本人保管。
+            </p>
+          </div>
+        </div>
+
+        {/* 创意工坊更新 Section */}
+        <div className="content-section" style={{ marginBottom: 14 }}>
+          <div className="section-header">
+            <h2>创意工坊更新</h2>
+          </div>
+          <div className="settings-group">
+            <p className="settings-desc">
+              用 Steam 公开接口查已订阅条目是否有新版（无需登录或开 Steam），有新版时「我的 Mod」页会标「可更新」。
+            </p>
+
+            <div className="settings-toggle-row">
+              <div className="settings-toggle-info">
+                <span className="settings-toggle-label">
+                  {workshopUpdates?.auto_check !== false ? '启动时自动检查：已开启' : '启动时自动检查：已关闭'}
+                </span>
+                <span className="settings-toggle-hint">
+                  打开软件后顺带查一次（后台进行，不影响 Mod 列表加载）；
+                  关掉后只能手动点「检查更新」
+                </span>
+              </div>
+              <button
+                className={`settings-toggle-switch ${workshopUpdates?.auto_check !== false ? 'active' : ''}`}
+                onClick={() => setWorkshopUpdateSettings({ auto_check: workshopUpdates?.auto_check === false })}
+              >
+                <span className="settings-toggle-knob" />
+              </button>
+            </div>
+
+            <div className="settings-toggle-row" style={{ marginTop: 12 }}>
+              <div className="settings-toggle-info">
+                <span className="settings-toggle-label">检查间隔</span>
+                <span className="settings-toggle-hint">
+                  距上次检查超过这么久才会自动再查，避免每次开软件都发请求
+                </span>
+              </div>
+              <div className="settings-scale-group">
+                {[3, 6, 12, 24].map((h) => (
+                  <button
+                    key={h}
+                    className={`settings-scale-btn ${Math.round(workshopUpdates?.interval_hours ?? 6) === h ? 'active' : ''}`}
+                    onClick={() => setWorkshopUpdateSettings({ interval_hours: h })}
+                  >
+                    {h} 小时
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="settings-actions" style={{ marginTop: 12 }}>
+              {workshopUpdates?.checking ? (
+                // 检查在后台跑，这里给的是「停」而不是禁用：不用等它慢慢超时
+                <button
+                  className="settings-btn settings-btn--secondary"
+                  onClick={cancelWorkshopCheck}
+                  title="点一下立刻停止检查，已经查到的结果会保留"
+                >
+                  取消检查
+                  {workshopUpdates.check_progress?.total
+                    ? ` ${workshopUpdates.check_progress.stage === 'compare'
+                        ? '比对中'
+                        : `${workshopUpdates.check_progress.done}/${workshopUpdates.check_progress.total}`}`
+                    : ' · 扫描本地中'}
+                </button>
+              ) : (
+                <button
+                  className="settings-btn settings-btn--secondary"
+                  onClick={checkWorkshopUpdates}
+                >
+                  立即检查
+                </button>
+              )}
+              <div className="settings-current">
+                <span className="settings-current-label">上次检查：</span>
+                <span className="settings-current-path">
+                  {workshopUpdates?.checked_at
+                    ? new Date(workshopUpdates.checked_at * 1000).toLocaleString('zh-CN')
+                    : '还没有检查过'}
+                  {workshopUpdates && workshopUpdates.update_count > 0
+                    ? ` · ${workshopUpdates.update_count} 个可更新`
+                    : ''}
+                </span>
+              </div>
+            </div>
+            {workshopUpdates?.last_error && !workshopUpdates.checking ? (
+              <p className="settings-hint settings-hint--warn" style={{ marginTop: 8 }}>
+                上次没查成功：{workshopUpdates.last_error}
+              </p>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="settings-cat-head">
+          <span className="settings-cat-head__bar" />
+          <h2>关于与更新</h2>
+          <span className="settings-cat-head__sub">版本、更新与日志</span>
+        </div>
+
         {/* 关于 Section */}
-        <div className="content-section" style={{ marginBottom: 20 }}>
+        <div className="content-section" style={{ marginBottom: 14 }}>
           <div className="section-header">
             <h2>关于</h2>
           </div>
@@ -1345,7 +1375,7 @@ export function SettingsPage() {
         </div>
 
         {/* 日志导出 Section */}
-        <div className="content-section" style={{ marginBottom: 20 }}>
+        <div className="content-section" style={{ marginBottom: 14 }}>
           <div className="section-header">
             <h2>导出日志</h2>
           </div>
