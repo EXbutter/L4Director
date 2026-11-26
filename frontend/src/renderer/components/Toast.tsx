@@ -92,21 +92,26 @@ export function ToastContainer() {
       (el as HTMLElement).dataset.collapsing = '1';
 
       const h = el.offsetHeight;
-      // 先钉住当前高度，下一帧再收到 0，height: auto → 0 无法过渡
-      el.style.height = `${h}px`;
+      const w = el.offsetWidth;
+      // 先钉住当前高度/位置，下一帧再收高度 + 向右滑出（auto→0 无法过渡）
       el.style.overflow = 'hidden';
+      el.style.height = `${h}px`;
+      el.style.transform = 'translateX(0px)';
       void el.offsetHeight; // 强制重排，确保起始帧生效
       el.style.transition =
         `height ${EXIT_COLLAPSE_MS}ms cubic-bezier(0.22, 1, 0.36, 1), ` +
         `padding-top ${EXIT_COLLAPSE_MS}ms cubic-bezier(0.22, 1, 0.36, 1), ` +
         `padding-bottom ${EXIT_COLLAPSE_MS}ms cubic-bezier(0.22, 1, 0.36, 1), ` +
         `margin-bottom ${EXIT_COLLAPSE_MS}ms cubic-bezier(0.22, 1, 0.36, 1), ` +
+        `transform ${EXIT_COLLAPSE_MS}ms cubic-bezier(0.22, 1, 0.36, 1), ` +
         `opacity 200ms ease-in`;
       el.style.height = '0px';
       el.style.marginBottom = '0px';
       el.style.paddingTop = '0px';
       el.style.paddingBottom = '0px';
       el.style.opacity = '0';
+      // 向右滑出窗口（宽度 + 右侧留白，确保完全移出可视区）
+      el.style.transform = `translateX(${w + 28}px)`;
     });
   }, [toasts]);
 
