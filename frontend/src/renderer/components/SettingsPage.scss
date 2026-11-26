@@ -564,32 +564,21 @@
   }
 }
 
-/* ============ 设置页：卡内「子容器」边界加强（尤其暗色） ============ */
-/* 原因：.settings-toggle-row / .settings-current 等子框原本与外层 .content-section
-   用同一个 --bg-card、边框又是很淡的 --border-color，暗色下几乎看不出边界，
-   一屏里像糊成一整块。这里统一分层：
-   - 外层分区卡：边框略强 + 阴影，和背景/相邻分区拉开；
-   - 内层子框：提亮一档的底 + 更实的描边，明确「卡中有卡」。 */
+/* ============ 设置页：卡内子容器——用「间距 + 背景分层」，不再堆描边 ============ */
+/* 上一版给每个子框都加实描边：一屏线条太多、且上下相邻子框的边框贴在一起像「重叠」。
+   改为：子框之间留出间距；子框用比分区卡深/浅一档的底来区分；去掉子框描边。
+   只保留外层分区卡一条淡边 + 标题分隔线，清爽但不糊。 */
 .settings-page {
-  .content-section {
-    border-color: rgba(var(--accent-rgb), 0.24);
-    box-shadow: 0 2px 10px rgba(var(--accent-rgb), 0.10);
-  }
-
-  .section-header {
-    border-bottom-color: rgba(var(--accent-rgb), 0.22);
+  .settings-toggle-row + .settings-toggle-row,
+  .settings-toggle-row + .settings-current,
+  .settings-current + .settings-toggle-row {
+    margin-top: 12px;
   }
 
   .settings-toggle-row,
   .settings-current {
-    background: var(--bg-card-hover);
-    border: 1px solid rgba(var(--accent-rgb), 0.30);
-  }
-
-  .settings-path-input,
-  .bg-preview,
-  .settings-scale-btn:not(.active) {
-    border-color: rgba(var(--accent-rgb), 0.28);
+    background: var(--bg-primary);
+    border-color: transparent;
   }
 }
 
