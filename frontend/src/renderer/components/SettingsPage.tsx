@@ -504,7 +504,7 @@ export function SettingsPage() {
   };
 
   return (
-    <div className="content-area">
+    <div className="content-area settings-page">
       <div className="page-content">
         <div className="page-header">
           <h1>设置</h1>
