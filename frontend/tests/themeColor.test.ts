@@ -60,7 +60,7 @@ describe('混色与亮度', () => {
 
   it('阈值 0.30：暗底白字、亮底深字', () => {
     expect(readableOn('#000000')).toBe('#ffffff')
-    expect(readableOn('#1e88e5')).toBe('#ffffff')
+    expect(readableOn('#0078d4')).toBe('#ffffff')
     expect(readableOn('#ffffff')).toBe('#1f2329')
     expect(readableOn('#f5d76e')).toBe('#1f2329')
   })

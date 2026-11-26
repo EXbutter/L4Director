@@ -21,7 +21,7 @@ export interface AccentPreset {
  * 一旦触发校正，色卡显示的色与界面实际的色就对不上。这六档都在区间内，显示即所得。
  */
 export const ACCENT_PRESETS: AccentPreset[] = [
-  { key: 'launcher', label: '默认蓝', color: '#1e88e5' },
+  { key: 'launcher', label: 'Windows 蓝', color: '#0078d4' },
   { key: 'cyan', label: '青碧', color: '#0d9488' },
   { key: 'graphite', label: '石墨', color: '#475569' },
   { key: 'rose', label: '玫红', color: '#e11d48' },

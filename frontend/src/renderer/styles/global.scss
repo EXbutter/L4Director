@@ -12,9 +12,9 @@
   --text-primary: #1f2329;
   --text-secondary: #5f6b7a;
   --text-muted: #8a97a6;
-  // PCL 主色：亮蓝（可被主题色卡覆盖）
-  --accent: #1e88e5;
-  --accent-rgb: 30, 136, 229;
+  // 默认主色：Windows 蓝（可被主题色卡覆盖）
+  --accent: #0078d4;
+  --accent-rgb: 0, 120, 212;
   // 主色的「文字形态」：作为文字/图标时的主色。
   // 与 --accent（填充色）分开，是为了让暗色模式既能保留色卡原色做大面积上色，
   // 又能把文字提亮到读得清 —— 两者对明度的要求是相反的。
@@ -89,8 +89,8 @@
   --text-primary: #eaf2fa;
   --text-secondary: #aebdcc;
   --text-muted: #7f93a6;
-  --accent: #42a5f5;
-  --accent-rgb: 66, 165, 245;
+  --accent: #0078d4;
+  --accent-rgb: 0, 120, 212;
   // 暗色下填充色保持色卡原色（见 accentFill），文字色则必须提亮才读得清
   --accent-text: color-mix(in srgb, var(--accent) 55%, #ffffff);
   --accent-secondary: color-mix(in srgb, var(--accent) 88%, #ffffff);
